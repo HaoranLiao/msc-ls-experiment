@@ -33,6 +33,18 @@ D3_UNROTATED_DATA_COORDS: tuple[Coord, ...] = (
     (4, 4),
 )
 
+D3_UNROTATED_LOGICAL_Z_COORDS: tuple[Coord, ...] = (
+    (0, 0),
+    (0, 2),
+    (0, 4),
+)
+
+D3_UNROTATED_LOGICAL_X_COORDS: tuple[Coord, ...] = (
+    (0, 0),
+    (2, 0),
+    (4, 0),
+)
+
 _DATA_INDEX_BY_COORD = {coord: index for index, coord in enumerate(D3_UNROTATED_DATA_COORDS)}
 
 

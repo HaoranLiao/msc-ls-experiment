@@ -2,13 +2,25 @@ from research_qec_haoran import __version__
 from research_qec_haoran.paths import REPO_ROOT
 from research_qec_haoran.surface_code import (
     D3_UNROTATED_DATA_COORDS,
+    D3_UNROTATED_LOGICAL_X_COORDS,
+    D3_UNROTATED_LOGICAL_X_LABEL,
+    D3_UNROTATED_LOGICAL_X_QUBITS,
+    D3_UNROTATED_LOGICAL_Z_COORDS,
+    D3_UNROTATED_LOGICAL_Z_LABEL,
+    D3_UNROTATED_LOGICAL_Z_QUBITS,
     D3_UNROTATED_MEASUREMENT_LABELS,
     D3_UNROTATED_NUM_QUBITS,
+    D3_UNROTATED_STABILIZER_MEASUREMENT_LABELS,
     D3_UNROTATED_X_ANCILLA_COORDS,
     D3_UNROTATED_X_STABILIZERS,
     D3_UNROTATED_Z_ANCILLA_COORDS,
     D3_UNROTATED_Z_STABILIZERS,
-    build_d3_unrotated_logical_zero_init_circuit,
+    append_d3_unrotated_logical_readout,
+    append_d3_unrotated_qubit_coords,
+    append_d3_unrotated_stabilizer_round,
+    append_d3_unrotated_stabilizer_rounds,
+    build_d3_unrotated_base_circuit,
+    get_d3_unrotated_measurement_labels,
 )
 
 
@@ -22,14 +34,19 @@ def test_repo_root_name() -> None:
 
 def test_d3_unrotated_layout_sizes() -> None:
     assert len(D3_UNROTATED_DATA_COORDS) == 13
+    assert D3_UNROTATED_LOGICAL_Z_COORDS == ((0, 0), (0, 2), (0, 4))
+    assert D3_UNROTATED_LOGICAL_X_COORDS == ((0, 0), (2, 0), (4, 0))
     assert len(D3_UNROTATED_X_ANCILLA_COORDS) == 6
     assert len(D3_UNROTATED_Z_ANCILLA_COORDS) == 6
     assert len(D3_UNROTATED_X_STABILIZERS) == 6
     assert len(D3_UNROTATED_Z_STABILIZERS) == 6
+    assert D3_UNROTATED_LOGICAL_Z_QUBITS == (0, 1, 2)
+    assert D3_UNROTATED_LOGICAL_X_QUBITS == (0, 5, 10)
 
 
-def test_d3_unrotated_logical_zero_stim_circuit_sizes() -> None:
-    circuit = build_d3_unrotated_logical_zero_init_circuit(rounds=1)
+def test_d3_unrotated_single_round_circuit_sizes() -> None:
+    circuit = build_d3_unrotated_base_circuit()
+    append_d3_unrotated_stabilizer_rounds(circuit, rounds=1)
     assert D3_UNROTATED_NUM_QUBITS == 25
     assert circuit.num_qubits == 25
     assert circuit.num_measurements == 12
@@ -37,15 +54,59 @@ def test_d3_unrotated_logical_zero_stim_circuit_sizes() -> None:
 
 
 def test_d3_unrotated_stim_measurement_order() -> None:
+    assert D3_UNROTATED_MEASUREMENT_LABELS == D3_UNROTATED_STABILIZER_MEASUREMENT_LABELS
     assert D3_UNROTATED_MEASUREMENT_LABELS[:6] == ("Z0", "Z1", "Z2", "Z3", "Z4", "Z5")
     assert D3_UNROTATED_MEASUREMENT_LABELS[6:] == ("X0", "X1", "X2", "X3", "X4", "X5")
+    assert get_d3_unrotated_measurement_labels("Z")[-1] == D3_UNROTATED_LOGICAL_Z_LABEL
+    assert get_d3_unrotated_measurement_labels("X")[-1] == D3_UNROTATED_LOGICAL_X_LABEL
+
+
+def test_d3_unrotated_base_circuit_has_only_layout() -> None:
+    circuit = build_d3_unrotated_base_circuit()
+    assert circuit.num_qubits == 25
+    assert circuit.num_measurements == 0
+
+
+def test_d3_unrotated_qubit_coords_can_be_appended_manually() -> None:
+    import stim
+
+    circuit = stim.Circuit()
+    append_d3_unrotated_qubit_coords(circuit)
+    assert circuit.num_qubits == 25
+    assert circuit.num_measurements == 0
 
 
 def test_d3_unrotated_single_round_has_no_explicit_resets() -> None:
-    circuit_text = str(build_d3_unrotated_logical_zero_init_circuit(rounds=1))
+    circuit = build_d3_unrotated_base_circuit()
+    append_d3_unrotated_stabilizer_round(circuit, reset_ancillas=False)
+    circuit_text = str(circuit)
     assert "\nR " not in f"\n{circuit_text}"
 
 
 def test_d3_unrotated_repeated_rounds_do_reset_ancillas() -> None:
-    circuit_text = str(build_d3_unrotated_logical_zero_init_circuit(rounds=2))
+    circuit = build_d3_unrotated_base_circuit()
+    append_d3_unrotated_stabilizer_rounds(circuit, rounds=2, reset_before_first_round=False)
+    circuit_text = str(circuit)
     assert circuit_text.count("\nR ") == 2
+
+
+def test_d3_unrotated_logical_readout_appends_one_measurement() -> None:
+    z_circuit = build_d3_unrotated_base_circuit()
+    append_d3_unrotated_stabilizer_rounds(z_circuit, rounds=1)
+    append_d3_unrotated_logical_readout(z_circuit, "Z")
+    x_circuit = build_d3_unrotated_base_circuit()
+    append_d3_unrotated_stabilizer_rounds(x_circuit, rounds=1)
+    append_d3_unrotated_logical_readout(x_circuit, "X")
+    assert z_circuit.num_measurements == 13
+    assert x_circuit.num_measurements == 13
+    assert "MPP Z0*Z1*Z2" in str(z_circuit)
+    assert "MPP X0*X5*X10" in str(x_circuit)
+
+
+def test_d3_unrotated_logical_z_readout_is_deterministic() -> None:
+    circuit = build_d3_unrotated_base_circuit()
+    append_d3_unrotated_stabilizer_rounds(circuit, rounds=1)
+    append_d3_unrotated_logical_readout(circuit, "Z")
+    samples = circuit.compile_sampler().sample(shots=8)
+    logical_z = samples[:, -1]
+    assert logical_z.tolist() == [False] * 8
