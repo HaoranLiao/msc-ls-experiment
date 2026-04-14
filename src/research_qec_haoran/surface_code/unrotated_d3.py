@@ -1,14 +1,17 @@
 """Distance-3 unrotated surface-code circuit building blocks.
 
-This module exposes reusable pieces for three general tasks:
+This module follows Stim's unrotated planar-code conventions for:
 
-- setting up the fixed data/ancilla layout
-- appending one or more ancilla-based stabilizer-measurement rounds
-- appending a final logical ``X_L`` or ``Z_L`` readout
+- qubit indexing on the full 5x5 grid
+- logical-state preparation in the X or Z basis
+- the four-substep stabilizer-measurement schedule
 
-These helpers are meant to be composed by notebooks, examples, or later
-protocol code instead of hiding the full workflow inside one monolithic
-builder.
+The helpers stay modular so notebooks and examples can compose:
+
+- qubit layout
+- initialization
+- one or more stabilizer rounds
+- either full data readout or logical-product readout
 """
 
 from __future__ import annotations
@@ -24,35 +27,39 @@ from research_qec_haoran.surface_code.unrotated_d3_layout import (
 )
 
 
+D3_UNROTATED_GRID_WIDTH = 5
 D3_UNROTATED_NUM_DATA_QUBITS = len(D3_UNROTATED_DATA_COORDS)
 D3_UNROTATED_NUM_X_ANCILLAS = len(D3_UNROTATED_X_STABILIZERS)
 D3_UNROTATED_NUM_Z_ANCILLAS = len(D3_UNROTATED_Z_STABILIZERS)
-D3_UNROTATED_NUM_QUBITS = (
-    D3_UNROTATED_NUM_DATA_QUBITS + D3_UNROTATED_NUM_X_ANCILLAS + D3_UNROTATED_NUM_Z_ANCILLAS
-)
+D3_UNROTATED_NUM_QUBITS = D3_UNROTATED_GRID_WIDTH**2
 
-D3_UNROTATED_DATA_QUBITS: tuple[int, ...] = tuple(range(D3_UNROTATED_NUM_DATA_QUBITS))
+
+def _grid_qubit(coord: tuple[int, int]) -> int:
+    """Return Stim's row-major qubit index for a grid coordinate."""
+
+    row, col = coord
+    return col + D3_UNROTATED_GRID_WIDTH * row
+
+
+D3_UNROTATED_DATA_QUBITS: tuple[int, ...] = tuple(_grid_qubit(coord) for coord in D3_UNROTATED_DATA_COORDS)
 D3_UNROTATED_X_ANCILLAS: tuple[int, ...] = tuple(
-    range(
-        D3_UNROTATED_NUM_DATA_QUBITS,
-        D3_UNROTATED_NUM_DATA_QUBITS + D3_UNROTATED_NUM_X_ANCILLAS,
-    )
+    _grid_qubit(stabilizer.ancilla_coord) for stabilizer in D3_UNROTATED_X_STABILIZERS
 )
 D3_UNROTATED_Z_ANCILLAS: tuple[int, ...] = tuple(
-    range(
-        D3_UNROTATED_NUM_DATA_QUBITS + D3_UNROTATED_NUM_X_ANCILLAS,
-        D3_UNROTATED_NUM_QUBITS,
-    )
+    _grid_qubit(stabilizer.ancilla_coord) for stabilizer in D3_UNROTATED_Z_STABILIZERS
+)
+D3_UNROTATED_ANCILLA_QUBITS: tuple[int, ...] = tuple(
+    sorted(D3_UNROTATED_X_ANCILLAS + D3_UNROTATED_Z_ANCILLAS)
 )
 
-_DATA_INDEX_BY_COORD = {coord: index for index, coord in enumerate(D3_UNROTATED_DATA_COORDS)}
+_DATA_INDEX_BY_COORD = {coord: _grid_qubit(coord) for coord in D3_UNROTATED_DATA_COORDS}
 _X_ANCILLA_BY_COORD = {
-    stabilizer.ancilla_coord: ancilla
-    for stabilizer, ancilla in zip(D3_UNROTATED_X_STABILIZERS, D3_UNROTATED_X_ANCILLAS)
+    stabilizer.ancilla_coord: _grid_qubit(stabilizer.ancilla_coord)
+    for stabilizer in D3_UNROTATED_X_STABILIZERS
 }
 _Z_ANCILLA_BY_COORD = {
-    stabilizer.ancilla_coord: ancilla
-    for stabilizer, ancilla in zip(D3_UNROTATED_Z_STABILIZERS, D3_UNROTATED_Z_ANCILLAS)
+    stabilizer.ancilla_coord: _grid_qubit(stabilizer.ancilla_coord)
+    for stabilizer in D3_UNROTATED_Z_STABILIZERS
 }
 
 D3_UNROTATED_LOGICAL_Z_QUBITS: tuple[int, ...] = tuple(
@@ -62,9 +69,20 @@ D3_UNROTATED_LOGICAL_X_QUBITS: tuple[int, ...] = tuple(
     _DATA_INDEX_BY_COORD[coord] for coord in D3_UNROTATED_LOGICAL_X_COORDS
 )
 
+_ANCILLA_LABEL_BY_QUBIT = {
+    **{
+        _grid_qubit(stabilizer.ancilla_coord): stabilizer.name
+        for stabilizer in D3_UNROTATED_X_STABILIZERS
+    },
+    **{
+        _grid_qubit(stabilizer.ancilla_coord): stabilizer.name
+        for stabilizer in D3_UNROTATED_Z_STABILIZERS
+    },
+}
+
 D3_UNROTATED_STABILIZER_MEASUREMENT_LABELS: tuple[str, ...] = tuple(
-    stabilizer.name for stabilizer in D3_UNROTATED_Z_STABILIZERS
-) + tuple(stabilizer.name for stabilizer in D3_UNROTATED_X_STABILIZERS)
+    _ANCILLA_LABEL_BY_QUBIT[qubit] for qubit in D3_UNROTATED_ANCILLA_QUBITS
+)
 
 # Backward-compatible alias for the stabilizer-only measurement order.
 D3_UNROTATED_MEASUREMENT_LABELS = D3_UNROTATED_STABILIZER_MEASUREMENT_LABELS
@@ -107,16 +125,11 @@ def _mpp_targets(pauli: str, qubits: tuple[int, ...]) -> list[stim.GateTarget]:
 
 
 def append_d3_unrotated_qubit_coords(circuit: stim.Circuit) -> None:
-    """Append the fixed d=3 unrotated data/ancilla layout to a circuit."""
+    """Append the full 5x5 Stim qubit layout for the d=3 unrotated code."""
 
-    for coord, qubit in zip(D3_UNROTATED_DATA_COORDS, D3_UNROTATED_DATA_QUBITS):
-        circuit.append("QUBIT_COORDS", [qubit], [float(coord[1]), float(coord[0])])
-
-    for coord, qubit in _X_ANCILLA_BY_COORD.items():
-        circuit.append("QUBIT_COORDS", [qubit], [float(coord[1]), float(coord[0])])
-
-    for coord, qubit in _Z_ANCILLA_BY_COORD.items():
-        circuit.append("QUBIT_COORDS", [qubit], [float(coord[1]), float(coord[0])])
+    for row in range(D3_UNROTATED_GRID_WIDTH):
+        for col in range(D3_UNROTATED_GRID_WIDTH):
+            circuit.append("QUBIT_COORDS", [_grid_qubit((row, col))], [float(col), float(row)])
 
 
 def build_d3_unrotated_base_circuit() -> stim.Circuit:
@@ -127,30 +140,90 @@ def build_d3_unrotated_base_circuit() -> stim.Circuit:
     return circuit
 
 
+def append_d3_unrotated_initial_reset(circuit: stim.Circuit, basis: str = "Z") -> None:
+    """Append Stim-style initialization for a chosen data basis.
+
+    ``basis='Z'`` matches ``surface_code:unrotated_memory_z``.
+    ``basis='X'`` matches ``surface_code:unrotated_memory_x``.
+    """
+
+    basis = basis.upper()
+    if basis == "Z":
+        circuit.append("R", list(D3_UNROTATED_DATA_QUBITS) + list(D3_UNROTATED_ANCILLA_QUBITS))
+        return
+    if basis == "X":
+        circuit.append("RX", list(D3_UNROTATED_DATA_QUBITS))
+        circuit.append("R", list(D3_UNROTATED_ANCILLA_QUBITS))
+        return
+    raise ValueError("basis must be 'X' or 'Z'")
+
+
+_SCHEDULE_DIRECTION_ORDER: tuple[tuple[int, int], ...] = (
+    (0, 1),
+    (1, 0),
+    (-1, 0),
+    (0, -1),
+)
+
+
+def _schedule_key(stabilizer) -> tuple[int, int]:
+    row, col = stabilizer.ancilla_coord
+    return (col, row)
+
+
+def _cx_targets_for_direction(
+    stabilizers,
+    ancilla_by_coord: dict[tuple[int, int], int],
+    *,
+    delta: tuple[int, int],
+    ancilla_as_control: bool,
+) -> list[int]:
+    """Return the Stim CX targets for one directional substep."""
+
+    dr, dc = delta
+    targets: list[int] = []
+    for stabilizer in sorted(stabilizers, key=_schedule_key):
+        row, col = stabilizer.ancilla_coord
+        neighbor = (row + dr, col + dc)
+        if neighbor not in stabilizer.data_coords:
+            continue
+        ancilla = ancilla_by_coord[stabilizer.ancilla_coord]
+        data = _DATA_INDEX_BY_COORD[neighbor]
+        if ancilla_as_control:
+            targets.extend((ancilla, data))
+        else:
+            targets.extend((data, ancilla))
+    return targets
+
+
 def append_d3_unrotated_stabilizer_round(circuit: stim.Circuit, *, reset_ancillas: bool) -> None:
-    """Append one ancilla-based stabilizer-measurement round to a circuit."""
+    """Append one Stim-style stabilizer-measurement round to a circuit."""
 
     if reset_ancillas:
-        circuit.append("R", list(D3_UNROTATED_Z_ANCILLAS))
-    circuit.append("TICK")
-    for stabilizer, ancilla in zip(D3_UNROTATED_Z_STABILIZERS, D3_UNROTATED_Z_ANCILLAS):
-        for data_coord in stabilizer.data_coords:
-            circuit.append("CX", [_DATA_INDEX_BY_COORD[data_coord], ancilla])
-    circuit.append("TICK")
-    circuit.append("M", list(D3_UNROTATED_Z_ANCILLAS))
-
-    circuit.append("TICK")
-
-    if reset_ancillas:
-        circuit.append("R", list(D3_UNROTATED_X_ANCILLAS))
-    circuit.append("H", list(D3_UNROTATED_X_ANCILLAS))
-    circuit.append("TICK")
-    for stabilizer, ancilla in zip(D3_UNROTATED_X_STABILIZERS, D3_UNROTATED_X_ANCILLAS):
-        for data_coord in stabilizer.data_coords:
-            circuit.append("CX", [ancilla, _DATA_INDEX_BY_COORD[data_coord]])
+        circuit.append("R", list(D3_UNROTATED_ANCILLA_QUBITS))
     circuit.append("TICK")
     circuit.append("H", list(D3_UNROTATED_X_ANCILLAS))
-    circuit.append("M", list(D3_UNROTATED_X_ANCILLAS))
+    circuit.append("TICK")
+    for delta in _SCHEDULE_DIRECTION_ORDER:
+        targets = _cx_targets_for_direction(
+            D3_UNROTATED_X_STABILIZERS,
+            _X_ANCILLA_BY_COORD,
+            delta=delta,
+            ancilla_as_control=True,
+        )
+        targets.extend(
+            _cx_targets_for_direction(
+                D3_UNROTATED_Z_STABILIZERS,
+                _Z_ANCILLA_BY_COORD,
+                delta=delta,
+                ancilla_as_control=False,
+            )
+        )
+        circuit.append("CX", targets)
+        circuit.append("TICK")
+    circuit.append("H", list(D3_UNROTATED_X_ANCILLAS))
+    circuit.append("TICK")
+    circuit.append("MR", list(D3_UNROTATED_ANCILLA_QUBITS))
 
 
 def append_d3_unrotated_stabilizer_rounds(
@@ -174,8 +247,21 @@ def append_d3_unrotated_stabilizer_rounds(
             circuit.append("TICK")
         append_d3_unrotated_stabilizer_round(
             circuit,
-            reset_ancillas=reset_before_first_round or round_index > 0,
+            reset_ancillas=reset_before_first_round and round_index == 0,
         )
+
+
+def append_d3_unrotated_data_readout(circuit: stim.Circuit, basis: str) -> None:
+    """Append Stim-style final data readout in the chosen basis."""
+
+    basis = basis.upper()
+    if basis == "Z":
+        circuit.append("M", list(D3_UNROTATED_DATA_QUBITS))
+        return
+    if basis == "X":
+        circuit.append("MX", list(D3_UNROTATED_DATA_QUBITS))
+        return
+    raise ValueError("basis must be 'X' or 'Z'")
 
 
 def append_d3_unrotated_logical_readout(circuit: stim.Circuit, basis: str) -> None:

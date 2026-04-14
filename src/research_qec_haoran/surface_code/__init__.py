@@ -11,6 +11,7 @@ from research_qec_haoran.surface_code.unrotated_d3_layout import (
     StabilizerSpec,
 )
 from research_qec_haoran.surface_code.unrotated_d3 import (
+    D3_UNROTATED_DATA_QUBITS,
     D3_UNROTATED_LOGICAL_X_LABEL,
     D3_UNROTATED_LOGICAL_X_QUBITS,
     D3_UNROTATED_LOGICAL_Z_LABEL,
@@ -18,6 +19,10 @@ from research_qec_haoran.surface_code.unrotated_d3 import (
     D3_UNROTATED_MEASUREMENT_LABELS,
     D3_UNROTATED_STABILIZER_MEASUREMENT_LABELS,
     D3_UNROTATED_NUM_QUBITS,
+    D3_UNROTATED_X_ANCILLAS,
+    D3_UNROTATED_Z_ANCILLAS,
+    append_d3_unrotated_data_readout,
+    append_d3_unrotated_initial_reset,
     append_d3_unrotated_logical_readout,
     append_d3_unrotated_qubit_coords,
     append_d3_unrotated_stabilizer_round,
@@ -28,6 +33,7 @@ from research_qec_haoran.surface_code.unrotated_d3 import (
 
 __all__ = [
     "D3_UNROTATED_DATA_COORDS",
+    "D3_UNROTATED_DATA_QUBITS",
     "D3_UNROTATED_LOGICAL_X_COORDS",
     "D3_UNROTATED_LOGICAL_X_LABEL",
     "D3_UNROTATED_LOGICAL_X_QUBITS",
@@ -37,11 +43,15 @@ __all__ = [
     "D3_UNROTATED_MEASUREMENT_LABELS",
     "D3_UNROTATED_NUM_QUBITS",
     "D3_UNROTATED_STABILIZER_MEASUREMENT_LABELS",
+    "D3_UNROTATED_X_ANCILLAS",
     "D3_UNROTATED_X_ANCILLA_COORDS",
     "D3_UNROTATED_X_STABILIZERS",
+    "D3_UNROTATED_Z_ANCILLAS",
     "D3_UNROTATED_Z_ANCILLA_COORDS",
     "D3_UNROTATED_Z_STABILIZERS",
     "StabilizerSpec",
+    "append_d3_unrotated_data_readout",
+    "append_d3_unrotated_initial_reset",
     "append_d3_unrotated_logical_readout",
     "append_d3_unrotated_qubit_coords",
     "append_d3_unrotated_stabilizer_round",
