@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import stim
 
-
-D3_UNROTATED_DISTANCE = 3
-D3_UNROTATED_NUM_QUBITS = 25
+_UNROTATED_D3_DISTANCE = 3
 
 _UNROTATED_MEMORY_TASK_BY_BASIS = {
     "Z": "surface_code:unrotated_memory_z",
@@ -30,6 +28,6 @@ def generate_d3_unrotated_memory_circuit(rounds: int = 1, basis: str = "Z") -> s
 
     return stim.Circuit.generated(
         _UNROTATED_MEMORY_TASK_BY_BASIS[basis],
-        distance=D3_UNROTATED_DISTANCE,
+        distance=_UNROTATED_D3_DISTANCE,
         rounds=rounds,
     )

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 Coord = tuple[int, int]
 
 
@@ -33,18 +32,6 @@ D3_UNROTATED_DATA_COORDS: tuple[Coord, ...] = (
     (4, 4),
 )
 
-D3_UNROTATED_LOGICAL_Z_COORDS: tuple[Coord, ...] = (
-    (0, 0),
-    (0, 2),
-    (0, 4),
-)
-
-D3_UNROTATED_LOGICAL_X_COORDS: tuple[Coord, ...] = (
-    (0, 0),
-    (2, 0),
-    (4, 0),
-)
-
 _DATA_INDEX_BY_COORD = {coord: index for index, coord in enumerate(D3_UNROTATED_DATA_COORDS)}
 
 
@@ -60,7 +47,7 @@ def _neighbor_data_coords(ancilla_coord: Coord) -> tuple[Coord, ...]:
     return tuple(neighbors)
 
 
-D3_UNROTATED_X_ANCILLA_COORDS: tuple[Coord, ...] = (
+_D3_UNROTATED_X_ANCILLA_COORDS: tuple[Coord, ...] = (
     (0, 1),
     (0, 3),
     (2, 1),
@@ -69,7 +56,7 @@ D3_UNROTATED_X_ANCILLA_COORDS: tuple[Coord, ...] = (
     (4, 3),
 )
 
-D3_UNROTATED_Z_ANCILLA_COORDS: tuple[Coord, ...] = (
+_D3_UNROTATED_Z_ANCILLA_COORDS: tuple[Coord, ...] = (
     (1, 0),
     (1, 2),
     (1, 4),
@@ -85,7 +72,7 @@ D3_UNROTATED_X_STABILIZERS: tuple[StabilizerSpec, ...] = tuple(
         ancilla_coord=coord,
         data_coords=_neighbor_data_coords(coord),
     )
-    for i, coord in enumerate(D3_UNROTATED_X_ANCILLA_COORDS)
+    for i, coord in enumerate(_D3_UNROTATED_X_ANCILLA_COORDS)
 )
 
 D3_UNROTATED_Z_STABILIZERS: tuple[StabilizerSpec, ...] = tuple(
@@ -94,5 +81,5 @@ D3_UNROTATED_Z_STABILIZERS: tuple[StabilizerSpec, ...] = tuple(
         ancilla_coord=coord,
         data_coords=_neighbor_data_coords(coord),
     )
-    for i, coord in enumerate(D3_UNROTATED_Z_ANCILLA_COORDS)
+    for i, coord in enumerate(_D3_UNROTATED_Z_ANCILLA_COORDS)
 )
