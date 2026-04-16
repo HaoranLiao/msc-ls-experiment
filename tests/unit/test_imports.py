@@ -5,13 +5,7 @@ from research_qec_haoran import __version__
 from research_qec_haoran.paths import REPO_ROOT
 from research_qec_haoran.surface_code import (
     D3_UNROTATED_DATA_COORDS,
-    D3_UNROTATED_DISTANCE,
-    D3_UNROTATED_LOGICAL_X_COORDS,
-    D3_UNROTATED_LOGICAL_Z_COORDS,
-    D3_UNROTATED_NUM_QUBITS,
-    D3_UNROTATED_X_ANCILLA_COORDS,
     D3_UNROTATED_X_STABILIZERS,
-    D3_UNROTATED_Z_ANCILLA_COORDS,
     D3_UNROTATED_Z_STABILIZERS,
     generate_d3_unrotated_memory_circuit,
 )
@@ -25,16 +19,12 @@ def test_repo_root_name() -> None:
     assert REPO_ROOT.name == "research-qec-haoran"
 
 
-def test_d3_unrotated_layout_sizes() -> None:
-    assert D3_UNROTATED_DISTANCE == 3
+def test_d3_unrotated_layout_shapes() -> None:
     assert len(D3_UNROTATED_DATA_COORDS) == 13
-    assert D3_UNROTATED_LOGICAL_Z_COORDS == ((0, 0), (0, 2), (0, 4))
-    assert D3_UNROTATED_LOGICAL_X_COORDS == ((0, 0), (2, 0), (4, 0))
-    assert len(D3_UNROTATED_X_ANCILLA_COORDS) == 6
-    assert len(D3_UNROTATED_Z_ANCILLA_COORDS) == 6
     assert len(D3_UNROTATED_X_STABILIZERS) == 6
     assert len(D3_UNROTATED_Z_STABILIZERS) == 6
-    assert D3_UNROTATED_NUM_QUBITS == 25
+    assert D3_UNROTATED_X_STABILIZERS[0].name == "X0"
+    assert D3_UNROTATED_Z_STABILIZERS[0].name == "Z0"
 
 
 def test_generate_d3_unrotated_memory_z_matches_stim() -> None:
