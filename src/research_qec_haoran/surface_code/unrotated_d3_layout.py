@@ -37,14 +37,12 @@ _DATA_INDEX_BY_COORD = {coord: index for index, coord in enumerate(D3_UNROTATED_
 
 def _neighbor_data_coords(ancilla_coord: Coord) -> tuple[Coord, ...]:
     """Return orthogonally adjacent data coordinates for an ancilla location."""
-
-    row, col = ancilla_coord
-    neighbors: list[Coord] = []
-    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-        candidate = (row + dr, col + dc)
-        if candidate in _DATA_INDEX_BY_COORD:
-            neighbors.append(candidate)
-    return tuple(neighbors)
+    x, y = ancilla_coord
+    return tuple(
+        (x + dx, y + dy)
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1))
+        if (x + dx, y + dy) in _DATA_INDEX_BY_COORD
+    )
 
 
 _D3_UNROTATED_X_ANCILLA_COORDS: tuple[Coord, ...] = (
