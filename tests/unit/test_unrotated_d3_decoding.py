@@ -2,9 +2,9 @@ import pytest
 
 from research_qec_haoran.decoding import (
     PauliFrame,
-    build_d3_unrotated_memory_matching_decoder,
+    build_matching_decoder,
     decode_memory_shots,
-    detector_coords_by_index,
+    generate_noisy_memory_circuit,
 )
 from research_qec_haoran.decoding.unrotated_d3_memory import (
     _boundary_data_qubit,
@@ -18,17 +18,17 @@ from research_qec_haoran.noise import (
     inject_pauli_errors_after_measurement_round,
     inject_pauli_errors_before_final_measurement,
 )
-from research_qec_haoran.surface_code import generate_d3_unrotated_memory_circuit
+from research_qec_haoran.decoding.unrotated_d3_memory import detector_coords_by_index
 
 
 # ---------------------------------------------------------------------------
 # Helper: shared fixtures
 # ---------------------------------------------------------------------------
 
-def _circuit_and_matching(rounds: int = 2, basis: str = "Z"):
-    circuit = generate_d3_unrotated_memory_circuit(rounds=rounds, basis=basis)
-    matching = build_d3_unrotated_memory_matching_decoder(rounds=rounds, basis=basis)
-    return circuit, matching
+def _circuit_and_matching_decoder(rounds: int = 2, basis: str = "Z"):
+    circuit = generate_noisy_memory_circuit(distance=3, rounds=rounds, basis=basis, error_probability=1e-3)
+    matching_decoder = build_matching_decoder(circuit)
+    return circuit, matching_decoder
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +205,7 @@ class TestStringRepresentations:
 
 
 def test_detector_coordinate_map() -> None:
-    circuit = generate_d3_unrotated_memory_circuit(rounds=2, basis="Z")
+    circuit = generate_noisy_memory_circuit(distance=3, rounds=2, basis="Z", error_probability=1e-3)
     detector_coords = detector_coords_by_index(circuit)
 
     assert detector_coords[0] == (0, 1, 0)
@@ -213,10 +213,10 @@ def test_detector_coordinate_map() -> None:
 
 
 def test_decode_d3_unrotated_memory_shot_without_errors() -> None:
-    circuit, matching = _circuit_and_matching()
+    circuit, matching_decoder = _circuit_and_matching_decoder()
 
     decoded_shot = decode_memory_shots(
-        circuit, matching=matching, logical_readout_basis="Z",
+        circuit, matching_decoder=matching_decoder, logical_readout_basis="Z",
     )[0]
 
     assert decoded_shot.logical_readout_basis == "Z"
@@ -228,8 +228,8 @@ def test_decode_d3_unrotated_memory_shot_without_errors() -> None:
 
 def test_decode_no_error_as_dict_messages() -> None:
     """Verify as_dict produces correct human-readable strings for the no-error case."""
-    circuit, matching = _circuit_and_matching()
-    d = decode_memory_shots(circuit, matching=matching, logical_readout_basis="Z")[0].as_dict()
+    circuit, matching_decoder = _circuit_and_matching_decoder()
+    d = decode_memory_shots(circuit, matching_decoder=matching_decoder, logical_readout_basis="Z")[0].as_dict()
 
     assert d["detection_events"] == "none — no detectors fired"
     assert d["decoder_corrections"] == "none — decoder inferred no errors"
@@ -238,12 +238,12 @@ def test_decode_no_error_as_dict_messages() -> None:
 
 
 def test_decode_single_x_error_between_rounds() -> None:
-    circuit, matching = _circuit_and_matching()
+    circuit, matching_decoder = _circuit_and_matching_decoder()
     injected = inject_pauli_errors_after_measurement_round(
         circuit, pauli="X", coords=[(2, 2)], measurement_round=1,
     )
 
-    shot = decode_memory_shots(injected, matching=matching, logical_readout_basis="Z")[0]
+    shot = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0]
 
     assert len(shot.detection_events) == 2
     assert shot.detection_events[0].coord == (2, 1, 1)
@@ -262,11 +262,11 @@ def test_decode_single_x_error_between_rounds() -> None:
 
 def test_decode_single_x_error_between_rounds_as_dict() -> None:
     """Verify as_dict for a corrected non-boundary error."""
-    circuit, matching = _circuit_and_matching()
+    circuit, matching_decoder = _circuit_and_matching_decoder()
     injected = inject_pauli_errors_after_measurement_round(
         circuit, pauli="X", coords=[(2, 2)], measurement_round=1,
     )
-    d = decode_memory_shots(injected, matching=matching, logical_readout_basis="Z")[0].as_dict()
+    d = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0].as_dict()
 
     assert d["decoding_succeeded"] is True
     assert "no frame update needed" in d["error x correction product"]
@@ -275,12 +275,12 @@ def test_decode_single_x_error_between_rounds_as_dict() -> None:
 
 
 def test_decode_single_x_error_before_final_measurement() -> None:
-    circuit, matching = _circuit_and_matching()
+    circuit, matching_decoder = _circuit_and_matching_decoder()
     injected = inject_pauli_errors_before_final_measurement(
         circuit, pauli="X", coords=[(0, 0)],
     )
 
-    shot = decode_memory_shots(injected, matching=matching, logical_readout_basis="Z")[0]
+    shot = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0]
 
     assert len(shot.detection_events) == 1
     assert shot.detection_events[0].coord == (0, 1, 2)
@@ -297,11 +297,11 @@ def test_decode_single_x_error_before_final_measurement() -> None:
 
 def test_decode_single_x_error_before_final_as_dict() -> None:
     """Verify as_dict for a boundary error that flips L0."""
-    circuit, matching = _circuit_and_matching()
+    circuit, matching_decoder = _circuit_and_matching_decoder()
     injected = inject_pauli_errors_before_final_measurement(
         circuit, pauli="X", coords=[(0, 0)],
     )
-    d = decode_memory_shots(injected, matching=matching, logical_readout_basis="Z")[0].as_dict()
+    d = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0].as_dict()
 
     assert d["decoding_succeeded"] is True
     assert "Pauli frame update" in d["error x correction product"]
@@ -310,12 +310,12 @@ def test_decode_single_x_error_before_final_as_dict() -> None:
 
 
 def test_weight_three_logical_x_error_is_undetected() -> None:
-    circuit, matching = _circuit_and_matching()
+    circuit, matching_decoder = _circuit_and_matching_decoder()
     injected = inject_pauli_errors_before_final_measurement(
         circuit, pauli="X", coords=[(0, 0), (0, 2), (0, 4)],
     )
 
-    shot = decode_memory_shots(injected, matching=matching, logical_readout_basis="Z")[0]
+    shot = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0]
 
     assert shot.detection_events == ()
     assert shot.decoder_corrections == ()
@@ -325,11 +325,11 @@ def test_weight_three_logical_x_error_is_undetected() -> None:
 
 
 def test_weight_three_logical_x_as_dict() -> None:
-    circuit, matching = _circuit_and_matching()
+    circuit, matching_decoder = _circuit_and_matching_decoder()
     injected = inject_pauli_errors_before_final_measurement(
         circuit, pauli="X", coords=[(0, 0), (0, 2), (0, 4)],
     )
-    d = decode_memory_shots(injected, matching=matching, logical_readout_basis="Z")[0].as_dict()
+    d = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0].as_dict()
 
     assert d["decoding_succeeded"] is False
     assert "FLIP" in d["error x correction product"]
@@ -342,12 +342,12 @@ def test_weight_three_logical_x_as_dict() -> None:
 
 def test_weight_two_x_error_00_02_causes_logical_error() -> None:
     """X on (0,0)+(0,2): decoder miscorrects, completing the logical X string."""
-    circuit, matching = _circuit_and_matching()
+    circuit, matching_decoder = _circuit_and_matching_decoder()
     injected = inject_pauli_errors_before_final_measurement(
         circuit, pauli="X", coords=[(0, 0), (0, 2)],
     )
 
-    shot = decode_memory_shots(injected, matching=matching, logical_readout_basis="Z")[0]
+    shot = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0]
 
     # One detector fires (the unpaired stabilizer at (0,3))
     assert len(shot.detection_events) == 1
@@ -360,12 +360,12 @@ def test_weight_two_x_error_00_02_causes_logical_error() -> None:
 
 def test_weight_two_x_error_02_04_causes_logical_error() -> None:
     """X on (0,2)+(0,4): symmetric miscorrection."""
-    circuit, matching = _circuit_and_matching()
+    circuit, matching_decoder = _circuit_and_matching_decoder()
     injected = inject_pauli_errors_before_final_measurement(
         circuit, pauli="X", coords=[(0, 2), (0, 4)],
     )
 
-    shot = decode_memory_shots(injected, matching=matching, logical_readout_basis="Z")[0]
+    shot = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0]
 
     assert len(shot.detection_events) == 1
     assert shot.detection_events[0].sector == "Z"
@@ -381,12 +381,12 @@ def test_weight_two_x_error_02_04_causes_logical_error() -> None:
 
 def test_x_error_on_non_logical_boundary_qubit() -> None:
     """X on (4,4) — boundary qubit NOT in logical-Z support. Should be corrected."""
-    circuit, matching = _circuit_and_matching()
+    circuit, matching_decoder = _circuit_and_matching_decoder()
     injected = inject_pauli_errors_before_final_measurement(
         circuit, pauli="X", coords=[(4, 4)],
     )
 
-    shot = decode_memory_shots(injected, matching=matching, logical_readout_basis="Z")[0]
+    shot = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0]
 
     assert len(shot.detection_events) == 1
     assert shot.actual_logical_flip is False
@@ -400,15 +400,15 @@ def test_x_error_on_non_logical_boundary_qubit() -> None:
 
 
 def test_logical_observable_qubits_for_z_basis() -> None:
-    circuit, matching = _circuit_and_matching(basis="Z")
-    shot = decode_memory_shots(circuit, matching=matching, logical_readout_basis="Z")[0]
+    circuit, matching_decoder = _circuit_and_matching_decoder(basis="Z")
+    shot = decode_memory_shots(circuit, matching_decoder=matching_decoder, logical_readout_basis="Z")[0]
     # Logical Z for unrotated d=3: top row y=0 → (0,0), (2,0), (4,0)
     assert set(shot.logical_observable_qubits) == {(0, 0), (2, 0), (4, 0)}
 
 
 def test_logical_observable_qubits_for_x_basis() -> None:
-    circuit, matching = _circuit_and_matching(basis="X")
-    shot = decode_memory_shots(circuit, matching=matching, logical_readout_basis="X")[0]
+    circuit, matching_decoder = _circuit_and_matching_decoder(basis="X")
+    shot = decode_memory_shots(circuit, matching_decoder=matching_decoder, logical_readout_basis="X")[0]
     # Logical X for unrotated d=3: left column x=0 → (0,0), (0,2), (0,4)
     assert set(shot.logical_observable_qubits) == {(0, 0), (0, 2), (0, 4)}
 
@@ -461,30 +461,30 @@ class TestPauliFrame:
         frame.register("L0")
         frame.update_x("L0", flip=True)
         # X anticommutes with Z → flips the readout
-        assert frame.interpret_z_readout("L0", raw_bit=0) == 1
-        assert frame.interpret_z_readout("L0", raw_bit=1) == 0
+        assert frame.interpret_z_readout("L0", uncorrected_bit=0) == 1
+        assert frame.interpret_z_readout("L0", uncorrected_bit=1) == 0
 
     def test_interpret_z_readout_with_z_flip(self) -> None:
         frame = PauliFrame()
         frame.register("L0")
         frame.update_z("L0", flip=True)
         # Z commutes with Z → no effect
-        assert frame.interpret_z_readout("L0", raw_bit=0) == 0
-        assert frame.interpret_z_readout("L0", raw_bit=1) == 1
+        assert frame.interpret_z_readout("L0", uncorrected_bit=0) == 0
+        assert frame.interpret_z_readout("L0", uncorrected_bit=1) == 1
 
     def test_interpret_x_readout_with_z_flip(self) -> None:
         frame = PauliFrame()
         frame.register("L0")
         frame.update_z("L0", flip=True)
         # Z anticommutes with X → flips the readout
-        assert frame.interpret_x_readout("L0", raw_bit=0) == 1
+        assert frame.interpret_x_readout("L0", uncorrected_bit=0) == 1
 
     def test_interpret_x_readout_with_x_flip(self) -> None:
         frame = PauliFrame()
         frame.register("L0")
         frame.update_x("L0", flip=True)
         # X commutes with X → no effect
-        assert frame.interpret_x_readout("L0", raw_bit=0) == 0
+        assert frame.interpret_x_readout("L0", uncorrected_bit=0) == 0
 
     def test_reset(self) -> None:
         frame = PauliFrame()

@@ -2,8 +2,6 @@
 
 Public API
 ----------
-- ``generate_d3_unrotated_memory_decoder_circuit`` – Stim circuit with small noise for decoder construction
-- ``build_d3_unrotated_memory_matching_decoder`` – PyMatching decoder from that circuit
 - ``decode_memory_shots`` – sample, decode, and return structured ``DecodedMemoryShot`` results
 - ``detector_coords_by_index`` – map detector indices to ``(x, y, t)`` coordinates
 
@@ -21,21 +19,14 @@ from typing import Any
 
 import stim
 
-# ---------------------------------------------------------------------------
-# Constants and type aliases
-# ---------------------------------------------------------------------------
+from research_qec_haoran.decoding.memory_circuit import normalized_basis
 
-_UNROTATED_D3_DISTANCE = 3
+# ---------------------------------------------------------------------------
+# Type aliases
+# ---------------------------------------------------------------------------
 
 DetectorCoord = tuple[int, int, int]
 QubitCoord = tuple[int, int]
-
-DEFAULT_DECODER_ERROR_PROBABILITY = 1e-3
-
-_MEMORY_TASK_BY_BASIS = {
-    "Z": "surface_code:unrotated_memory_z",
-    "X": "surface_code:unrotated_memory_x",
-}
 
 # All data-qubit coordinates in the d=3 unrotated layout (Stim's (x, y) convention).
 _D3_DATA_QUBIT_COORDS: frozenset[QubitCoord] = frozenset(
@@ -43,7 +34,7 @@ _D3_DATA_QUBIT_COORDS: frozenset[QubitCoord] = frozenset(
 )
 
 # ---------------------------------------------------------------------------
-# Data classes (public)
+# Data classes
 # ---------------------------------------------------------------------------
 
 
@@ -92,7 +83,6 @@ class DecodedMemoryShot:
     def as_dict(self) -> dict[str, object]:
         """Return a notebook-friendly summary."""
         has_detection = len(self.detection_events) > 0
-
         if not self.residual_logical_error:
             if not has_detection and not self.actual_logical_flip:
                 product_str = "I — no errors occurred"
@@ -125,67 +115,22 @@ class DecodedMemoryShot:
 
 
 # ---------------------------------------------------------------------------
-# Public API: circuit generation, decoder construction, decoding
+# Public API
 # ---------------------------------------------------------------------------
-
-
-def generate_d3_unrotated_memory_decoder_circuit(
-    *,
-    rounds: int = 2,
-    basis: str = "Z",
-    error_probability: float = DEFAULT_DECODER_ERROR_PROBABILITY,
-) -> stim.Circuit:
-    """Return a small-noise circuit used to build a matching decoder."""
-    if not 0 <= error_probability <= 1:
-        raise ValueError("error_probability must be between 0 and 1")
-
-    normalized_basis = _normalized_basis(basis)
-    return stim.Circuit.generated(
-        _MEMORY_TASK_BY_BASIS[normalized_basis],
-        distance=_UNROTATED_D3_DISTANCE,
-        rounds=rounds,
-        after_clifford_depolarization=error_probability,
-        before_round_data_depolarization=error_probability,
-        before_measure_flip_probability=error_probability,
-        after_reset_flip_probability=error_probability,
-    )
-
-
-def build_d3_unrotated_memory_matching_decoder(
-    *,
-    rounds: int = 2,
-    basis: str = "Z",
-    error_probability: float = DEFAULT_DECODER_ERROR_PROBABILITY,
-) -> Any:
-    """Build a PyMatching decoder for Stim's native d=3 unrotated memory circuit."""
-    try:
-        import pymatching
-    except ImportError as exc:  # pragma: no cover
-        raise ImportError(
-            "pymatching is required for decoding helpers; use the repo's qec environment."
-        ) from exc
-
-    decoder_circuit = generate_d3_unrotated_memory_decoder_circuit(
-        rounds=rounds,
-        basis=basis,
-        error_probability=error_probability,
-    )
-    detector_error_model = decoder_circuit.detector_error_model(decompose_errors=True)
-    return pymatching.Matching.from_detector_error_model(detector_error_model)
 
 
 def detector_coords_by_index(circuit: stim.Circuit) -> dict[int, DetectorCoord]:
     """Map each detector index in *circuit* to its ``(x, y, t)`` coordinate."""
     return {
-        detector: _to_detector_coord(coords)
-        for detector, coords in circuit.get_detector_coordinates().items()
+        det: _to_detector_coord(coords)
+        for det, coords in circuit.get_detector_coordinates().items()
     }
 
 
 def decode_memory_shots(
     circuit: stim.Circuit,
     *,
-    matching: Any,
+    matching_decoder: Any,
     shots: int = 1,
     logical_readout_basis: str = "Z",
 ) -> list[DecodedMemoryShot]:
@@ -199,48 +144,40 @@ def decode_memory_shots(
     if shots < 1:
         raise ValueError("shots must be at least 1")
 
-    normalized_basis = _normalized_basis(logical_readout_basis)
+    basis = normalized_basis(logical_readout_basis)
 
-    # Sample detector outcomes and observable flips
     sampler = circuit.compile_detector_sampler()
     detector_samples, observable_flips = sampler.sample(
-        shots=shots,
-        separate_observables=True,
+        shots=shots, separate_observables=True,
     )
     if observable_flips.shape[1] != 1:
         raise ValueError("this helper expects exactly one logical observable, namely Stim's L0")
 
-    # Pre-compute metadata shared across all shots
     detector_coord_map = detector_coords_by_index(circuit)
     obs_qubit_coords = _observable_data_qubit_coords(circuit)
     max_t = max(c[2] for c in detector_coord_map.values()) if detector_coord_map else 0
 
     decoded_shots: list[DecodedMemoryShot] = []
-    for detector_sample, measured_observable_flip in zip(
-        detector_samples, observable_flips, strict=True,
-    ):
-        detection_events = _build_detection_events(detector_sample, detector_coord_map, max_t)
-        decoder_inferred_flip, corrections = _decode_and_build_corrections(
-            detector_sample, matching, detector_coord_map, max_t,
+    for det_sample, obs_flip in zip(detector_samples, observable_flips, strict=True):
+        detection_events = _build_detection_events(det_sample, detector_coord_map, max_t)
+        inferred_flip, corrections = _decode_and_build_corrections(
+            det_sample, matching_decoder, detector_coord_map, max_t,
         )
-
-        actual_flip = bool(measured_observable_flip[0])
-        decoded_shots.append(
-            DecodedMemoryShot(
-                logical_readout_basis=normalized_basis,
-                logical_observable_qubits=obs_qubit_coords,
-                detection_events=tuple(detection_events),
-                decoder_corrections=tuple(corrections),
-                actual_logical_flip=actual_flip,
-                decoder_inferred_logical_flip=decoder_inferred_flip,
-                residual_logical_error=(actual_flip != decoder_inferred_flip),
-            )
-        )
+        actual_flip = bool(obs_flip[0])
+        decoded_shots.append(DecodedMemoryShot(
+            logical_readout_basis=basis,
+            logical_observable_qubits=obs_qubit_coords,
+            detection_events=tuple(detection_events),
+            decoder_corrections=tuple(corrections),
+            actual_logical_flip=actual_flip,
+            decoder_inferred_logical_flip=inferred_flip,
+            residual_logical_error=(actual_flip != inferred_flip),
+        ))
     return decoded_shots
 
 
 # ---------------------------------------------------------------------------
-# Private helpers: decoding internals
+# Private: decoding internals
 # ---------------------------------------------------------------------------
 
 
@@ -251,54 +188,52 @@ def _build_detection_events(
 ) -> list[DetectionEvent]:
     """Convert a raw detector-sample array into a list of :class:`DetectionEvent`."""
     events: list[DetectionEvent] = []
-    for det_idx, det_bit in enumerate(detector_sample):
-        if bool(det_bit):
-            x, y, t = detector_coord_map[det_idx]
-            events.append(DetectionEvent(
-                detector_index=det_idx,
-                coord=(x, y, t),
-                sector=_detector_sector(x, y),
-                time_label=_detector_time_label(t, max_t),
-            ))
+    for idx, fired in enumerate(detector_sample):
+        if not fired:
+            continue
+        x, y, t = detector_coord_map[idx]
+        events.append(DetectionEvent(
+            detector_index=idx,
+            coord=(x, y, t),
+            sector=_detector_sector(x, y),
+            time_label=_detector_time_label(t, max_t),
+        ))
     return events
 
 
 def _decode_and_build_corrections(
     detector_sample: Any,
-    matching: Any,
+    matching_decoder: Any,
     detector_coord_map: dict[int, DetectorCoord],
     max_t: int,
 ) -> tuple[bool, list[InferredCorrection]]:
     """Run the decoder and return ``(inferred_logical_flip, corrections)``."""
-    matched_dict = matching.decode_to_matched_dets_dict(detector_sample)
-    decoder_inferred_flip = bool(matching.decode(detector_sample)[0])
+    matched_dict = matching_decoder.decode_to_matched_dets_dict(detector_sample)
+    inferred_flip = bool(matching_decoder.decode(detector_sample)[0])
 
-    seen_pairs: set[tuple[int, int | None]] = set()
+    seen: set[tuple[int, int | None]] = set()
     corrections: list[InferredCorrection] = []
-
     for det_a, det_b in matched_dict.items():
-        pair_key = (
+        key = (
             min(det_a, det_b) if det_b is not None else det_a,
             max(det_a, det_b) if det_b is not None else None,
         )
-        if pair_key in seen_pairs:
+        if key in seen:
             continue
-        seen_pairs.add(pair_key)
+        seen.add(key)
 
         evt_a = _make_detection_event(det_a, detector_coord_map, max_t)
         evt_b: DetectionEvent | str = (
             "boundary" if det_b is None
             else _make_detection_event(det_b, detector_coord_map, max_t)
         )
-
         corrections.append(InferredCorrection(
             event_a=evt_a,
             event_b=evt_b,
             inferred_error_type=_infer_error_description(evt_a, evt_b),
-            flips_logical=(det_b is None and decoder_inferred_flip),
+            flips_logical=(det_b is None and inferred_flip),
         ))
-
-    return decoder_inferred_flip, corrections
+    return inferred_flip, corrections
 
 
 def _make_detection_event(
@@ -317,7 +252,7 @@ def _make_detection_event(
 
 
 # ---------------------------------------------------------------------------
-# Private helpers: error description inference
+# Private: error description inference
 # ---------------------------------------------------------------------------
 
 
@@ -326,16 +261,15 @@ def _infer_error_description(
     event_b: DetectionEvent | str,
 ) -> str:
     """Infer a human-readable error description from a matched pair."""
-
-    # Boundary match: one detector matched to the virtual boundary node
+    # Boundary match
     if isinstance(event_a, str) or isinstance(event_b, str):
         det = event_a if isinstance(event_a, DetectionEvent) else event_b
         if isinstance(det, DetectionEvent):
             x, y, t = det.coord
-            error_pauli = "X" if det.sector == "Z" else "Z" if det.sector == "X" else "?"
+            pauli = "X" if det.sector == "Z" else "Z" if det.sector == "X" else "?"
             data_q = _boundary_data_qubit(x, y)
             loc = f"on data qubit ({data_q[0]},{data_q[1]})" if data_q else f"near stabilizer ({x},{y})"
-            return f"{error_pauli} error {loc}, t={t}"
+            return f"{pauli} error {loc}, t={t}"
         return "boundary match"
 
     # Two detectors matched together
@@ -346,26 +280,24 @@ def _infer_error_description(
     if at == bt:
         # Same time layer → spatial (data-qubit) error
         if event_a.sector == "Z" and event_b.sector == "Z":
-            error_pauli = "X"
+            pauli = "X"
         elif event_a.sector == "X" and event_b.sector == "X":
-            error_pauli = "Z"
+            pauli = "Z"
         else:
-            error_pauli = "Y"  # cross-sector
+            pauli = "Y"
         data_q = _shared_data_qubit(ax, ay, bx, by)
         if data_q:
-            return f"{error_pauli} error on data qubit ({data_q[0]},{data_q[1]}), t={at}"
-        return f"{error_pauli} error on data qubit near ({(ax+bx)/2:.0f},{(ay+by)/2:.0f}), t={at}"
+            return f"{pauli} error on data qubit ({data_q[0]},{data_q[1]}), t={at}"
+        return f"{pauli} error on data qubit near ({(ax + bx) / 2:.0f},{(ay + by) / 2:.0f}), t={at}"
 
     if ax == bx and ay == by:
-        # Same spatial location, different time → measurement error
-        return f"measurement error on stabilizer ({ax},{ay}) between t={min(at,bt)} and t={max(at,bt)}"
+        return f"measurement error on stabilizer ({ax},{ay}) between t={min(at, bt)} and t={max(at, bt)}"
 
-    # Space-time diagonal
     return f"space-time error between ({ax},{ay},t={at}) and ({bx},{by},t={bt})"
 
 
 # ---------------------------------------------------------------------------
-# Private helpers: layout geometry
+# Private: layout geometry
 # ---------------------------------------------------------------------------
 
 
@@ -379,10 +311,10 @@ def _adjacent_data_qubits(sx: int, sy: int) -> list[QubitCoord]:
 
 
 def _shared_data_qubit(ax: int, ay: int, bx: int, by: int) -> QubitCoord | None:
-    """Return the data qubit shared by two adjacent stabilizers, or None."""
-    mid = ((ax + bx) / 2, (ay + by) / 2)
-    if mid[0] == int(mid[0]) and mid[1] == int(mid[1]):
-        candidate = (int(mid[0]), int(mid[1]))
+    """Return the data qubit shared by two adjacent stabilizers, or ``None``."""
+    mid_x, mid_y = (ax + bx) / 2, (ay + by) / 2
+    if mid_x == int(mid_x) and mid_y == int(mid_y):
+        candidate = (int(mid_x), int(mid_y))
         if candidate in _D3_DATA_QUBIT_COORDS:
             return candidate
     return None
@@ -391,31 +323,27 @@ def _shared_data_qubit(ax: int, ay: int, bx: int, by: int) -> QubitCoord | None:
 def _boundary_data_qubit(sx: int, sy: int) -> QubitCoord | None:
     """Return the most likely boundary data qubit for a single-detector boundary match.
 
-    When a stabilizer has fewer than 4 data-qubit neighbors (boundary stabilizer),
-    the boundary error is on one of its neighbors that sits on the patch edge.
-    We pick the neighbor with the smallest number of adjacent stabilizers (most boundary-like).
+    Picks the neighbor with the fewest adjacent stabilizers (most boundary-like),
+    preferring neighbors that sit on the patch edge (x=0, x=4, y=0, or y=4).
     """
     neighbors = _adjacent_data_qubits(sx, sy)
     if not neighbors:
         return None
 
-    def _num_adjacent_stabilizers(qx: int, qy: int) -> int:
-        count = 0
-        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            nx, ny = qx + dx, qy + dy
-            if 0 <= nx <= 4 and 0 <= ny <= 4 and (nx, ny) not in _D3_DATA_QUBIT_COORDS:
-                count += 1
-        return count
+    def _stabilizer_count(qx: int, qy: int) -> int:
+        return sum(
+            1 for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]
+            if 0 <= qx + dx <= 4 and 0 <= qy + dy <= 4
+            and (qx + dx, qy + dy) not in _D3_DATA_QUBIT_COORDS
+        )
 
-    # Prefer neighbors at the actual patch boundary (x=0 or x=4 or y=0 or y=4)
-    boundary_neighbors = [(qx, qy) for qx, qy in neighbors if qx in (0, 4) or qy in (0, 4)]
-    if boundary_neighbors:
-        return min(boundary_neighbors, key=lambda q: _num_adjacent_stabilizers(*q))
-    return min(neighbors, key=lambda q: _num_adjacent_stabilizers(*q))
+    edge = [(qx, qy) for qx, qy in neighbors if qx in (0, 4) or qy in (0, 4)]
+    candidates = edge or neighbors
+    return min(candidates, key=lambda q: _stabilizer_count(*q))
 
 
 # ---------------------------------------------------------------------------
-# Private helpers: detector metadata
+# Private: detector metadata
 # ---------------------------------------------------------------------------
 
 
@@ -425,8 +353,6 @@ def _detector_sector(x: int, y: int) -> str:
     In Stim's unrotated surface-code layout:
     - X-stabilizer ancillas (with H gates) sit at (odd x, even y)
     - Z-stabilizer ancillas (no H gates) sit at (even x, odd y)
-
-    An X-stabilizer detects Z errors; a Z-stabilizer detects X errors.
     """
     if x % 2 == 1 and y % 2 == 0:
         return "X"
@@ -445,12 +371,12 @@ def _detector_time_label(t: int, max_t: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Private helpers: observable extraction, basis normalization, coord conversion
+# Private: observable extraction and coordinate conversion
 # ---------------------------------------------------------------------------
 
 
 def _observable_data_qubit_coords(circuit: stim.Circuit) -> tuple[QubitCoord, ...]:
-    """Return the ``(x, y)`` coordinates of data qubits that make up the logical observable."""
+    """Return the ``(x, y)`` coordinates of data qubits in the logical observable."""
     qcoords = {
         q: (int(cs[0]), int(cs[1]))
         for q, cs in circuit.get_final_qubit_coordinates().items()
@@ -469,18 +395,11 @@ def _observable_data_qubit_coords(circuit: stim.Circuit) -> tuple[QubitCoord, ..
         for token in line.split():
             if token.startswith("rec["):
                 offset = int(token[4:-1])
-                qubit_index = m_targets[total_m + offset]
-                obs_qubit_coords.append(qcoords[qubit_index])
+                obs_qubit_coords.append(qcoords[m_targets[total_m + offset]])
     return tuple(obs_qubit_coords)
 
 
-def _normalized_basis(basis: str) -> str:
-    normalized = basis.upper()
-    if normalized not in _MEMORY_TASK_BY_BASIS:
-        raise ValueError("basis must be 'X' or 'Z'")
-    return normalized
-
-
 def _to_detector_coord(raw_coords: list[float]) -> DetectorCoord:
+    """Convert raw Stim detector coordinates to an ``(x, y, t)`` integer tuple."""
     padded = list(raw_coords) + [0.0] * (3 - len(raw_coords))
     return tuple(int(v) for v in padded[:3])

@@ -32,8 +32,8 @@ class PauliFrame:
         frame.update_x("L0", flip=True)
 
         # Interpret the final Z-basis readout
-        raw_readout = 1  # physical measurement said |1>
-        corrected = frame.interpret_z_readout("L0", raw_readout)
+        uncorrected_readout = 1  # physical measurement said |1>
+        corrected = frame.interpret_z_readout("L0", uncorrected_readout)
         # corrected = 0 if frame had an X flip, because X anticommutes with Z
 
     """
@@ -76,21 +76,21 @@ class PauliFrame:
             return "Z"
         return "I"
 
-    def interpret_z_readout(self, label: str, raw_bit: int) -> int:
-        """Apply the frame to a raw Z-basis logical readout.
+    def interpret_z_readout(self, label: str, uncorrected_bit: int) -> int:
+        """Apply the frame to an uncorrected Z-basis logical readout.
 
         An X byproduct anticommutes with Z measurement, so it flips the result.
         A Z byproduct commutes with Z measurement, so it has no effect.
         """
-        return raw_bit ^ int(self._x_flips[label])
+        return uncorrected_bit ^ int(self._x_flips[label])
 
-    def interpret_x_readout(self, label: str, raw_bit: int) -> int:
-        """Apply the frame to a raw X-basis logical readout.
+    def interpret_x_readout(self, label: str, uncorrected_bit: int) -> int:
+        """Apply the frame to an uncorrected X-basis logical readout.
 
         A Z byproduct anticommutes with X measurement, so it flips the result.
         An X byproduct commutes with X measurement, so it has no effect.
         """
-        return raw_bit ^ int(self._z_flips[label])
+        return uncorrected_bit ^ int(self._z_flips[label])
 
     def reset(self, label: str) -> None:
         """Reset the frame for ``label`` back to identity."""
