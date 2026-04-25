@@ -21,8 +21,8 @@ interpreter uses the d=3 unrotated layout geometry to work backwards from
 matched detector pairs to inferred Pauli errors on specific data qubits.
 
 For high-throughput logical error rate estimation (no per-shot annotation),
-use :mod:`research_qec_haoran.decoding.threshold_sim` instead — it calls
-``decoder.decode_batch(...)`` directly.
+use :func:`research_qec_haoran.decoding.memory_circuit.estimate_logical_error_rate`
+instead — it calls ``decoder.decode_batch(...)`` directly.
 
 Public API
 ----------

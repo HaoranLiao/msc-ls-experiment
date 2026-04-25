@@ -1,16 +1,18 @@
 """General helpers for Stim surface-code memory circuits and PyMatching decoders.
 
 These are distance-general building blocks shared by the d=3 decoding helpers
-(``unrotated_d3_memory``) and the threshold simulation sweep (``threshold_sim``).
+(``unrotated_d3_memory``) and the threshold estimation notebook.
 
 Public API
 ----------
 - ``generate_noisy_memory_circuit`` – Stim circuit with uniform circuit-level noise
 - ``build_matching_decoder`` – PyMatching decoder from a noisy Stim circuit
+- ``estimate_logical_error_rate`` – sample many shots, decode, return logical error rate
 """
 
 from __future__ import annotations
 
+import numpy as np
 import stim
 
 _MEMORY_TASK_BY_BASIS = {
@@ -73,3 +75,30 @@ def build_matching_decoder(circuit: stim.Circuit):
     dem = circuit.detector_error_model(decompose_errors=True)
     return pymatching.Matching.from_detector_error_model(dem)
 
+
+def estimate_logical_error_rate(
+    circuit: stim.Circuit,
+    *,
+    decoder=None,
+    shots: int = 10_000,
+) -> tuple[float, float]:
+    """Estimate the logical error rate by sampling and decoding.
+
+    Returns ``(logical_error_rate, standard_error)``.
+    The standard error assumes binomial statistics.
+    """
+    if decoder is None:
+        decoder = build_matching_decoder(circuit)
+
+    sampler = circuit.compile_detector_sampler()
+    detector_samples, observable_flips = sampler.sample(
+        shots=shots,
+        separate_observables=True,
+    )
+
+    predictions = decoder.decode_batch(detector_samples)
+    num_errors = int(np.sum(predictions != observable_flips))
+
+    p_logical = num_errors / shots
+    std_err = np.sqrt(p_logical * (1 - p_logical) / shots) if shots > 0 else 0.0
+    return p_logical, std_err
