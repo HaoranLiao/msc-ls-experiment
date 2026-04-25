@@ -11,17 +11,19 @@ from research_qec_haoran.decoding.threshold_sim import (
     sweep_physical_error_rates,
 )
 from research_qec_haoran.decoding.unrotated_d3_memory import (
+    AnnotatedCorrection,
+    AnnotatedDetector,
+    D3ErrorInterpreter,
     DecodedMemoryShot,
-    DetectionEvent,
-    InferredCorrection,
     decode_memory_shots,
     detector_coords_by_index,
 )
 
 __all__ = [
+    "AnnotatedCorrection",
+    "AnnotatedDetector",
+    "D3ErrorInterpreter",
     "DecodedMemoryShot",
-    "DetectionEvent",
-    "InferredCorrection",
     "PauliFrame",
     "SweepResult",
     "build_matching_decoder",

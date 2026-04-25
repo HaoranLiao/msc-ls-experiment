@@ -8,11 +8,11 @@ from research_qec_haoran.decoding import (
 )
 from research_qec_haoran.decoding.unrotated_d3_memory import (
     _boundary_data_qubit,
-    _detector_sector,
-    _detector_time_label,
-    _infer_error_description,
+    _interpret_stabilizer_sector,
+    _interpret_time_label,
     _shared_data_qubit,
-    DetectionEvent,
+    AnnotatedDetector,
+    D3ErrorInterpreter,
 )
 from research_qec_haoran.noise import (
     inject_pauli_errors_after_measurement_round,
@@ -32,7 +32,7 @@ def _circuit_and_matching_decoder(rounds: int = 2, basis: str = "Z"):
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: _detector_sector
+# Unit tests: _interpret_stabilizer_sector
 # ---------------------------------------------------------------------------
 
 
@@ -40,37 +40,37 @@ class TestDetectorSector:
     """Verify stabilizer sector classification from Stim (x, y) coordinates."""
 
     def test_z_stabilizer_even_x_odd_y(self) -> None:
-        assert _detector_sector(0, 1) == "Z"
-        assert _detector_sector(2, 3) == "Z"
-        assert _detector_sector(4, 1) == "Z"
+        assert _interpret_stabilizer_sector(0, 1) == "Z"
+        assert _interpret_stabilizer_sector(2, 3) == "Z"
+        assert _interpret_stabilizer_sector(4, 1) == "Z"
 
     def test_x_stabilizer_odd_x_even_y(self) -> None:
-        assert _detector_sector(1, 0) == "X"
-        assert _detector_sector(3, 2) == "X"
-        assert _detector_sector(1, 4) == "X"
+        assert _interpret_stabilizer_sector(1, 0) == "X"
+        assert _interpret_stabilizer_sector(3, 2) == "X"
+        assert _interpret_stabilizer_sector(1, 4) == "X"
 
     def test_data_qubit_coords_return_unknown(self) -> None:
         # Data qubits have (even, even) or (odd, odd) — neither stabilizer sector
-        assert _detector_sector(0, 0) == "?"
-        assert _detector_sector(1, 1) == "?"
+        assert _interpret_stabilizer_sector(0, 0) == "?"
+        assert _interpret_stabilizer_sector(1, 1) == "?"
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: _detector_time_label
+# Unit tests: _interpret_time_label
 # ---------------------------------------------------------------------------
 
 
 class TestDetectorTimeLabel:
     def test_preparation_boundary(self) -> None:
-        assert _detector_time_label(0, max_t=2) == "preparation-boundary"
+        assert _interpret_time_label(0, max_t=2) == "preparation-boundary"
 
     def test_final_boundary(self) -> None:
-        assert _detector_time_label(2, max_t=2) == "final-boundary"
+        assert _interpret_time_label(2, max_t=2) == "final-boundary"
 
     def test_bulk(self) -> None:
-        assert _detector_time_label(1, max_t=2) == "bulk"
-        assert _detector_time_label(1, max_t=3) == "bulk"
-        assert _detector_time_label(2, max_t=3) == "bulk"
+        assert _interpret_time_label(1, max_t=2) == "bulk"
+        assert _interpret_time_label(1, max_t=3) == "bulk"
+        assert _interpret_time_label(2, max_t=3) == "bulk"
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +124,7 @@ class TestBoundaryDataQubit:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: _infer_error_description
+# Unit tests: _interpret_error_description
 # ---------------------------------------------------------------------------
 
 
@@ -133,58 +133,58 @@ class TestInferErrorDescription:
 
     def test_bulk_x_error_names_correct_pauli_and_qubit(self) -> None:
         # Two Z-stabilizer detectors paired → must say "X error", not "Z error"
-        evt_a = DetectionEvent(detector_index=9, coord=(2, 1, 1), sector="Z", time_label="bulk")
-        evt_b = DetectionEvent(detector_index=14, coord=(2, 3, 1), sector="Z", time_label="bulk")
-        desc = _infer_error_description(evt_a, evt_b)
+        evt_a = AnnotatedDetector(detector_index=9, coord=(2, 1, 1), sector="Z", time_label="bulk")
+        evt_b = AnnotatedDetector(detector_index=14, coord=(2, 3, 1), sector="Z", time_label="bulk")
+        desc = D3ErrorInterpreter.interpret_error_description(evt_a, evt_b)
         assert desc == "X error on data qubit (2,2), t=1"
 
     def test_bulk_z_error_from_x_stabilizers(self) -> None:
         # Two X-stabilizer detectors paired → must say "Z error"
-        evt_a = DetectionEvent(detector_index=6, coord=(1, 0, 1), sector="X", time_label="bulk")
-        evt_b = DetectionEvent(detector_index=7, coord=(3, 0, 1), sector="X", time_label="bulk")
-        desc = _infer_error_description(evt_a, evt_b)
+        evt_a = AnnotatedDetector(detector_index=6, coord=(1, 0, 1), sector="X", time_label="bulk")
+        evt_b = AnnotatedDetector(detector_index=7, coord=(3, 0, 1), sector="X", time_label="bulk")
+        desc = D3ErrorInterpreter.interpret_error_description(evt_a, evt_b)
         assert desc == "Z error on data qubit (2,0), t=1"
 
     def test_boundary_x_error_names_data_qubit(self) -> None:
         # Z-stabilizer at (0,1) matched to boundary → "X error on data qubit (0,0)"
-        evt = DetectionEvent(detector_index=18, coord=(0, 1, 2), sector="Z", time_label="final-boundary")
-        desc = _infer_error_description(evt, "boundary")
+        evt = AnnotatedDetector(detector_index=18, coord=(0, 1, 2), sector="Z", time_label="final-boundary")
+        desc = D3ErrorInterpreter.interpret_error_description(evt, "boundary")
         assert desc == "X error on data qubit (0,0), t=2"
 
     def test_boundary_z_error_from_x_stabilizer(self) -> None:
         # X-stabilizer at (1,0) matched to boundary → "Z error on data qubit (0,0)"
-        evt = DetectionEvent(detector_index=6, coord=(1, 0, 0), sector="X", time_label="preparation-boundary")
-        desc = _infer_error_description(evt, "boundary")
+        evt = AnnotatedDetector(detector_index=6, coord=(1, 0, 0), sector="X", time_label="preparation-boundary")
+        desc = D3ErrorInterpreter.interpret_error_description(evt, "boundary")
         assert desc == "Z error on data qubit (0,0), t=0"
 
     def test_boundary_order_does_not_matter(self) -> None:
-        evt = DetectionEvent(detector_index=18, coord=(0, 1, 2), sector="Z", time_label="final-boundary")
-        assert _infer_error_description("boundary", evt) == _infer_error_description(evt, "boundary")
+        evt = AnnotatedDetector(detector_index=18, coord=(0, 1, 2), sector="Z", time_label="final-boundary")
+        assert D3ErrorInterpreter.interpret_error_description("boundary", evt) == D3ErrorInterpreter.interpret_error_description(evt, "boundary")
 
     def test_measurement_error_description(self) -> None:
         # Same stabilizer at different times → measurement error
-        evt_a = DetectionEvent(detector_index=0, coord=(0, 1, 0), sector="Z", time_label="preparation-boundary")
-        evt_b = DetectionEvent(detector_index=8, coord=(0, 1, 1), sector="Z", time_label="bulk")
-        desc = _infer_error_description(evt_a, evt_b)
+        evt_a = AnnotatedDetector(detector_index=0, coord=(0, 1, 0), sector="Z", time_label="preparation-boundary")
+        evt_b = AnnotatedDetector(detector_index=8, coord=(0, 1, 1), sector="Z", time_label="bulk")
+        desc = D3ErrorInterpreter.interpret_error_description(evt_a, evt_b)
         assert "measurement error" in desc
         assert "(0,1)" in desc
 
     def test_cross_sector_is_y_error(self) -> None:
         # One Z-stabilizer paired with one X-stabilizer at same time → "Y error"
-        evt_a = DetectionEvent(detector_index=0, coord=(0, 1, 0), sector="Z", time_label="bulk")
-        evt_b = DetectionEvent(detector_index=1, coord=(1, 0, 0), sector="X", time_label="bulk")
-        desc = _infer_error_description(evt_a, evt_b)
+        evt_a = AnnotatedDetector(detector_index=0, coord=(0, 1, 0), sector="Z", time_label="bulk")
+        evt_b = AnnotatedDetector(detector_index=1, coord=(1, 0, 0), sector="X", time_label="bulk")
+        desc = D3ErrorInterpreter.interpret_error_description(evt_a, evt_b)
         assert desc.startswith("Y error")
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: DetectionEvent.__str__ and InferredCorrection.__str__
+# Unit tests: AnnotatedDetector.__str__ and AnnotatedCorrection.__str__
 # ---------------------------------------------------------------------------
 
 
 class TestStringRepresentations:
     def test_detection_event_str(self) -> None:
-        evt = DetectionEvent(detector_index=9, coord=(2, 1, 1), sector="Z", time_label="bulk")
+        evt = AnnotatedDetector(detector_index=9, coord=(2, 1, 1), sector="Z", time_label="bulk")
         s = str(evt)
         assert "D9" in s
         assert "Z-stabilizer" in s
@@ -193,7 +193,7 @@ class TestStringRepresentations:
         assert "[bulk]" in s
 
     def test_detection_event_str_does_not_say_x_for_z_sector(self) -> None:
-        evt = DetectionEvent(detector_index=0, coord=(0, 1, 0), sector="Z", time_label="preparation-boundary")
+        evt = AnnotatedDetector(detector_index=0, coord=(0, 1, 0), sector="Z", time_label="preparation-boundary")
         s = str(evt)
         assert "Z-stabilizer" in s
         assert "X-stabilizer" not in s
