@@ -6,7 +6,7 @@ from research_qec_haoran.decoding import (
     decode_memory_shots,
     generate_noisy_memory_circuit,
 )
-from research_qec_haoran.decoding.unrotated_d3_memory import (
+from research_qec_haoran.decoding.unrotated_d3_memory_stim import (
     _boundary_data_qubit,
     _interpret_stabilizer_sector,
     _interpret_time_label,
@@ -18,7 +18,8 @@ from research_qec_haoran.noise import (
     inject_pauli_errors_after_measurement_round,
     inject_pauli_errors_before_final_measurement,
 )
-from research_qec_haoran.decoding.unrotated_d3_memory import detector_coords_by_index
+from research_qec_haoran.surface_code import generate_d3_unrotated_memory_circuit
+from research_qec_haoran.decoding.unrotated_d3_memory_stim import detector_coords_by_index
 
 
 # ---------------------------------------------------------------------------
@@ -29,6 +30,11 @@ def _circuit_and_matching_decoder(rounds: int = 2, basis: str = "Z"):
     circuit = generate_noisy_memory_circuit(distance=3, rounds=rounds, basis=basis, error_probability=1e-3)
     matching_decoder = build_matching_decoder(circuit)
     return circuit, matching_decoder
+
+
+def _noiseless_circuit(rounds: int = 2, basis: str = "Z"):
+    """Return the noiseless version of the same circuit layout for deterministic fault injection."""
+    return generate_d3_unrotated_memory_circuit(rounds=rounds, basis=basis)
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +220,7 @@ def test_detector_coordinate_map() -> None:
 
 def test_decode_d3_unrotated_memory_shot_without_errors() -> None:
     circuit, matching_decoder = _circuit_and_matching_decoder()
+    noiseless = _noiseless_circuit()
 
     decoded_shot = decode_memory_shots(
         circuit, matching_decoder=matching_decoder, logical_readout_basis="Z",
@@ -229,7 +236,8 @@ def test_decode_d3_unrotated_memory_shot_without_errors() -> None:
 def test_decode_no_error_as_dict_messages() -> None:
     """Verify as_dict produces correct human-readable strings for the no-error case."""
     circuit, matching_decoder = _circuit_and_matching_decoder()
-    d = decode_memory_shots(circuit, matching_decoder=matching_decoder, logical_readout_basis="Z")[0].as_dict()
+    noiseless = _noiseless_circuit()
+    d = decode_memory_shots(noiseless, matching_decoder=matching_decoder, logical_readout_basis="Z")[0].as_dict()
 
     assert d["detection_events"] == "none — no detectors fired"
     assert d["decoder_corrections"] == "none — decoder inferred no errors"
@@ -239,8 +247,9 @@ def test_decode_no_error_as_dict_messages() -> None:
 
 def test_decode_single_x_error_between_rounds() -> None:
     circuit, matching_decoder = _circuit_and_matching_decoder()
+    noiseless = _noiseless_circuit()
     injected = inject_pauli_errors_after_measurement_round(
-        circuit, pauli="X", coords=[(2, 2)], measurement_round=1,
+        noiseless, pauli="X", coords=[(2, 2)], measurement_round=1,
     )
 
     shot = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0]
@@ -263,8 +272,9 @@ def test_decode_single_x_error_between_rounds() -> None:
 def test_decode_single_x_error_between_rounds_as_dict() -> None:
     """Verify as_dict for a corrected non-boundary error."""
     circuit, matching_decoder = _circuit_and_matching_decoder()
+    noiseless = _noiseless_circuit()
     injected = inject_pauli_errors_after_measurement_round(
-        circuit, pauli="X", coords=[(2, 2)], measurement_round=1,
+        noiseless, pauli="X", coords=[(2, 2)], measurement_round=1,
     )
     d = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0].as_dict()
 
@@ -276,8 +286,9 @@ def test_decode_single_x_error_between_rounds_as_dict() -> None:
 
 def test_decode_single_x_error_before_final_measurement() -> None:
     circuit, matching_decoder = _circuit_and_matching_decoder()
+    noiseless = _noiseless_circuit()
     injected = inject_pauli_errors_before_final_measurement(
-        circuit, pauli="X", coords=[(0, 0)],
+        noiseless, pauli="X", coords=[(0, 0)],
     )
 
     shot = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0]
@@ -298,8 +309,9 @@ def test_decode_single_x_error_before_final_measurement() -> None:
 def test_decode_single_x_error_before_final_as_dict() -> None:
     """Verify as_dict for a boundary error that flips L0."""
     circuit, matching_decoder = _circuit_and_matching_decoder()
+    noiseless = _noiseless_circuit()
     injected = inject_pauli_errors_before_final_measurement(
-        circuit, pauli="X", coords=[(0, 0)],
+        noiseless, pauli="X", coords=[(0, 0)],
     )
     d = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0].as_dict()
 
@@ -311,8 +323,9 @@ def test_decode_single_x_error_before_final_as_dict() -> None:
 
 def test_weight_three_logical_x_error_is_undetected() -> None:
     circuit, matching_decoder = _circuit_and_matching_decoder()
+    noiseless = _noiseless_circuit()
     injected = inject_pauli_errors_before_final_measurement(
-        circuit, pauli="X", coords=[(0, 0), (0, 2), (0, 4)],
+        noiseless, pauli="X", coords=[(0, 0), (0, 2), (0, 4)],
     )
 
     shot = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0]
@@ -326,8 +339,9 @@ def test_weight_three_logical_x_error_is_undetected() -> None:
 
 def test_weight_three_logical_x_as_dict() -> None:
     circuit, matching_decoder = _circuit_and_matching_decoder()
+    noiseless = _noiseless_circuit()
     injected = inject_pauli_errors_before_final_measurement(
-        circuit, pauli="X", coords=[(0, 0), (0, 2), (0, 4)],
+        noiseless, pauli="X", coords=[(0, 0), (0, 2), (0, 4)],
     )
     d = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0].as_dict()
 
@@ -343,8 +357,9 @@ def test_weight_three_logical_x_as_dict() -> None:
 def test_weight_two_x_error_00_02_causes_logical_error() -> None:
     """X on (0,0)+(0,2): decoder miscorrects, completing the logical X string."""
     circuit, matching_decoder = _circuit_and_matching_decoder()
+    noiseless = _noiseless_circuit()
     injected = inject_pauli_errors_before_final_measurement(
-        circuit, pauli="X", coords=[(0, 0), (0, 2)],
+        noiseless, pauli="X", coords=[(0, 0), (0, 2)],
     )
 
     shot = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0]
@@ -361,8 +376,9 @@ def test_weight_two_x_error_00_02_causes_logical_error() -> None:
 def test_weight_two_x_error_02_04_causes_logical_error() -> None:
     """X on (0,2)+(0,4): symmetric miscorrection."""
     circuit, matching_decoder = _circuit_and_matching_decoder()
+    noiseless = _noiseless_circuit()
     injected = inject_pauli_errors_before_final_measurement(
-        circuit, pauli="X", coords=[(0, 2), (0, 4)],
+        noiseless, pauli="X", coords=[(0, 2), (0, 4)],
     )
 
     shot = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0]
@@ -382,8 +398,9 @@ def test_weight_two_x_error_02_04_causes_logical_error() -> None:
 def test_x_error_on_non_logical_boundary_qubit() -> None:
     """X on (4,4) — boundary qubit NOT in logical-Z support. Should be corrected."""
     circuit, matching_decoder = _circuit_and_matching_decoder()
+    noiseless = _noiseless_circuit()
     injected = inject_pauli_errors_before_final_measurement(
-        circuit, pauli="X", coords=[(4, 4)],
+        noiseless, pauli="X", coords=[(4, 4)],
     )
 
     shot = decode_memory_shots(injected, matching_decoder=matching_decoder, logical_readout_basis="Z")[0]
