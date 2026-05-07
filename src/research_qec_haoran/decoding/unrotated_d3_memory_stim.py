@@ -44,7 +44,7 @@ from typing import Any
 
 import stim
 
-from research_qec_haoran.decoding.memory_circuit import normalized_basis
+from research_qec_haoran.decoding.memory_circuit_stim import normalized_basis
 
 # ---------------------------------------------------------------------------
 # Type aliases

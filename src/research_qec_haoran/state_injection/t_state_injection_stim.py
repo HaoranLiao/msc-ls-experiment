@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import stim
 
-from research_qec_haoran.surface_code.unrotated_d3 import (
+from research_qec_haoran.surface_code.unrotated_d3_stim import (
     generate_d3_unrotated_memory_circuit,
 )
 
