@@ -430,11 +430,22 @@ def _filter_fold_layer(
     layer: Sequence[tuple[int, int]],
     *,
     skip_cx_1_4: bool = False,
+    skip_cx: tuple[int, int] | None = None,
 ) -> list[tuple[int, int]]:
-    """Optionally remove the CX 1 -> 4 gate from a fold layer."""
-    if not skip_cx_1_4:
+    """Optionally remove a specific CX gate from a fold layer.
+
+    Parameters
+    ----------
+    skip_cx_1_4
+        Legacy shorthand for ``skip_cx=(1, 4)``.
+    skip_cx
+        ``(control, target)`` pair to remove. Takes precedence over
+        ``skip_cx_1_4`` if both are given.
+    """
+    gate_to_skip = skip_cx if skip_cx is not None else ((1, 4) if skip_cx_1_4 else None)
+    if gate_to_skip is None:
         return list(layer)
-    return [(c, t) for c, t in layer if not (c == 1 and t == 4)]
+    return [(c, t) for c, t in layer if (c, t) != gate_to_skip]
 
 
 def append_fold_network(
@@ -443,6 +454,7 @@ def append_fold_network(
     *,
     add_barriers: bool = True,
     skip_cx_1_4: bool = False,
+    skip_cx: tuple[int, int] | None = None,
 ) -> None:
     """Append the forward 4-3-2-1 fold network.
 
@@ -469,7 +481,7 @@ def append_fold_network(
     step 6: one CNOT.
     """
     for layer_index, layer in enumerate(FOLD_LAYERS, start=3):
-        filtered = _filter_fold_layer(layer, skip_cx_1_4=skip_cx_1_4)
+        filtered = _filter_fold_layer(layer, skip_cx_1_4=skip_cx_1_4, skip_cx=skip_cx)
         append_cnot_layer_from_site_labels(circuit, patch_qubits, filtered)
         if add_barriers:
             circuit.barrier(label=f"fold step {layer_index}")
@@ -481,6 +493,7 @@ def append_unfold_network(
     *,
     add_barriers: bool = True,
     skip_cx_1_4: bool = False,
+    skip_cx: tuple[int, int] | None = None,
 ) -> None:
     """Append the inverse of the 4-3-2-1 fold network.
 
@@ -506,7 +519,7 @@ def append_unfold_network(
         reversed(FOLD_LAYERS),
         strict=False,
     ):
-        filtered = _filter_fold_layer(layer, skip_cx_1_4=skip_cx_1_4)
+        filtered = _filter_fold_layer(layer, skip_cx_1_4=skip_cx_1_4, skip_cx=skip_cx)
         append_cnot_layer_from_site_labels(
             circuit,
             patch_qubits,
@@ -523,6 +536,7 @@ def append_hadamard_axis_projection_round(
     classical_bits: Sequence,
     add_barriers: bool = True,
     skip_cx_1_4: bool = False,
+    skip_cx: tuple[int, int] | None = None,
 ) -> None:
     """Append one Google-style ``H_L`` projection / cultivation round.
 
@@ -638,7 +652,7 @@ def append_hadamard_axis_projection_round(
         circuit.barrier(label="Ty on data")
 
     # Steps 3--6: fold.
-    append_fold_network(circuit, q, add_barriers=add_barriers, skip_cx_1_4=skip_cx_1_4)
+    append_fold_network(circuit, q, add_barriers=add_barriers, skip_cx_1_4=skip_cx_1_4, skip_cx=skip_cx)
 
     # Step 7: measure the folded observable on site 4.
     measure_x_basis(circuit, q[FOLDED_MEASUREMENT_SITE], c[0])
@@ -653,7 +667,7 @@ def append_hadamard_axis_projection_round(
         circuit.barrier(label="reset folded site")
 
     # Steps 8--12: unfold.
-    append_unfold_network(circuit, q, add_barriers=add_barriers, skip_cx_1_4=skip_cx_1_4)
+    append_unfold_network(circuit, q, add_barriers=add_barriers, skip_cx_1_4=skip_cx_1_4, skip_cx=skip_cx)
 
     # Step 13: measure the four helper / M qubits.
     for bit_index, helper_site in enumerate(HELPER_SITES, start=1):
@@ -679,6 +693,7 @@ def build_steane_injection_with_h_cultivation(
     injected_state: InjectedStateName | Sequence[complex] = "H",
     add_barriers: bool = True,
     skip_cx_1_4: bool = False,
+    skip_cx: tuple[int, int] | None = None,
 ) -> QuantumCircuit:
     """Build the full 11-site Steane injection + ``H_L`` projection circuit.
 
@@ -835,6 +850,7 @@ def build_steane_injection_with_h_cultivation(
         classical_bits=c,
         add_barriers=add_barriers,
         skip_cx_1_4=skip_cx_1_4,
+        skip_cx=skip_cx,
     )
 
     return circuit
