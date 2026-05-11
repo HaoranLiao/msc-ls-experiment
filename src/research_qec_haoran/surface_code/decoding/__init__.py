@@ -1,9 +1,11 @@
 """Decoding and syndrome-processing utilities."""
 
 from research_qec_haoran.surface_code.decoding.memory_circuit_stim import (
+    _MEMORY_TASK_BY_BASIS,
     build_matching_decoder,
     estimate_logical_error_rate,
     generate_noisy_memory_circuit,
+    normalized_basis,
 )
 from research_qec_haoran.decoding.pauli_frame import PauliFrame
 from research_qec_haoran.surface_code.decoding.unrotated_d3_memory_stim import (

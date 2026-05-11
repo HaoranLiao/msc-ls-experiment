@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import sys
 from functools import reduce
 
 import numpy as np
@@ -11,8 +10,6 @@ import pytest
 from qiskit import QuantumCircuit
 from qiskit.quantum_info import Statevector
 from qiskit_aer import AerSimulator
-
-sys.path.insert(0, "src")
 
 from research_qec_haoran.steane_code.magic_state_cultivation import (
     DATA_SITES,
@@ -27,25 +24,24 @@ from research_qec_haoran.steane_code.magic_state_cultivation import (
     is_successful_cultivation_bitstring,
     postselect_success_counts,
 )
-from archive.state_injection_google_paper_qiskit import (
-    PAPER_T_ANGLE,
-    encoded_theta_statevector,
-)
 
 
 NUM_PATCH_QUBITS = 11
 _PROJECTOR_ZERO = np.array([[1.0, 0.0], [0.0, 0.0]])
 
+# The H-axis magic state angle: cos(pi/8)|0> + sin(pi/8)|1>.
+_H_STATE_ANGLE = math.pi / 4
 
-def _embed_7q_state_into_patch(state: Statevector) -> Statevector:
-    """Embed a 7-qubit logical Steane state into the 11-site cultivation patch."""
-    vector = np.zeros(2**NUM_PATCH_QUBITS, dtype=complex)
-    for basis_index, amplitude in enumerate(state.data):
-        patch_index = 0
-        for bit_index, site in enumerate(DATA_SITES):
-            patch_index |= ((basis_index >> bit_index) & 1) << site
-        vector[patch_index] = amplitude
-    return Statevector(vector)
+
+def _build_h_state_on_patch() -> Statevector:
+    """Build |H_L> embedded in the 11-site patch using the encoder."""
+    circuit = QuantumCircuit(NUM_PATCH_QUBITS)
+    append_steane_state_injection_encoder(
+        circuit,
+        steane_qubits=[circuit.qubits[site] for site in DATA_SITES],
+        injected_state="H",
+    )
+    return Statevector.from_instruction(circuit)
 
 
 def _project_onto_x_plus(state: Statevector, qubit: int) -> tuple[Statevector, float]:
@@ -68,8 +64,7 @@ def _project_onto_x_plus(state: Statevector, qubit: int) -> tuple[Statevector, f
 
 def _helper_x_probabilities_after_successful_root_projection() -> dict[int, float]:
     """Return the helper ``X=+1`` probabilities after a successful root check."""
-    logical_h = encoded_theta_statevector(PAPER_T_ANGLE)
-    state = _embed_7q_state_into_patch(logical_h)
+    state = _build_h_state_on_patch()
 
     forward = QuantumCircuit(NUM_PATCH_QUBITS)
     for helper_site in HELPER_SITES:
@@ -117,8 +112,7 @@ def test_encoder_prepares_noiseless_data_only_state() -> None:
 
 
 def test_folded_root_measurement_accepts_logical_h_with_probability_one() -> None:
-    logical_h = encoded_theta_statevector(PAPER_T_ANGLE)
-    state = _embed_7q_state_into_patch(logical_h)
+    state = _build_h_state_on_patch()
 
     circuit = QuantumCircuit(NUM_PATCH_QUBITS)
     for helper_site in HELPER_SITES:
