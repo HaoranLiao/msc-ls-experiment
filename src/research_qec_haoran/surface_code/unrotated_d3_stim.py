@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import stim
-from research_qec_haoran.decoding.memory_circuit_stim import (
+from research_qec_haoran.surface_code.decoding import (
     _MEMORY_TASK_BY_BASIS,
     normalized_basis,
 )

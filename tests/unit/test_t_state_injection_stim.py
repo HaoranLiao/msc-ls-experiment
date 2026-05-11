@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from research_qec_haoran.state_injection import build_t_state_injection_circuit
+from research_qec_haoran.surface_code.state_injection import build_t_state_injection_circuit
 
 
 class TestBuildTStateInjectionCircuit:
