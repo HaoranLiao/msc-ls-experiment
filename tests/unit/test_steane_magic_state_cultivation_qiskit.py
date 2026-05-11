@@ -1,137 +1,181 @@
-"""Tests for Steane-code magic-state cultivation helpers."""
+"""Tests for the Steane-code cultivation helpers."""
 
 from __future__ import annotations
 
 import math
+import sys
+from functools import reduce
 
 import numpy as np
 import pytest
+from qiskit import QuantumCircuit
+from qiskit.quantum_info import Statevector
+from qiskit_aer import AerSimulator
 
-from research_qec_haoran.steane_code import (
-    CULTIVATION_FLAG_QUBITS,
-    CULTIVATION_ROOT_QUBITS,
-    STEANE_DATA_QUBITS,
-    build_cultivation_projection_circuit,
-    build_cultivation_stage_circuits,
-    build_noisy_t_state_injection_circuit,
-    build_noisy_t_state_then_cultivation_circuit,
-    build_t_state_injection_circuit,
-    build_t_state_injection_stage_circuits,
-    build_t_state_then_cultivation_circuit,
-    encoded_t_statevector,
+sys.path.insert(0, "src")
+
+from research_qec_haoran.steane_code.magic_state_cultivation import (
+    DATA_SITES,
+    FOLDED_MEASUREMENT_SITE,
+    HELPER_SITES,
+    append_fold_network,
+    append_steane_state_injection_encoder,
+    append_unfold_network,
+    apply_google_ty,
+    apply_google_ty_dagger,
+    build_steane_injection_with_h_cultivation,
+    is_successful_cultivation_bitstring,
+    postselect_success_counts,
+)
+from archive.state_injection_google_paper_qiskit import (
+    PAPER_T_ANGLE,
     encoded_theta_statevector,
-    logical_bloch_components,
-    noisy_encoded_t_density_matrix,
-    project_onto_magic_axis,
 )
 
 
-def test_encoded_t_state_is_on_magic_axis() -> None:
-    bloch = logical_bloch_components(encoded_t_statevector())
-
-    assert bloch["X"] == pytest.approx(1 / math.sqrt(2))
-    assert bloch["Y"] == pytest.approx(0.0)
-    assert bloch["Z"] == pytest.approx(1 / math.sqrt(2))
+NUM_PATCH_QUBITS = 11
+_PROJECTOR_ZERO = np.array([[1.0, 0.0], [0.0, 0.0]])
 
 
-def test_magic_axis_projection_accepts_t_state_with_probability_one() -> None:
-    result = project_onto_magic_axis(encoded_t_statevector())
-
-    assert result.acceptance_probability == pytest.approx(1.0)
-    np.testing.assert_allclose(result.state.data, encoded_t_statevector().data, atol=1e-12)
-
-
-def test_magic_axis_projection_rejects_orthogonal_state() -> None:
-    with pytest.raises(ValueError, match="zero probability"):
-        project_onto_magic_axis(encoded_theta_statevector(5 * math.pi / 4))
-
-
-def test_magic_axis_projection_probability_for_logical_zero() -> None:
-    result = project_onto_magic_axis(encoded_theta_statevector(0.0))
-
-    expected = (1 + 1 / math.sqrt(2)) / 2
-    assert result.acceptance_probability == pytest.approx(expected)
-    assert logical_bloch_components(result.state)["X"] == pytest.approx(1 / math.sqrt(2))
-    assert logical_bloch_components(result.state)["Z"] == pytest.approx(1 / math.sqrt(2))
+def _embed_7q_state_into_patch(state: Statevector) -> Statevector:
+    """Embed a 7-qubit logical Steane state into the 11-site cultivation patch."""
+    vector = np.zeros(2**NUM_PATCH_QUBITS, dtype=complex)
+    for basis_index, amplitude in enumerate(state.data):
+        patch_index = 0
+        for bit_index, site in enumerate(DATA_SITES):
+            patch_index |= ((basis_index >> bit_index) & 1) << site
+        vector[patch_index] = amplitude
+    return Statevector(vector)
 
 
-def test_noisy_encoded_t_density_matrix_is_normalized() -> None:
-    rho = noisy_encoded_t_density_matrix(0.01)
+def _project_onto_x_plus(state: Statevector, qubit: int) -> tuple[Statevector, float]:
+    """Project onto the ``+1`` eigenspace of ``X`` on one qubit."""
+    basis_change = QuantumCircuit(NUM_PATCH_QUBITS)
+    basis_change.h(qubit)
+    rotated = state.evolve(basis_change)
 
-    assert np.trace(rho.data).real == pytest.approx(1.0)
+    ops = [np.eye(2)] * NUM_PATCH_QUBITS
+    ops[qubit] = _PROJECTOR_ZERO
+    projector = reduce(np.kron, [ops[NUM_PATCH_QUBITS - 1 - i] for i in range(NUM_PATCH_QUBITS)])
+
+    projected = projector @ rotated.data
+    probability = float(np.linalg.norm(projected) ** 2)
+    if probability == 0:
+        raise ValueError("projection onto X=+1 had zero probability")
+
+    return Statevector(projected / math.sqrt(probability)), probability
 
 
-def test_injection_circuit_uses_paper_t_state_prep_and_noise_channel() -> None:
-    circuit = build_noisy_t_state_injection_circuit(injection_error_probability=1e-3)
-    operation_names = [instruction.operation.name for instruction in circuit.data]
+def _helper_x_probabilities_after_successful_root_projection() -> dict[int, float]:
+    """Return the helper ``X=+1`` probabilities after a successful root check."""
+    logical_h = encoded_theta_statevector(PAPER_T_ANGLE)
+    state = _embed_7q_state_into_patch(logical_h)
+
+    forward = QuantumCircuit(NUM_PATCH_QUBITS)
+    for helper_site in HELPER_SITES:
+        forward.h(helper_site)
+    for data_site in DATA_SITES:
+        apply_google_ty(forward, data_site)
+    append_fold_network(forward, list(range(NUM_PATCH_QUBITS)), add_barriers=False)
+    state = state.evolve(forward)
+
+    state, _ = _project_onto_x_plus(state, FOLDED_MEASUREMENT_SITE)
+
+    backward = QuantumCircuit(NUM_PATCH_QUBITS)
+    backward.h(FOLDED_MEASUREMENT_SITE)
+    append_unfold_network(backward, list(range(NUM_PATCH_QUBITS)), add_barriers=False)
+    state = state.evolve(backward)
+
+    helper_probabilities: dict[int, float] = {}
+    for helper_site in HELPER_SITES:
+        _, probability = _project_onto_x_plus(state, helper_site)
+        helper_probabilities[helper_site] = probability
+    return helper_probabilities
+
+
+def test_build_steane_injection_with_h_cultivation_shape() -> None:
+    circuit = build_steane_injection_with_h_cultivation(injected_state="H")
 
     assert circuit.num_qubits == 11
-    assert circuit.num_clbits == 4
-    assert "ry" in operation_names
-    assert "kraus" in operation_names
-    assert circuit.count_ops()["measure"] == 4
+    assert circuit.num_clbits == 5
+    assert circuit.count_ops()["measure"] == 5
+    assert circuit.count_ops()["reset"] == 5
 
 
-def test_ideal_injection_wrapper_has_no_noise_channel() -> None:
-    circuit = build_t_state_injection_circuit()
-    operation_names = [instruction.operation.name for instruction in circuit.data]
+def test_encoder_prepares_noiseless_data_only_state() -> None:
+    circuit = QuantumCircuit(NUM_PATCH_QUBITS)
+    append_steane_state_injection_encoder(
+        circuit,
+        steane_qubits=[circuit.qubits[site] for site in DATA_SITES],
+        injected_state="H",
+    )
+    state = Statevector.from_instruction(circuit)
 
-    assert "ry" in operation_names
-    assert "cx" in operation_names
-    assert "cz" not in operation_names
-    assert "kraus" not in operation_names
-    assert circuit.count_ops()["h"] == 31
-    assert circuit.count_ops()["cx"] == 24
-
-
-def test_stage_builders_return_ordered_cumulative_circuits() -> None:
-    injection_stages = build_t_state_injection_stage_circuits()
-    cultivation_stages = build_cultivation_stage_circuits()
-
-    assert [label for label, _ in injection_stages] == [
-        "1_physical_t_input",
-        "2_steane_encoding_network",
-        "3_injection_detector_readout",
-    ]
-    assert [label for label, _ in cultivation_stages] == [
-        "1_apply_transversal_paper_t",
-        "2_forward_fold_to_roots",
-        "3_root_measurement",
-        "4_time_reversed_fold_and_paper_t_dagger",
-        "5_flag_measurements",
-    ]
-    assert injection_stages[-1][1].count_ops()["measure"] == 4
-    assert cultivation_stages[-1][1].count_ops()["measure"] == 6
+    helper_probabilities = state.probabilities(HELPER_SITES)
+    assert helper_probabilities[0] == pytest.approx(1.0)
+    assert helper_probabilities[1:].sum() == pytest.approx(0.0)
 
 
-def test_cultivation_projection_circuit_shape_and_measurements() -> None:
-    circuit = build_cultivation_projection_circuit()
+def test_folded_root_measurement_accepts_logical_h_with_probability_one() -> None:
+    logical_h = encoded_theta_statevector(PAPER_T_ANGLE)
+    state = _embed_7q_state_into_patch(logical_h)
 
-    assert circuit.num_qubits == 12
-    assert circuit.num_clbits == len(CULTIVATION_ROOT_QUBITS) + len(CULTIVATION_FLAG_QUBITS)
-    assert circuit.count_ops()["measure"] == 6
-    assert circuit.count_ops()["reset"] == 6
+    circuit = QuantumCircuit(NUM_PATCH_QUBITS)
+    for helper_site in HELPER_SITES:
+        circuit.h(helper_site)
+    for data_site in DATA_SITES:
+        apply_google_ty(circuit, data_site)
+    append_fold_network(circuit, list(range(NUM_PATCH_QUBITS)), add_barriers=False)
+    state = state.evolve(circuit)
 
-
-def test_combined_circuit_stops_after_cultivation_projection() -> None:
-    circuit = build_t_state_then_cultivation_circuit()
-
-    assert circuit.num_qubits == 12
-    assert circuit.num_clbits == 10
-    assert circuit.count_ops()["measure"] == 10
-    assert STEANE_DATA_QUBITS == (0, 1, 3, 5, 7, 8, 10)
-    assert circuit.data[-1].operation.name == "measure"
+    _, probability = _project_onto_x_plus(state, FOLDED_MEASUREMENT_SITE)
+    assert probability == pytest.approx(1.0)
 
 
-def test_noisy_combined_circuit_can_still_be_built() -> None:
-    circuit = build_noisy_t_state_then_cultivation_circuit(injection_error_probability=1e-3)
+def test_helper_measurements_are_deterministic_after_successful_root_projection() -> None:
+    probabilities = _helper_x_probabilities_after_successful_root_projection()
 
-    assert "kraus" in [instruction.operation.name for instruction in circuit.data]
+    assert probabilities == {
+        1: pytest.approx(1.0),
+        2: pytest.approx(1.0),
+        6: pytest.approx(1.0),
+        7: pytest.approx(1.0),
+    }
 
 
-def test_probability_validation() -> None:
-    with pytest.raises(ValueError, match="between 0 and 1"):
-        build_noisy_t_state_injection_circuit(injection_error_probability=-0.1)
+def test_ty_and_inverse_cancel_on_data_after_successful_projection_round() -> None:
+    circuit = QuantumCircuit(NUM_PATCH_QUBITS)
+    for data_site in DATA_SITES:
+        apply_google_ty(circuit, data_site)
+        apply_google_ty_dagger(circuit, data_site)
 
-    with pytest.raises(ValueError, match="between 0 and 1"):
-        noisy_encoded_t_density_matrix(1.1)
+    state = Statevector.from_instruction(circuit)
+    assert state == Statevector.from_label("0" * NUM_PATCH_QUBITS)
+
+
+def test_full_circuit_postselects_noiseless_logical_h_with_probability_one() -> None:
+    circuit = build_steane_injection_with_h_cultivation(
+        injected_state="H",
+        add_barriers=False,
+    )
+
+    simulator = AerSimulator()
+    shots = 512
+    counts = simulator.run(circuit, shots=shots).result().get_counts()
+
+    assert counts == {"00000": shots}
+
+
+def test_postselection_helpers_filter_all_zero_bitstrings() -> None:
+    counts = {
+        "00000": 8,
+        "10000": 3,
+        "00001": 2,
+        "00 000": 5,
+    }
+
+    assert is_successful_cultivation_bitstring("00000")
+    assert is_successful_cultivation_bitstring("00 000")
+    assert not is_successful_cultivation_bitstring("10000")
+    assert not is_successful_cultivation_bitstring("0000")
+    assert postselect_success_counts(counts) == {"00000": 8, "00 000": 5}
