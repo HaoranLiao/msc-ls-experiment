@@ -29,6 +29,7 @@ from research_qec_haoran.surface_code.rotated_d3_layout_qiskit import (
     ROTATED_D3_Z_STABILIZERS,
     rotated_d3_surface_label_map,
 )
+from research_qec_haoran.utils.normalize import normalize_bit
 
 ROTATED_D3_INIT_Z_LABELS: tuple[str, ...] = tuple(
     f"init_{name.lower()}" for name in ROTATED_D3_Z_STABILIZERS
@@ -53,11 +54,6 @@ ROTATED_D3_X_STABILIZER_SCHEDULE: dict[str, tuple[str, ...]] = {
 # Circuit-building primitives
 # ---------------------------------------------------------------------------
 
-
-def _normalize_stabilizer_bit(bit: int | bool) -> int:
-    if bit not in (0, 1, False, True):
-        raise ValueError(f"stabilizer bit must be 0 or 1, got {bit!r}")
-    return int(bit)
 
 
 def _validate_round_width(
@@ -265,7 +261,7 @@ def rotated_d3_z_syndrome_bits_from_measurements(
             bit = measurements[name]
         else:
             raise KeyError(f"missing measurement for {name!r} / {init_label!r}")
-        syndrome[name] = _normalize_stabilizer_bit(bit)
+        syndrome[name] = normalize_bit(bit)
     return syndrome
 
 

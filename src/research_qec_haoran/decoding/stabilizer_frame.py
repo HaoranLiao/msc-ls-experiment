@@ -15,12 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
-
-def _normalize_bit(bit: int | bool) -> int:
-    """Return ``bit`` as an integer 0 or 1."""
-    if bit not in (0, 1, False, True):
-        raise ValueError(f"stabilizer bit must be 0 or 1, got {bit!r}")
-    return int(bit)
+from research_qec_haoran.utils.normalize import normalize_bit
 
 
 @dataclass
@@ -39,11 +34,11 @@ class StabilizerFrame:
 
     def register(self, label: str, bit: int | bool = 0) -> None:
         """Register or overwrite ``label`` with a reference bit."""
-        self._bits[label] = _normalize_bit(bit)
+        self._bits[label] = normalize_bit(bit)
 
     def record(self, label: str, bit: int | bool) -> None:
         """Record the current reference bit for ``label``."""
-        self._bits[label] = _normalize_bit(bit)
+        self._bits[label] = normalize_bit(bit)
 
     def record_many(self, measurements: Mapping[str, int | bool]) -> None:
         """Record a batch of stabilizer reference bits."""
@@ -60,7 +55,7 @@ class StabilizerFrame:
         Returns the XOR-relative change bit. If ``update`` is True, the stored
         reference is advanced to ``measured_bit``.
         """
-        bit = _normalize_bit(measured_bit)
+        bit = normalize_bit(measured_bit)
         delta = self._bits[label] ^ bit
         if update:
             self._bits[label] = bit
@@ -84,7 +79,7 @@ class StabilizerFrame:
 
     def reset(self, label: str, bit: int | bool = 0) -> None:
         """Reset ``label`` to a chosen reference bit, defaulting to 0."""
-        self._bits[label] = _normalize_bit(bit)
+        self._bits[label] = normalize_bit(bit)
 
     def as_dict(self) -> dict[str, int]:
         """Return the stored reference bits."""
