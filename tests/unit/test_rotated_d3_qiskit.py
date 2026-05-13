@@ -4,7 +4,7 @@ from qiskit_aer import AerSimulator
 
 from research_qec_haoran.surface_code.decoding import StabilizerFrame
 from research_qec_haoran.surface_code.decoding import (
-    decode_rotated_d3_single_qubit_syndrome,
+    decode_rotated_patch_syndrome,
     rotated_d3_single_qubit_relative_syndrome,
 )
 from research_qec_haoran.surface_code.rotated_d3_layout_qiskit import (
@@ -65,7 +65,7 @@ def _build_and_run_detect_circuit(fault_pauli: str, fault_qubit: str):
     dz = {n: det_rel[n] for n in _Z_NAMES}
     dx = {n: det_rel[n] for n in _X_NAMES}
 
-    dec = decode_rotated_d3_single_qubit_syndrome(z_deltas=dz, x_deltas=dx)
+    dec = decode_rotated_patch_syndrome(z_deltas=dz, x_deltas=dx)
     return dz, dx, dec
 
 
@@ -125,7 +125,7 @@ def test_measurement_labels_convert_to_z_syndrome() -> None:
 
 
 def test_rotated_d3_single_qubit_decoder_handles_no_error() -> None:
-    recovery = decode_rotated_d3_single_qubit_syndrome(
+    recovery = decode_rotated_patch_syndrome(
         z_deltas={name: 0 for name in _Z_NAMES},
         x_deltas={name: 0 for name in _X_NAMES},
     )

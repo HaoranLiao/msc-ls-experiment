@@ -2,9 +2,9 @@
 
 from research_qec_haoran.surface_code.decoding import (
     PauliFrame,
-    RotatedD3SingleQubitRecovery,
+    RotatedPatchRecovery,
     StabilizerFrame,
-    decode_rotated_d3_single_qubit_syndrome,
+    decode_rotated_patch_syndrome,
     rotated_d3_single_qubit_relative_syndrome,
 )
 from research_qec_haoran.surface_code.rotated_d3_layout_qiskit import (
@@ -43,7 +43,7 @@ __all__ = [
     "ROTATED_D3_INIT_Z_LABELS",
     "ROTATED_D3_LOGICAL_X",
     "ROTATED_D3_LOGICAL_Z",
-    "RotatedD3SingleQubitRecovery",
+    "RotatedPatchRecovery",
     "ROTATED_D3_SURFACE_COORDS",
     "ROTATED_D3_SURFACE_ORDER",
     "ROTATED_D3_X_STABILIZER_CENTERS",
@@ -57,7 +57,7 @@ __all__ = [
     "append_rotated_d3_x_stabilizer_measurements",
     "append_rotated_d3_z_stabilizer_measurements",
     "append_surface_d3_stabilizer_round",
-    "decode_rotated_d3_single_qubit_syndrome",
+    "decode_rotated_patch_syndrome",
     "draw_rotated_d3_patch",
     "generate_d3_unrotated_memory_circuit",
     "rotated_d3_single_qubit_relative_syndrome",
