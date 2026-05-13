@@ -23,3 +23,16 @@ def normalize_pauli_char(pauli: str | None) -> str | None:
         raise ValueError(f"unsupported Pauli {pauli!r}")
     return normalized
 
+
+def parse_qiskit_bitstring(
+    bitstring: str,
+    labels: tuple[str, ...] | list[str],
+) -> dict[str, int]:
+    """Map a Qiskit bitstring to a ``{label: 0|1}`` dict.
+
+    Qiskit returns measurement bitstrings in big-endian order (most
+    significant bit first).  This reverses the string so that index 0
+    corresponds to classical bit 0, then zips with *labels*.
+    """
+    bits = [int(b) for b in bitstring.replace(" ", "")]
+    return {label: bit for label, bit in zip(reversed(labels), bits, strict=False)}

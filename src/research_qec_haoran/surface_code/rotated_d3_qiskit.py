@@ -1,29 +1,21 @@
 """Qiskit helpers for the rotated distance-3 surface-code patch.
 
-This module is split into two layers:
-
-1. Circuit-building primitives for state preparation and stabilizer rounds.
-2. Exact-state verification helpers used by tests and notebooks.
-
 The public circuit API is intentionally small and compositional:
 
 - prepare data qubits in ``|0>`` or ``|+>``
 - measure one parallel Z-check round
 - measure one parallel X-check round
 - compose those pieces into a logical-``|+_L>`` initializer
+- inject a physical Pauli gate on a named data qubit
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-import numpy as np
 from qiskit import QuantumCircuit
-from qiskit.quantum_info import SparsePauliOp, Statevector
 
 from research_qec_haoran.surface_code.rotated_d3_layout_qiskit import (
-    ROTATED_D3_LOGICAL_X,
-    ROTATED_D3_LOGICAL_Z,
     ROTATED_D3_SURFACE_ORDER,
     ROTATED_D3_X_STABILIZERS,
     ROTATED_D3_Z_STABILIZERS,
@@ -54,6 +46,26 @@ ROTATED_D3_X_STABILIZER_SCHEDULE: dict[str, tuple[str, ...]] = {
 # Circuit-building primitives
 # ---------------------------------------------------------------------------
 
+
+def append_data_pauli(
+    circuit: QuantumCircuit,
+    surface_qubits: Sequence[object],
+    pauli: str,
+    qubit_label: str,
+) -> None:
+    """Append a physical Pauli gate on a named rotated-d3 data qubit."""
+    from research_qec_haoran.surface_code.rotated_d3_layout_qiskit import ROTATED_D3_SURFACE_INDEX
+
+    qubit = surface_qubits[ROTATED_D3_SURFACE_INDEX[qubit_label]]
+    gate = pauli.upper()
+    if gate == "X":
+        circuit.x(qubit)
+    elif gate == "Y":
+        circuit.y(qubit)
+    elif gate == "Z":
+        circuit.z(qubit)
+    else:
+        raise ValueError(f"unsupported Pauli {pauli!r}")
 
 
 def _validate_round_width(
@@ -236,7 +248,7 @@ def append_surface_d3_stabilizer_round(
 
 
 # ---------------------------------------------------------------------------
-# Verification helpers (exact-state analysis for tests and notebooks only)
+# Measurement parsing helpers
 # ---------------------------------------------------------------------------
 
 
@@ -245,12 +257,9 @@ def rotated_d3_z_syndrome_bits_from_measurements(
 ) -> dict[str, int]:
     """Parse a labeled measurement dict into the four Z-stabilizer bits.
 
-    **Verification only** — not used in hardware-style circuit construction.
-
     Accepts keys in either init form (``"init_z_abde"``) or round form
-    (``"Z_abde"``).  Returns ``{"Z_abde": 0|1, "Z_cf": …, "Z_dg": …,
-    "Z_efhi": …}``.  Used by verification helpers and the notebook to
-    convert raw simulator output into a canonical syndrome dict.
+    (``"Z_abde"``).  Returns ``{"Z_abde": 0|1, "Z_cf": ..., "Z_dg": ...,
+    "Z_efhi": ...}``.
     """
     syndrome: dict[str, int] = {}
     for name in ROTATED_D3_Z_STABILIZERS:
@@ -265,75 +274,4 @@ def rotated_d3_z_syndrome_bits_from_measurements(
     return syndrome
 
 
-def build_rotated_d3_pauli_operator(
-    pauli_char: str,
-    support: Sequence[str],
-) -> SparsePauliOp:
-    """Build a 9-qubit ``SparsePauliOp`` with *pauli_char* on *support* qubits and I elsewhere.
 
-    **Verification only** — not used in hardware-style circuit construction.
-
-    Used by the verification helpers to construct stabilizer and logical
-    operators for exact expectation-value checks, e.g.
-    ``build_rotated_d3_pauli_operator("Z", ("a", "b", "d", "e"))`` gives
-    the Z_abde stabilizer operator.
-    """
-    label = ["I"] * len(ROTATED_D3_SURFACE_ORDER)
-    for qubit_label in support:
-        label[ROTATED_D3_SURFACE_ORDER.index(qubit_label)] = pauli_char
-    return SparsePauliOp("".join(reversed(label)))
-
-
-def build_rotated_d3_logical_plus_statevector(
-    z_syndrome_bits: Mapping[str, int | bool] | None = None,
-) -> Statevector:
-    """Return the exact logical-``|+_L>`` branch for a chosen Z-syndrome.
-
-    **Verification only** — for exact verification and notebook analysis, not for
-    building hardware-style syndrome-extraction circuits.
-    """
-    state = Statevector.from_label("+" * len(ROTATED_D3_SURFACE_ORDER))
-    identity = np.eye(2 ** len(ROTATED_D3_SURFACE_ORDER), dtype=complex)
-    syndrome = {name: 0 for name in ROTATED_D3_Z_STABILIZERS}
-    if z_syndrome_bits is not None:
-        syndrome.update(rotated_d3_z_syndrome_bits_from_measurements(z_syndrome_bits))
-
-    for name, support in ROTATED_D3_Z_STABILIZERS.items():
-        operator = build_rotated_d3_pauli_operator("Z", support).to_matrix()
-        sign = -1 if syndrome[name] else 1
-        projected = ((identity + sign * operator) @ state.data) / 2
-        state = Statevector(projected / np.linalg.norm(projected))
-
-    return state
-
-
-def rotated_d3_logical_plus_expectations(
-    z_syndrome_bits: Mapping[str, int | bool] | None = None,
-) -> dict[str, float]:
-    """Return exact stabilizer and logical expectations for a chosen branch.
-
-    **Verification only** — not used in hardware-style circuit construction.
-    """
-    syndrome = {name: 0 for name in ROTATED_D3_Z_STABILIZERS}
-    if z_syndrome_bits is not None:
-        syndrome.update(rotated_d3_z_syndrome_bits_from_measurements(z_syndrome_bits))
-
-    state = build_rotated_d3_logical_plus_statevector(syndrome)
-    expectations: dict[str, float] = {}
-
-    for name, support in ROTATED_D3_Z_STABILIZERS.items():
-        expectations[name] = state.expectation_value(
-            build_rotated_d3_pauli_operator("Z", support)
-        ).real
-    for name, support in ROTATED_D3_X_STABILIZERS.items():
-        expectations[name] = state.expectation_value(
-            build_rotated_d3_pauli_operator("X", support)
-        ).real
-
-    expectations["logical_X"] = state.expectation_value(
-        build_rotated_d3_pauli_operator("X", ROTATED_D3_LOGICAL_X)
-    ).real
-    expectations["logical_Z"] = state.expectation_value(
-        build_rotated_d3_pauli_operator("Z", ROTATED_D3_LOGICAL_Z)
-    ).real
-    return expectations

@@ -11,7 +11,6 @@ from research_qec_haoran.decoding.pauli_frame import PauliFrame
 from research_qec_haoran.decoding.stabilizer_frame import StabilizerFrame
 from research_qec_haoran.surface_code.decoding.rotated_d3_decoder_qiskit import (
     RotatedD3SingleQubitRecovery,
-    apply_rotated_d3_data_pauli,
     decode_rotated_d3_single_qubit_syndrome,
     rotated_d3_single_qubit_relative_syndrome,
 )
@@ -32,7 +31,6 @@ __all__ = [
     "PauliFrame",
     "RotatedD3SingleQubitRecovery",
     "StabilizerFrame",
-    "apply_rotated_d3_data_pauli",
     "build_matching_decoder",
     "decode_rotated_d3_single_qubit_syndrome",
     "decode_memory_shots",
