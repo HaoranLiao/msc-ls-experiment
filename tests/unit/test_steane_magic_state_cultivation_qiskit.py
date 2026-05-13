@@ -15,6 +15,7 @@ from research_qec_haoran.steane_code.magic_state_cultivation import (
     DATA_SITES,
     FOLDED_MEASUREMENT_SITE,
     HELPER_SITES,
+    STEANE_TO_11_SITE_ORDER,
     append_fold_network,
     append_steane_state_injection_encoder,
     append_unfold_network,
@@ -38,7 +39,7 @@ def _build_h_state_on_patch() -> Statevector:
     circuit = QuantumCircuit(NUM_PATCH_QUBITS)
     append_steane_state_injection_encoder(
         circuit,
-        steane_qubits=[circuit.qubits[site] for site in DATA_SITES],
+        steane_qubits=[circuit.qubits[site] for site in STEANE_TO_11_SITE_ORDER],
         injected_state="H",
     )
     return Statevector.from_instruction(circuit)
@@ -101,7 +102,7 @@ def test_encoder_prepares_noiseless_data_only_state() -> None:
     circuit = QuantumCircuit(NUM_PATCH_QUBITS)
     append_steane_state_injection_encoder(
         circuit,
-        steane_qubits=[circuit.qubits[site] for site in DATA_SITES],
+        steane_qubits=[circuit.qubits[site] for site in STEANE_TO_11_SITE_ORDER],
         injected_state="H",
     )
     state = Statevector.from_instruction(circuit)

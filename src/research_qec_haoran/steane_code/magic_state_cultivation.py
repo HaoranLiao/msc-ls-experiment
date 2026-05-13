@@ -14,32 +14,48 @@ InjectedStateName = Literal["H", "T", "0", "1", "+", "-", "Y+", "Y-"]
 # 1. Steane state-injection encoder
 # =============================================================================
 
-MINE_TO_GOOGLE: dict[int, int] = {
-    0: 0,
-    1: 3,
-    2: 5,
-    3: 6,
-    4: 1,
-    5: 2,
-    6: 4,
-}
+# ---------------------------------------------------------------------------
+# Qubit-order conventions
+# ---------------------------------------------------------------------------
+# The encoder is expressed in the **Hirano et al. order** (0..6) used by
+# Hirano et al. (arXiv:2510.24615).  In this order the stabilizers have the
+# clean supports {0,1,4,5}, {0,2,3,5}, {0,2,4,6} and the logical X line is
+# {1,4,6}.
+#
+# Historical note: the encoder was originally written in a "mine" order, then
+# translated to a "Google" order.  Both are now superseded by the Hirano et al. order.
+# The legacy mappings are preserved below only for reference.
+#
+# Legacy mapping (mine → google):
+#   0→0, 1→3, 2→5, 3→6, 4→1, 5→2, 6→4
+#
+# Legacy mapping (google → paper):
+#   0→1, 1→4, 2→2, 3→3, 4→0, 5→5, 6→6
 
-STEANE_ENCODER_CNOTS_MINE: tuple[tuple[int, int], ...] = (
-    (3, 4),
-    (0, 3),
-    (1, 0),
-    (4, 5),
-    (4, 6),
-    (0, 2),
-    (2, 6),
-    (2, 1),
+GOOGLE_TO_PAPER: tuple[int, ...] = (1, 4, 2, 3, 0, 5, 6)
+PAPER_TO_GOOGLE: tuple[int, ...] = (4, 0, 2, 3, 1, 5, 6)
+
+# The encoder CNOT list in Hirano et al. order.
+#
+# Hirano et al. order input convention:
+#   paper[0] = |0⟩
+#   paper[1] = |ψ⟩  (injected state)
+#   paper[2] = |0⟩
+#   paper[3] = |+⟩
+#   paper[4] = |0⟩
+#   paper[5] = |+⟩
+#   paper[6] = |+⟩
+STEANE_ENCODER_CNOTS_PAPER: tuple[tuple[int, int], ...] = (
+    (6, 4),
+    (1, 6),
+    (3, 1),
+    (4, 2),
+    (4, 0),
     (1, 5),
-    (0, 4),
-)
-
-STEANE_ENCODER_CNOTS_GOOGLE: tuple[tuple[int, int], ...] = tuple(
-    (MINE_TO_GOOGLE[c], MINE_TO_GOOGLE[t])
-    for c, t in STEANE_ENCODER_CNOTS_MINE
+    (5, 0),
+    (5, 3),
+    (3, 2),
+    (1, 4),
 )
 
 
@@ -155,23 +171,19 @@ def append_steane_state_injection_encoder(
     circuit
         Circuit being modified.
     steane_qubits
-        Seven physical qubits in the Google/state-preparation Steane order.
+        Seven physical qubits in **Hirano et al. order** (0..6).
     injected_state
         The physical one-qubit state to inject.
 
     Notes
     -----
-    This appends the encoder
-
-    ``|psi> |0> |0> |+> |0> |+> |+> -> |psi_L>``.
-
-    The seven input wires are interpreted as
+    The seven input wires are interpreted in Hirano et al. order as:
 
     ``steane_qubits[0]``
-        Injected state ``|psi>``.
+        ``|0>``.
 
     ``steane_qubits[1]``
-        ``|0>``.
+        Injected state ``|psi>``.
 
     ``steane_qubits[2]``
         ``|0>``.
@@ -192,40 +204,28 @@ def append_steane_state_injection_encoder(
 
     With ``injected_state="T"``, the output is ``|T_L>``.
 
-    The CNOT list is the same encoder as before, but expressed in the
-    Google/state-preparation convention:
+    The Hirano et al. order stabilizers are:
 
-    ``mine -> google`` mapping:
+    - X₀₁₄₅, X₀₂₃₅, X₀₂₄₆
+    - Z₀₁₄₅, Z₀₂₃₅, Z₀₂₄₆
 
-    ``0 -> 0``, ``1 -> 3``, ``2 -> 5``, ``3 -> 6``,
-    ``4 -> 1``, ``5 -> 2``, ``6 -> 4``.
-
-    Therefore the Google-order encoder CNOTs are
-
-    ``CX 6 -> 1``,
-    ``CX 0 -> 6``,
-    ``CX 3 -> 0``,
-    ``CX 1 -> 2``,
-    ``CX 1 -> 4``,
-    ``CX 0 -> 5``,
-    ``CX 5 -> 4``,
-    ``CX 5 -> 3``,
-    ``CX 3 -> 2``,
-    ``CX 0 -> 1``.
+    and the logical X support is {1, 4, 6}.
     """
     if len(steane_qubits) != 7:
         raise ValueError("steane_qubits must contain exactly 7 qubits.")
 
     q = list(steane_qubits)
 
-    prepare_single_qubit_state(circuit, q[0], injected_state)
+    # Injected state goes on paper qubit 1.
+    prepare_single_qubit_state(circuit, q[1], injected_state)
 
+    # |+⟩ preparation on paper qubits 3, 5, 6.
     for j in [3, 5, 6]:
         circuit.h(q[j])
 
     circuit.barrier(label="Steane injection inputs")
 
-    for control, target in STEANE_ENCODER_CNOTS_GOOGLE:
+    for control, target in STEANE_ENCODER_CNOTS_PAPER:
         circuit.cx(q[control], q[target])
 
     circuit.barrier(label="encoded Steane state")
@@ -298,29 +298,20 @@ DATA_SITES: tuple[int, ...] = (0, 3, 4, 5, 8, 9, 10)
 HELPER_SITES: tuple[int, ...] = (1, 2, 6, 7)
 FOLDED_MEASUREMENT_SITE: int = 4
 
-# The order in which the seven encoded Steane qubits are embedded into
-# the 11-site patch. This is the seven-site Google/state-preparation order:
+# The order in which the seven encoded Steane qubits (in Hirano et al. order) are
+# embedded into the 11-site patch:
 #
-#   steane[0] = injected |psi>
-#   steane[1] = |0>
-#   steane[2] = |0>
-#   steane[3] = |+>
-#   steane[4] = |0>
-#   steane[5] = |+>
-#   steane[6] = |+>
+#   paper[0] = |0⟩   -> site 8
+#   paper[1] = |ψ⟩   -> site 0
+#   paper[2] = |0⟩   -> site 4
+#   paper[3] = |+⟩   -> site 5
+#   paper[4] = |0⟩   -> site 3
+#   paper[5] = |+⟩   -> site 9
+#   paper[6] = |+⟩   -> site 10
 #
-# embedded into the 11-site patch as
-#
-#   steane[0] -> site 0
-#   steane[1] -> site 3
-#   steane[2] -> site 4
-#   steane[3] -> site 5
-#   steane[4] -> site 8
-#   steane[5] -> site 9
-#   steane[6] -> site 10
-#
-# These are precisely the seven data sites in the panel-C triangular patch.
-STEANE_TO_11_SITE_ORDER: tuple[int, ...] = DATA_SITES
+# These are precisely the seven data sites in the panel-C triangular patch,
+# reordered from DATA_SITES = (0, 3, 4, 5, 8, 9, 10) into Hirano et al. order.
+STEANE_TO_11_SITE_ORDER: tuple[int, ...] = (8, 0, 4, 5, 3, 9, 10)
 
 
 FOLD_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
@@ -746,29 +737,30 @@ def build_steane_injection_with_h_cultivation(
 
     State injection embedding
     -------------------------
-    The seven-qubit Steane encoder is embedded into the seven data sites as
+    The seven-qubit Steane encoder is embedded into the seven data sites
+    using the Hirano et al. order:
 
     ::
 
-        steane[0] -> site 0
-        steane[1] -> site 3
-        steane[2] -> site 4
-        steane[3] -> site 5
-        steane[4] -> site 8
-        steane[5] -> site 9
-        steane[6] -> site 10
+        paper[0] -> site 8
+        paper[1] -> site 0
+        paper[2] -> site 4
+        paper[3] -> site 5
+        paper[4] -> site 3
+        paper[5] -> site 9
+        paper[6] -> site 10
 
-    where the Steane input convention is
+    where the Hirano et al. order input convention is
 
     ::
 
-        steane[0] = |psi>
-        steane[1] = |0>
-        steane[2] = |0>
-        steane[3] = |+>
-        steane[4] = |0>
-        steane[5] = |+>
-        steane[6] = |+>
+        paper[0] = |0>
+        paper[1] = |psi>  (injected state)
+        paper[2] = |0>
+        paper[3] = |+>
+        paper[4] = |0>
+        paper[5] = |+>
+        paper[6] = |+>
 
     The state-injection encoder produces
 
