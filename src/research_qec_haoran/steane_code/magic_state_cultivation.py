@@ -11,51 +11,36 @@ InjectedStateName = Literal["H", "T", "0", "1", "+", "-", "Y+", "Y-"]
 
 
 # =============================================================================
-# 1. Steane state-injection encoder
+# 1. Steane state-injection encoder (expressed in 11-site patch labels)
 # =============================================================================
 
-# ---------------------------------------------------------------------------
-# Qubit-order conventions
-# ---------------------------------------------------------------------------
-# The encoder is expressed in the **Hirano et al. order** (0..6) used by
-# Hirano et al. (arXiv:2510.24615).  In this order the stabilizers have the
-# clean supports {0,1,4,5}, {0,2,3,5}, {0,2,4,6} and the logical X line is
-# {1,4,6}.
+# The encoder prepares |ψ_L⟩ on the seven data sites of the 11-site patch.
 #
-# Historical note: the encoder was originally written in a "mine" order, then
-# translated to a "Google" order.  Both are now superseded by the Hirano et al. order.
-# The legacy mappings are preserved below only for reference.
+# Input preparation (all in 11-site labels):
+#   site 0  = |ψ⟩  (injected state)
+#   site 5  = |+⟩
+#   site 9  = |+⟩
+#   site 10 = |+⟩
+#   sites 3, 4, 8 = |0⟩  (default)
 #
-# Legacy mapping (mine → google):
-#   0→0, 1→3, 2→5, 3→6, 4→1, 5→2, 6→4
-#
-# Legacy mapping (google → paper):
-#   0→1, 1→4, 2→2, 3→3, 4→0, 5→5, 6→6
+# The CNOT list below is the Steane encoder expressed directly in the
+# 11-site patch labels (derived from Hirano et al., arXiv:2510.24615,
+# Figure 5 / 6(a), mapped onto the triangular patch geometry).
 
-GOOGLE_TO_PAPER: tuple[int, ...] = (1, 4, 2, 3, 0, 5, 6)
-PAPER_TO_GOOGLE: tuple[int, ...] = (4, 0, 2, 3, 1, 5, 6)
+INJECTION_SITE: int = 0
+PLUS_SITES: tuple[int, ...] = (5, 9, 10)
 
-# The encoder CNOT list in Hirano et al. order.
-#
-# Hirano et al. order input convention:
-#   paper[0] = |0⟩
-#   paper[1] = |ψ⟩  (injected state)
-#   paper[2] = |0⟩
-#   paper[3] = |+⟩
-#   paper[4] = |0⟩
-#   paper[5] = |+⟩
-#   paper[6] = |+⟩
-STEANE_ENCODER_CNOTS_PAPER: tuple[tuple[int, int], ...] = (
-    (6, 4),
-    (1, 6),
-    (3, 1),
-    (4, 2),
-    (4, 0),
-    (1, 5),
+ENCODER_CNOTS: tuple[tuple[int, int], ...] = (
+    (10, 3),
+    (0, 10),
     (5, 0),
-    (5, 3),
-    (3, 2),
-    (1, 4),
+    (3, 4),
+    (3, 8),
+    (0, 9),
+    (9, 8),
+    (9, 5),
+    (5, 4),
+    (0, 3),
 )
 
 
@@ -161,71 +146,48 @@ def prepare_single_qubit_state(
 def append_steane_state_injection_encoder(
     circuit: QuantumCircuit,
     *,
-    steane_qubits: Sequence,
+    patch_qubits: Sequence,
     injected_state: InjectedStateName | Sequence[complex] = "H",
 ) -> None:
-    """Append the Steane-code state-injection encoder.
+    """Append the Steane-code state-injection encoder on the 11-site patch.
 
     Parameters
     ----------
     circuit
         Circuit being modified.
-    steane_qubits
-        Seven physical qubits in **Hirano et al. order** (0..6).
+    patch_qubits
+        Eleven Qiskit qubits indexed by the 11-site patch labels.
     injected_state
-        The physical one-qubit state to inject.
+        The physical one-qubit state to inject on site 0.
 
     Notes
     -----
-    The seven input wires are interpreted in Hirano et al. order as:
+    The encoder prepares |ψ_L⟩ on the seven data sites using the
+    11-site patch labels directly:
 
-    ``steane_qubits[0]``
-        ``|0>``.
+    - Site 0 receives the injected state |ψ⟩.
+    - Sites 5, 9, 10 are prepared in |+⟩.
+    - Sites 3, 4, 8 remain in |0⟩.
 
-    ``steane_qubits[1]``
-        Injected state ``|psi>``.
-
-    ``steane_qubits[2]``
-        ``|0>``.
-
-    ``steane_qubits[3]``
-        ``|+>``.
-
-    ``steane_qubits[4]``
-        ``|0>``.
-
-    ``steane_qubits[5]``
-        ``|+>``.
-
-    ``steane_qubits[6]``
-        ``|+>``.
-
-    With ``injected_state="H"``, the output is ``|H_L>``.
-
-    With ``injected_state="T"``, the output is ``|T_L>``.
-
-    The Hirano et al. order stabilizers are:
-
-    - X₀₁₄₅, X₀₂₃₅, X₀₂₄₆
-    - Z₀₁₄₅, Z₀₂₃₅, Z₀₂₄₆
-
-    and the logical X support is {1, 4, 6}.
+    With ``injected_state="H"``, the output is ``|H_L⟩``.
+    With ``injected_state="T"``, the output is ``|T_L⟩``.
     """
-    if len(steane_qubits) != 7:
-        raise ValueError("steane_qubits must contain exactly 7 qubits.")
+    if len(patch_qubits) != 11:
+        raise ValueError("patch_qubits must contain exactly 11 qubits.")
 
-    q = list(steane_qubits)
+    q = list(patch_qubits)
 
-    # Injected state goes on paper qubit 1.
-    prepare_single_qubit_state(circuit, q[1], injected_state)
+    # Injected state on site 0.
+    prepare_single_qubit_state(circuit, q[INJECTION_SITE], injected_state)
 
-    # |+⟩ preparation on paper qubits 3, 5, 6.
-    for j in [3, 5, 6]:
-        circuit.h(q[j])
+    # |+⟩ preparation on sites 5, 9, 10.
+    for site in PLUS_SITES:
+        circuit.h(q[site])
 
     circuit.barrier(label="Steane injection inputs")
 
-    for control, target in STEANE_ENCODER_CNOTS_PAPER:
+    # Encoder CNOTs (all in 11-site labels).
+    for control, target in ENCODER_CNOTS:
         circuit.cx(q[control], q[target])
 
     circuit.barrier(label="encoded Steane state")
@@ -298,20 +260,6 @@ DATA_SITES: tuple[int, ...] = (0, 3, 4, 5, 8, 9, 10)
 HELPER_SITES: tuple[int, ...] = (1, 2, 6, 7)
 FOLDED_MEASUREMENT_SITE: int = 4
 
-# The order in which the seven encoded Steane qubits (in Hirano et al. order) are
-# embedded into the 11-site patch:
-#
-#   paper[0] = |0⟩   -> site 8
-#   paper[1] = |ψ⟩   -> site 0
-#   paper[2] = |0⟩   -> site 4
-#   paper[3] = |+⟩   -> site 5
-#   paper[4] = |0⟩   -> site 3
-#   paper[5] = |+⟩   -> site 9
-#   paper[6] = |+⟩   -> site 10
-#
-# These are precisely the seven data sites in the panel-C triangular patch,
-# reordered from DATA_SITES = (0, 3, 4, 5, 8, 9, 10) into Hirano et al. order.
-STEANE_TO_11_SITE_ORDER: tuple[int, ...] = (8, 0, 4, 5, 3, 9, 10)
 
 
 FOLD_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
@@ -735,40 +683,15 @@ def build_steane_injection_with_h_cultivation(
 
         HELPER_SITES = (1, 2, 6, 7)
 
-    State injection embedding
-    -------------------------
-    The seven-qubit Steane encoder is embedded into the seven data sites
-    using the Hirano et al. order:
+    State injection
+    ---------------
+    The encoder prepares |ψ_L⟩ directly on the seven data sites:
 
-    ::
+    - Site 0 receives the injected state |ψ⟩.
+    - Sites 5, 9, 10 are prepared in |+⟩.
+    - Sites 3, 4, 8 remain in |0⟩.
 
-        paper[0] -> site 8
-        paper[1] -> site 0
-        paper[2] -> site 4
-        paper[3] -> site 5
-        paper[4] -> site 3
-        paper[5] -> site 9
-        paper[6] -> site 10
-
-    where the Hirano et al. order input convention is
-
-    ::
-
-        paper[0] = |0>
-        paper[1] = |psi>  (injected state)
-        paper[2] = |0>
-        paper[3] = |+>
-        paper[4] = |0>
-        paper[5] = |+>
-        paper[6] = |+>
-
-    The state-injection encoder produces
-
-    ::
-
-        |psi_L>.
-
-    For ``injected_state="H"``, this is ``|H_L>``.
+    For ``injected_state="H"``, this produces ``|H_L⟩``.
 
     Cultivation / projection
     ------------------------
@@ -828,11 +751,9 @@ def build_steane_injection_with_h_cultivation(
     q = list(qreg)
     c = list(creg)
 
-    steane_qubits = [q[site] for site in STEANE_TO_11_SITE_ORDER]
-
     append_steane_state_injection_encoder(
         circuit,
-        steane_qubits=steane_qubits,
+        patch_qubits=q,
         injected_state=injected_state,
     )
 
