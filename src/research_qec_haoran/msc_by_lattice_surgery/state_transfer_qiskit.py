@@ -29,7 +29,7 @@ from typing import Literal
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
 from research_qec_haoran.decoding.pauli_frame import PauliFrame
-from research_qec_haoran.steane_code.magic_state_cultivation import (
+from research_qec_haoran.steane_code.magic_state_cultivation_qiskit import (
     InjectedStateName,
     append_hadamard_axis_projection_round,
     append_steane_state_injection_encoder,
@@ -76,7 +76,7 @@ LOCAL_X_AB_CORRELATION_CHECKS: dict[str, tuple[str, ...]] = {
 # Map the repo's 11-site cultivation patch labels onto Hirano's 7 color-code
 # data labels.
 
-# Taken from magic_state_cultivation.py:
+# Taken from magic_state_cultivation_qiskit.py:
 # The physical sites are labeled as
 #
 #               0

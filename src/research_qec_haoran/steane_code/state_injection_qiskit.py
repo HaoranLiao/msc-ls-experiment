@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from math import cos, pi, sin, sqrt
+from math import sqrt
 from typing import Literal
 
-import numpy as np
 from qiskit import QuantumCircuit
+from qiskit.circuit import Qubit
 
 from research_qec_haoran.utils.gates import apply_google_ty
 
@@ -27,9 +27,9 @@ STEANE_ENCODER_CNOTS: tuple[tuple[int, int], ...] = (
 )
 
 
-def _prepare_injected_state(
+def prepare_injected_state(
     circuit: QuantumCircuit,
-    qubit_index: int,
+    qubit: int | Qubit,
     injected_state: InjectedStateName | Sequence[complex],
 ) -> None:
     """Prepare the single-qubit state to be encoded.
@@ -38,7 +38,7 @@ def _prepare_injected_state(
     ----------
     circuit
         Circuit being built.
-    qubit_index
+    qubit
         Qubit on which the unencoded input state is prepared.
     injected_state
         Either a named state or a length-2 complex vector ``[alpha, beta]``.
@@ -52,9 +52,13 @@ def _prepare_injected_state(
     ``"T"``
         ``(|0> + exp(i pi/4) |1>) / sqrt(2)``.
 
+    ``"Tdg"``
+        ``(|0> + exp(-i pi/4) |1>) / sqrt(2)``.
+
     ``"H"``
         The +1 eigenstate of the Hadamard operator,
-        ``cos(pi/8)|0> + sin(pi/8)|1>``.
+        ``cos(pi/8)|0> + sin(pi/8)|1> = T_y|0>``,
+        where ``T_y = RY(pi/4)``.
     """
     if isinstance(injected_state, str):
         state = injected_state.upper()
@@ -63,46 +67,46 @@ def _prepare_injected_state(
             return
 
         if state == "1":
-            circuit.x(qubit_index)
+            circuit.x(qubit)
             return
 
         if state == "+":
-            circuit.h(qubit_index)
+            circuit.h(qubit)
             return
 
         if state == "-":
-            circuit.x(qubit_index)
-            circuit.h(qubit_index)
+            circuit.x(qubit)
+            circuit.h(qubit)
             return
 
         if state in {"I", "Y+", "S"}:
             # |Y+> = S|+> = (|0> + i|1>) / sqrt(2).
             # This is the +1 eigenstate of Pauli Y.
-            circuit.h(qubit_index)
-            circuit.s(qubit_index)
+            circuit.h(qubit)
+            circuit.s(qubit)
             return
 
         if state in {"-I", "Y-"}:
             # |Y-> = S^\dagger |+> = (|0> - i|1>) / sqrt(2).
-            circuit.h(qubit_index)
-            circuit.sdg(qubit_index)
+            circuit.h(qubit)
+            circuit.sdg(qubit)
             return
 
         if state == "T":
             # |T> = T|+>.
-            circuit.h(qubit_index)
-            circuit.t(qubit_index)
+            circuit.h(qubit)
+            circuit.t(qubit)
             return
 
         if state == "TDG":
-            circuit.h(qubit_index)
-            circuit.tdg(qubit_index)
+            circuit.h(qubit)
+            circuit.tdg(qubit)
             return
 
         if state == "H":
             # +1 eigenstate of H:
             # cos(pi/8)|0> + sin(pi/8)|1> = T_y|0>
-            apply_google_ty(circuit, qubit_index)
+            apply_google_ty(circuit, qubit)
             return
 
         raise ValueError(f"Unknown injected state name: {injected_state!r}")
@@ -115,7 +119,7 @@ def _prepare_injected_state(
     if norm == 0:
         raise ValueError("Custom injected_state cannot be the zero vector.")
 
-    circuit.initialize([alpha / norm, beta / norm], [qubit_index])
+    circuit.initialize([alpha / norm, beta / norm], [qubit])
 
 
 def build_steane_state_injection_encoder_qiskit(
@@ -151,7 +155,7 @@ def build_steane_state_injection_encoder_qiskit(
     circuit = QuantumCircuit(7, name=f"steane_encode_{injected_state}")
 
     # Prepare the unencoded state on q0.
-    _prepare_injected_state(circuit, 0, injected_state)
+    prepare_injected_state(circuit, 0, injected_state)
 
     # Prepare the three Steane codeword-superposition variables u, v, w.
     circuit.h(1)

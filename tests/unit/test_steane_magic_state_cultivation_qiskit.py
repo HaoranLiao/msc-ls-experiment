@@ -11,7 +11,7 @@ from qiskit import QuantumCircuit
 from qiskit.quantum_info import Statevector
 from qiskit_aer import AerSimulator
 
-from research_qec_haoran.steane_code.magic_state_cultivation import (
+from research_qec_haoran.steane_code.magic_state_cultivation_qiskit import (
     DATA_SITES,
     FOLDED_MEASUREMENT_SITE,
     HELPER_SITES,

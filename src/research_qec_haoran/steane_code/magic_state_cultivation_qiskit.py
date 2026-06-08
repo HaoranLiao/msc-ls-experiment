@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from math import pi, sqrt
-from typing import Literal
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
+from research_qec_haoran.steane_code.state_injection_qiskit import (
+    InjectedStateName,
+    prepare_injected_state,
+)
 from research_qec_haoran.utils.gates import apply_google_ty, apply_google_ty_dagger
-
-
-InjectedStateName = Literal["H", "T", "0", "1", "+", "-", "Y+", "Y-"]
 
 
 # =============================================================================
@@ -44,106 +43,6 @@ ENCODER_CNOTS: tuple[tuple[int, int], ...] = (
     (5, 4),
     (0, 3),
 )
-
-
-def prepare_single_qubit_state(
-    circuit: QuantumCircuit,
-    qubit,
-    state: InjectedStateName | Sequence[complex],
-) -> None:
-    """Prepare the unencoded one-qubit input state.
-
-    Parameters
-    ----------
-    circuit
-        Circuit being modified.
-    qubit
-        Qubit on which the unencoded state is prepared.
-    state
-        Either a named state or a custom length-2 vector ``[alpha, beta]``.
-
-    Notes
-    -----
-    The supported named states are:
-
-    ``"H"``
-        The +1 eigenstate of the Hadamard operator,
-
-        ``cos(pi/8)|0> + sin(pi/8)|1>``.
-
-        This is prepared as ``RY(pi/4)|0>``.
-
-    ``"T"``
-        The standard circuit-model T state,
-
-        ``(|0> + exp(i*pi/4)|1>) / sqrt(2)``.
-
-        This is prepared as ``T H |0>``.
-
-    ``"Y+"``
-        The +1 eigenstate of Pauli Y,
-
-        ``(|0> + i|1>) / sqrt(2)``.
-
-    ``"Y-"``
-        The -1 eigenstate of Pauli Y,
-
-        ``(|0> - i|1>) / sqrt(2)``.
-
-    If a custom vector is given, it is normalized before initialization.
-    """
-    if isinstance(state, str):
-        s = state.upper()
-
-        if s == "0":
-            return
-
-        if s == "1":
-            circuit.x(qubit)
-            return
-
-        if s == "+":
-            circuit.h(qubit)
-            return
-
-        if s == "-":
-            circuit.x(qubit)
-            circuit.h(qubit)
-            return
-
-        if s == "Y+":
-            circuit.h(qubit)
-            circuit.s(qubit)
-            return
-
-        if s == "Y-":
-            circuit.h(qubit)
-            circuit.sdg(qubit)
-            return
-
-        if s == "T":
-            circuit.h(qubit)
-            circuit.t(qubit)
-            return
-
-        if s == "H":
-            # |H⟩ = cos(π/8)|0⟩ + sin(π/8)|1⟩ = RY(π/4)|0⟩ = T_y|0⟩
-            apply_google_ty(circuit, qubit)
-            return
-
-        raise ValueError(f"Unknown injected state name: {state!r}")
-
-    if len(state) != 2:
-        raise ValueError("Custom state must be a length-2 vector [alpha, beta].")
-
-    alpha = complex(state[0])
-    beta = complex(state[1])
-    norm = sqrt(abs(alpha) ** 2 + abs(beta) ** 2)
-
-    if norm == 0:
-        raise ValueError("Cannot initialize the zero vector.")
-
-    circuit.initialize([alpha / norm, beta / norm], [qubit])
 
 
 def append_steane_state_injection_encoder(
@@ -181,7 +80,7 @@ def append_steane_state_injection_encoder(
     q = list(patch_qubits)
 
     # Injected state on site 0.
-    prepare_single_qubit_state(circuit, q[INJECTION_SITE], injected_state)
+    prepare_injected_state(circuit, q[INJECTION_SITE], injected_state)
 
     # |+⟩ preparation on sites 5, 9, 10.
     for site in PLUS_SITES:
