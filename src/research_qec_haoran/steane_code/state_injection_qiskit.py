@@ -7,6 +7,8 @@ from typing import Literal
 import numpy as np
 from qiskit import QuantumCircuit
 
+from research_qec_haoran.utils.gates import apply_google_ty
+
 
 InjectedStateName = Literal["0", "1", "+", "-", "i", "-i", "Y+", "Y-", "S", "T", "Tdg", "H"]
 
@@ -99,8 +101,8 @@ def _prepare_injected_state(
 
         if state == "H":
             # +1 eigenstate of H:
-            # cos(pi/8)|0> + sin(pi/8)|1>.
-            circuit.ry(pi / 4, qubit_index)
+            # cos(pi/8)|0> + sin(pi/8)|1> = T_y|0>
+            apply_google_ty(circuit, qubit_index)
             return
 
         raise ValueError(f"Unknown injected state name: {injected_state!r}")

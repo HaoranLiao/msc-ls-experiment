@@ -6,6 +6,8 @@ from typing import Literal
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
+from research_qec_haoran.utils.gates import apply_google_ty, apply_google_ty_dagger
+
 
 InjectedStateName = Literal["H", "T", "0", "1", "+", "-", "Y+", "Y-"]
 
@@ -125,7 +127,8 @@ def prepare_single_qubit_state(
             return
 
         if s == "H":
-            circuit.ry(pi / 4, qubit)
+            # |H⟩ = cos(π/8)|0⟩ + sin(π/8)|1⟩ = RY(π/4)|0⟩ = T_y|0⟩
+            apply_google_ty(circuit, qubit)
             return
 
         raise ValueError(f"Unknown injected state name: {state!r}")
@@ -260,8 +263,6 @@ DATA_SITES: tuple[int, ...] = (0, 3, 4, 5, 8, 9, 10)
 HELPER_SITES: tuple[int, ...] = (1, 2, 6, 7)
 FOLDED_MEASUREMENT_SITE: int = 4
 
-
-
 FOLD_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
     # Step 3: four CNOTs.
     (
@@ -286,36 +287,6 @@ FOLD_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
         (4, 7),
     ),
 )
-
-
-def apply_google_ty(circuit: QuantumCircuit, qubit) -> None:
-    """Apply Google's cultivation ``T`` gate.
-
-    Notes
-    -----
-    In the cultivation figure, the gate labeled ``T`` is not Qiskit's
-    standard phase gate ``diag(1, exp(i*pi/4))``.
-
-    It is
-
-    ``T_y = exp(-i*pi*Y/8) = RY(pi/4)``.
-
-    This is the rotation satisfying
-
-    ``H = T_y^dagger X T_y``.
-
-    Therefore measuring ``H_L`` can be implemented by
-
-    1. applying ``T_y`` to each data qubit,
-    2. measuring the mapped logical ``X`` observable,
-    3. applying ``T_y^dagger`` to each data qubit.
-    """
-    circuit.ry(pi / 4, qubit)
-
-
-def apply_google_ty_dagger(circuit: QuantumCircuit, qubit) -> None:
-    """Apply ``T_y^dagger = RY(-pi/4)``."""
-    circuit.ry(-pi / 4, qubit)
 
 
 def measure_x_basis(circuit: QuantumCircuit, qubit, classical_bit) -> None:
