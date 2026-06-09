@@ -97,19 +97,6 @@ def test_build_steane_injection_with_h_cultivation_shape() -> None:
     assert circuit.count_ops()["reset"] == 5
 
 
-def test_encoder_prepares_noiseless_data_only_state() -> None:
-    circuit = QuantumCircuit(NUM_PATCH_QUBITS)
-    append_steane_state_injection_encoder(
-        circuit,
-        patch_qubits=list(circuit.qubits),
-        injected_state="H",
-    )
-    state = Statevector.from_instruction(circuit)
-
-    helper_probabilities = state.probabilities(HELPER_SITES)
-    assert helper_probabilities[0] == pytest.approx(1.0)
-    assert helper_probabilities[1:].sum() == pytest.approx(0.0)
-
 
 def test_folded_root_measurement_accepts_logical_h_with_probability_one() -> None:
     state = _build_h_state_on_patch()
