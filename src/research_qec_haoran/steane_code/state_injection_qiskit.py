@@ -44,21 +44,6 @@ def prepare_injected_state(
         Either a named state or a length-2 complex vector ``[alpha, beta]``.
         The encoder maps ``alpha |0> + beta |1>`` to
         ``alpha |0_L> + beta |1_L>``.
-
-    Notes
-    -----
-    Named non-stabilizer states:
-
-    ``"T"``
-        ``(|0> + exp(i pi/4) |1>) / sqrt(2)``.
-
-    ``"Tdg"``
-        ``(|0> + exp(-i pi/4) |1>) / sqrt(2)``.
-
-    ``"H"``
-        The +1 eigenstate of the Hadamard operator,
-        ``cos(pi/8)|0> + sin(pi/8)|1> = T_y|0>``,
-        where ``T_y = RY(pi/4)``.
     """
     if isinstance(injected_state, str):
         state = injected_state.upper()
@@ -79,33 +64,36 @@ def prepare_injected_state(
             circuit.h(qubit)
             return
 
-        if state in {"I", "Y+", "S"}:
+        if state in {"i", "Y+", "S"}:
             # |Y+> = S|+> = (|0> + i|1>) / sqrt(2).
             # This is the +1 eigenstate of Pauli Y.
             circuit.h(qubit)
             circuit.s(qubit)
             return
 
-        if state in {"-I", "Y-"}:
+        if state in {"-i", "Y-"}:
             # |Y-> = S^\dagger |+> = (|0> - i|1>) / sqrt(2).
             circuit.h(qubit)
             circuit.sdg(qubit)
             return
 
         if state == "T":
-            # |T> = T|+>.
+            # +1 eigenstate of (X+Y)/sqrt(2)
+            # |T> = T|+> = (|0> + exp(i*pi/4)|1>) / sqrt(2)
             circuit.h(qubit)
             circuit.t(qubit)
             return
 
         if state == "TDG":
+            # +1 eigenstate of (X-Y)/sqrt(2)
+            # |Tdg> = Tdg|+> = (|0> + exp(-i*pi/4)|1>) / sqrt(2)
             circuit.h(qubit)
             circuit.tdg(qubit)
             return
 
         if state == "H":
-            # +1 eigenstate of H:
-            # cos(pi/8)|0> + sin(pi/8)|1> = T_y|0>
+            # +1 eigenstate of H
+            # |H> = cos(pi/8)|0> + sin(pi/8)|1> = T_y|0>
             apply_google_ty(circuit, qubit)
             return
 
