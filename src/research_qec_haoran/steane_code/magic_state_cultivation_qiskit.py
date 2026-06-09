@@ -6,7 +6,7 @@ from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
 from research_qec_haoran.steane_code.state_injection_qiskit import (
     InjectedStateName,
-    prepare_injected_state,
+    prepare_physical_state,
 )
 from research_qec_haoran.utils.gates import apply_google_ty, apply_google_ty_dagger
 
@@ -80,7 +80,7 @@ def append_steane_state_injection_encoder(
     q = list(patch_qubits)
 
     # Injected state on site 0.
-    prepare_injected_state(circuit, q[INJECTION_SITE], injected_state)
+    prepare_physical_state(circuit, q[INJECTION_SITE], injected_state)
 
     # |+⟩ preparation on sites 5, 9, 10.
     for site in PLUS_SITES:

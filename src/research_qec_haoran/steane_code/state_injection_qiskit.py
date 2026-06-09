@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from math import sqrt
 from typing import Literal
 
 from qiskit import QuantumCircuit
@@ -27,10 +25,10 @@ STEANE_ENCODER_CNOTS: tuple[tuple[int, int], ...] = (
 )
 
 
-def prepare_injected_state(
+def prepare_physical_state(
     circuit: QuantumCircuit,
     qubit: int | Qubit,
-    injected_state: InjectedStateName | Sequence[complex],
+    state: InjectedStateName,
 ) -> None:
     """Prepare the single-qubit state to be encoded.
 
@@ -40,78 +38,64 @@ def prepare_injected_state(
         Circuit being built.
     qubit
         Qubit on which the unencoded input state is prepared.
-    injected_state
-        Either a named state or a length-2 complex vector ``[alpha, beta]``.
-        The encoder maps ``alpha |0> + beta |1>`` to
-        ``alpha |0_L> + beta |1_L>``.
+    state
+        Named state to prepare.
     """
-    if isinstance(injected_state, str):
-        state = injected_state.upper()
+    if state == "0":
+        return
 
-        if state == "0":
-            return
+    if state == "1":
+        circuit.x(qubit)
+        return
 
-        if state == "1":
-            circuit.x(qubit)
-            return
+    if state == "+":
+        circuit.h(qubit)
+        return
 
-        if state == "+":
-            circuit.h(qubit)
-            return
+    if state == "-":
+        circuit.x(qubit)
+        circuit.h(qubit)
+        return
 
-        if state == "-":
-            circuit.x(qubit)
-            circuit.h(qubit)
-            return
+    if state in {"i", "Y+", "S"}:
+        # +1 eigenstate of Pauli Y
+        # |Y+> = S|+> = (|0> + i|1>) / sqrt(2)
+        circuit.h(qubit)
+        circuit.s(qubit)
+        return
 
-        if state in {"i", "Y+", "S"}:
-            # |Y+> = S|+> = (|0> + i|1>) / sqrt(2).
-            # This is the +1 eigenstate of Pauli Y.
-            circuit.h(qubit)
-            circuit.s(qubit)
-            return
+    if state in {"-i", "Y-"}:
+        # -1 eigenstate of Pauli Y
+        # |Y-> = Sdg|+> = (|0> - i|1>) / sqrt(2)
+        circuit.h(qubit)
+        circuit.sdg(qubit)
+        return
 
-        if state in {"-i", "Y-"}:
-            # |Y-> = S^\dagger |+> = (|0> - i|1>) / sqrt(2).
-            circuit.h(qubit)
-            circuit.sdg(qubit)
-            return
+    if state == "T":
+        # +1 eigenstate of (X+Y)/sqrt(2)
+        # |T> = T|+> = (|0> + exp(i*pi/4)|1>) / sqrt(2)
+        circuit.h(qubit)
+        circuit.t(qubit)
+        return
 
-        if state == "T":
-            # +1 eigenstate of (X+Y)/sqrt(2)
-            # |T> = T|+> = (|0> + exp(i*pi/4)|1>) / sqrt(2)
-            circuit.h(qubit)
-            circuit.t(qubit)
-            return
+    if state == "Tdg":
+        # +1 eigenstate of (X-Y)/sqrt(2)
+        # |Tdg> = Tdg|+> = (|0> + exp(-i*pi/4)|1>) / sqrt(2)
+        circuit.h(qubit)
+        circuit.tdg(qubit)
+        return
 
-        if state == "TDG":
-            # +1 eigenstate of (X-Y)/sqrt(2)
-            # |Tdg> = Tdg|+> = (|0> + exp(-i*pi/4)|1>) / sqrt(2)
-            circuit.h(qubit)
-            circuit.tdg(qubit)
-            return
+    if state == "H":
+        # +1 eigenstate of H
+        # |H> = cos(pi/8)|0> + sin(pi/8)|1> = T_y|0>
+        apply_google_ty(circuit, qubit)
+        return
 
-        if state == "H":
-            # +1 eigenstate of H
-            # |H> = cos(pi/8)|0> + sin(pi/8)|1> = T_y|0>
-            apply_google_ty(circuit, qubit)
-            return
-
-        raise ValueError(f"Unknown injected state name: {injected_state!r}")
-
-    if len(injected_state) != 2:
-        raise ValueError("Custom injected_state must be a length-2 vector [alpha, beta].")
-
-    alpha, beta = complex(injected_state[0]), complex(injected_state[1])
-    norm = sqrt(abs(alpha) ** 2 + abs(beta) ** 2)
-    if norm == 0:
-        raise ValueError("Custom injected_state cannot be the zero vector.")
-
-    circuit.initialize([alpha / norm, beta / norm], [qubit])
+    raise ValueError(f"Unknown state name: {state!r}")
 
 
 def build_steane_state_injection_encoder_qiskit(
-    injected_state: InjectedStateName | Sequence[complex] = "T",
+    injected_state: InjectedStateName = "T",
     *,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
@@ -135,15 +119,11 @@ def build_steane_state_injection_encoder_qiskit(
     The circuit implements the map
 
     ``|psi> |+> |+> |+> |0> |0> |0> -> |psi_L>``.
-
-    With ``injected_state="T"``, this prepares
-
-    ``|T_L> = (|0_L> + exp(i*pi/4)|1_L>) / sqrt(2)``.
     """
     circuit = QuantumCircuit(7, name=f"steane_encode_{injected_state}")
 
     # Prepare the unencoded state on q0.
-    prepare_injected_state(circuit, 0, injected_state)
+    prepare_physical_state(circuit, 0, injected_state)
 
     # Prepare the three Steane codeword-superposition variables u, v, w.
     circuit.h(1)
