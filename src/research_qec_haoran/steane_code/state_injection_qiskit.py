@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
 from qiskit import QuantumCircuit
@@ -175,125 +176,379 @@ def build_steane_state_injection_encoder(
     return circuit
 
 
-def build_stabilizer_measurement_circuit(
+def append_stabilizer_measurement(
+    circuit: QuantumCircuit,
     *,
+    data_qubits: Sequence,
+    ancilla_qubits: Sequence,
+    classical_bits: Sequence,
     add_barriers: bool = True,
-) -> QuantumCircuit:
-    """Build a non-destructive stabilizer measurement circuit for the Steane code.
+) -> None:
+    """Append non-destructive stabilizer measurements to an existing circuit.
 
-    Uses 6 ancilla qubits (one per stabilizer) to measure all stabilizers
-    without disturbing the encoded state.
-
-    Layout: qubits 0–6 are data, qubits 7–9 are X-stabilizer ancillas,
-    qubits 10–12 are Z-stabilizer ancillas.
+    Measures all 6 Steane-code stabilizers (3 X-type, 3 Z-type) using
+    dedicated ancilla qubits.
 
     Parameters
     ----------
+    circuit
+        Circuit being modified.
+    data_qubits
+        Seven qubits holding the encoded Steane-code state (ordered 0–6).
+    ancilla_qubits
+        Six ancilla qubits: indices 0–2 for X-stabilizers, 3–5 for Z-stabilizers.
+    classical_bits
+        Six classical bits: bits 0–2 hold X-stabilizer outcomes,
+        bits 3–5 hold Z-stabilizer outcomes.
     add_barriers
-        Whether to insert barriers between X and Z stabilizer rounds.
-
-    Returns
-    -------
-    QuantumCircuit
-        A 13-qubit, 6-clbit circuit. Classical bits 0–2 hold X-stabilizer
-        outcomes, bits 3–5 hold Z-stabilizer outcomes.
+        Whether to insert a barrier between X and Z stabilizer rounds.
     """
-    n_data = 7
-    n_ancilla = 6
-    circuit = QuantumCircuit(n_data + n_ancilla, n_ancilla, name="steane_stab_meas")
+    if len(data_qubits) < 7:
+        raise ValueError("data_qubits must contain at least 7 qubits.")
+    if len(ancilla_qubits) < 6:
+        raise ValueError("ancilla_qubits must contain at least 6 qubits.")
+    if len(classical_bits) < 6:
+        raise ValueError("classical_bits must contain at least 6 bits.")
 
-    # X-stabilizer measurement: ancilla prepared in |+⟩, CX from ancilla to
-    # each data qubit in the support, then measure ancilla in X basis.
+    dq = list(data_qubits)
+    aq = list(ancilla_qubits)
+    cb = list(classical_bits)
+
+    # X-stabilizer measurement: ancilla in |+⟩, CX(anc→data), H, measure.
     for i, support in enumerate(X_STABILIZERS):
-        anc = n_data + i
-        circuit.h(anc)
-        for data_q in support:
-            circuit.cx(anc, data_q)
-        circuit.h(anc)
-        circuit.measure(anc, i)
+        circuit.h(aq[i])
+        for abstract_q in support:
+            circuit.cx(aq[i], dq[abstract_q])
+        circuit.h(aq[i])
+        circuit.measure(aq[i], cb[i])
 
     if add_barriers:
         circuit.barrier()
 
-    # Z-stabilizer measurement: ancilla prepared in |0⟩, CX from each data
-    # qubit in the support to ancilla, then measure ancilla in Z basis.
+    # Z-stabilizer measurement: ancilla in |0⟩, CX(data→anc), measure.
     for i, support in enumerate(Z_STABILIZERS):
-        anc = n_data + 3 + i
-        for data_q in support:
-            circuit.cx(data_q, anc)
-        circuit.measure(anc, 3 + i)
-
-    return circuit
+        for abstract_q in support:
+            circuit.cx(dq[abstract_q], aq[3 + i])
+        circuit.measure(aq[3 + i], cb[3 + i])
 
 
-def build_logical_measurement_circuit(
-    basis: Literal["Z", "X"] = "Z",
+def append_logical_measurement(
+    circuit: QuantumCircuit,
+    basis: str = "Z",
     *,
+    data_qubits: Sequence,
     support: tuple[int, ...] | None = None,
+    ancilla_qubit=None,
+    classical_bits: Sequence,
     destructive: bool = True,
-) -> QuantumCircuit:
-    """Build a circuit to measure the logical operator of the Steane code.
+) -> None:
+    """Append a logical measurement to an existing circuit.
 
     Parameters
     ----------
+    circuit
+        Circuit being modified.
     basis
         Which logical to measure: ``"Z"`` for Z_L or ``"X"`` for X_L.
+    data_qubits
+        Seven qubits holding the encoded Steane-code state (ordered 0–6).
     support
-        Qubit indices for the logical representative. Defaults to
-        ``DEFAULT_LOGICAL_Z`` or ``DEFAULT_LOGICAL_X``.
+        Abstract qubit indices (0–6) for the logical representative. Defaults
+        to ``DEFAULT_LOGICAL_Z`` or ``DEFAULT_LOGICAL_X``.
+    ancilla_qubit
+        For non-destructive measurement, the ancilla qubit to use. Required
+        when ``destructive=False``.
+    classical_bits
+        Classical bits for measurement results. For destructive: one per
+        support qubit. For non-destructive: at least one bit.
     destructive
         If True (default), directly measure the data qubits in the
-        appropriate basis. If False, use an ancilla for indirect measurement.
-
-    Returns
-    -------
-    QuantumCircuit
-        The measurement circuit. For destructive measurement the circuit has
-        7 data qubits and classical bits for the logical-support qubits.
-        For non-destructive measurement it has 7 data qubits + 1 ancilla
-        and 1 classical bit.
+        appropriate basis. If False, use the ancilla for indirect measurement.
     """
-    n_data = 7
+    if len(data_qubits) < 7:
+        raise ValueError("data_qubits must contain at least 7 qubits.")
     if support is None:
         support = DEFAULT_LOGICAL_Z if basis == "Z" else DEFAULT_LOGICAL_X
 
+    dq = list(data_qubits)
+    cb = list(classical_bits)
+
     if destructive:
-        circuit = QuantumCircuit(n_data, len(support), name=f"steane_meas_{basis}_L_dest")
+        if len(cb) < len(support):
+            raise ValueError(
+                f"classical_bits must have at least {len(support)} entries for destructive measurement."
+            )
         if basis == "X":
-            for i, q in enumerate(support):
-                circuit.h(q)
-        for i, q in enumerate(support):
-            circuit.measure(q, i)
+            for abstract_q in support:
+                circuit.h(dq[abstract_q])
+        for i, abstract_q in enumerate(support):
+            circuit.measure(dq[abstract_q], cb[i])
     else:
-        # Non-destructive: one ancilla qubit.
-        circuit = QuantumCircuit(n_data + 1, 1, name=f"steane_meas_{basis}_L_nd")
-        anc = n_data
+        if ancilla_qubit is None:
+            raise ValueError("ancilla_qubit is required for non-destructive measurement.")
+        if len(cb) < 1:
+            raise ValueError("classical_bits must have at least 1 entry for non-destructive measurement.")
         if basis == "Z":
-            # Ancilla in |0⟩, CX from each support qubit to ancilla.
-            for q in support:
-                circuit.cx(q, anc)
-            circuit.measure(anc, 0)
+            for abstract_q in support:
+                circuit.cx(dq[abstract_q], ancilla_qubit)
+            circuit.measure(ancilla_qubit, cb[0])
         else:
-            # Ancilla in |+⟩, CX from ancilla to each support qubit.
-            circuit.h(anc)
-            for q in support:
-                circuit.cx(anc, q)
-            circuit.h(anc)
-            circuit.measure(anc, 0)
-
-    return circuit
+            circuit.h(ancilla_qubit)
+            for abstract_q in support:
+                circuit.cx(ancilla_qubit, dq[abstract_q])
+            circuit.h(ancilla_qubit)
+            circuit.measure(ancilla_qubit, cb[0])
 
 
-if __name__ == "__main__":
-    steane_t_encoder = build_steane_state_injection_encoder("T")
-    print(steane_t_encoder.draw(output="text"))
+# =============================================================================
+# Map to 11-site cultivation patch
+# =============================================================================
 
-    steane_h_encoder = build_steane_state_injection_encoder("H")
-    print(steane_h_encoder.draw(output="text"))
+# 11-site labeling used in the cultivation patch:
+#
+#               0
+#
+#           1       2
+#
+#       3       4       5
+#
+#           6       7
+#
+#       8       9       10
+#
+# Data sites:   (0, 3, 4, 5, 8, 9, 10)
+# Helper sites: (1, 2, 6, 7)
 
-    stabilizer_meas = build_stabilizer_measurement_circuit()
-    print(stabilizer_meas.draw(output="text"))
+# The 7 abstract Steane qubits (0–6) map to 11-site patch data sites as:
+#   abstract 0 → patch site 0  (injection)
+#   abstract 1 → patch site 5  (|+⟩)
+#   abstract 2 → patch site 9  (|+⟩)
+#   abstract 3 → patch site 10 (|+⟩)
+#   abstract 4 → patch site 3  (|0⟩)
+#   abstract 5 → patch site 4  (|0⟩)
+#   abstract 6 → patch site 8  (|0⟩)
 
-    logical_meas = build_logical_measurement_circuit(basis="Z")
-    print(logical_meas.draw(output="text"))
+INJECTION_SITE: int = 0
+PLUS_SITES: tuple[int, ...] = (5, 9, 10)
 
+# Map from abstract Steane qubit index (0–6) to 11-site patch data site.
+_STEANE_TO_PATCH: tuple[int, ...] = (0, 5, 9, 10, 3, 4, 8)
+
+NUM_PATCH_QUBITS: int = 11
+PATCH_DATA_SITES: tuple[int, ...] = (0, 3, 4, 5, 8, 9, 10)
+PATCH_HELPER_SITES: tuple[int, ...] = (1, 2, 6, 7)
+
+
+def _map_support_to_patch(support: tuple[int, ...]) -> tuple[int, ...]:
+    """Map abstract Steane qubit indices to 11-site patch data sites."""
+    return tuple(sorted(_STEANE_TO_PATCH[i] for i in support))
+
+
+# ---------------------------------------------------------------------------
+# Mapped stabilizers (expressed in 11-site patch labels)
+# ---------------------------------------------------------------------------
+
+PATCH_X_STABILIZERS: tuple[tuple[int, ...], ...] = tuple(
+    _map_support_to_patch(s) for s in X_STABILIZERS
+)
+# (0, 3, 8, 9), (4, 5, 8, 9), (3, 4, 8, 10)
+
+PATCH_Z_STABILIZERS: tuple[tuple[int, ...], ...] = tuple(
+    _map_support_to_patch(s) for s in Z_STABILIZERS
+)
+# (0, 3, 8, 9), (4, 5, 8, 9), (3, 4, 8, 10)
+
+# ---------------------------------------------------------------------------
+# Mapped logical operators (expressed in 11-site patch labels)
+# ---------------------------------------------------------------------------
+
+PATCH_DEFAULT_LOGICAL_X: tuple[int, ...] = _map_support_to_patch(DEFAULT_LOGICAL_X)
+# (0, 5, 9)
+
+PATCH_DEFAULT_LOGICAL_Z: tuple[int, ...] = _map_support_to_patch(DEFAULT_LOGICAL_Z)
+# (0, 5, 9)
+
+PATCH_LOGICAL_X_REPRESENTATIVES: tuple[tuple[int, ...], ...] = tuple(
+    _map_support_to_patch(rep) for rep in LOGICAL_X_REPRESENTATIVES
+)
+# (0, 5, 9), (0, 3, 10), (0, 4, 8), (4, 5, 10), (3, 5, 8), (8, 9, 10), (3, 4, 9)
+
+PATCH_LOGICAL_Z_REPRESENTATIVES: tuple[tuple[int, ...], ...] = tuple(
+    _map_support_to_patch(rep) for rep in LOGICAL_Z_REPRESENTATIVES
+)
+# (0, 5, 9), (0, 3, 10), (0, 4, 8), (4, 5, 10), (3, 5, 8), (8, 9, 10), (3, 4, 9)
+
+
+# ---------------------------------------------------------------------------
+# Encoder on the 11-site patch
+# ---------------------------------------------------------------------------
+
+def append_patch_steane_state_injection_encoder(
+    circuit: QuantumCircuit,
+    *,
+    patch_qubits: Sequence,
+    injected_state: InjectedStateName = "H",
+    add_barriers: bool = True,
+) -> None:
+    """Append the Steane-code state-injection encoder on the 11-site patch.
+
+    Composes the 7-qubit encoder from build_steane_state_injection_encoder
+    onto the 7 data sites of the 11-site patch via _STEANE_TO_PATCH.
+
+    Parameters
+    ----------
+    circuit
+        Circuit being modified.
+    patch_qubits
+        Eleven Qiskit qubits indexed by the 11-site patch labels.
+    injected_state
+        The physical one-qubit state to inject on site 0.
+    add_barriers
+        Whether to insert a barrier after the encoder.
+    """
+    if len(patch_qubits) < 11:
+        raise ValueError("patch_qubits must contain at least 11 qubits.")
+
+    q = list(patch_qubits)
+
+    encoder = build_steane_state_injection_encoder(
+        injected_state=injected_state, add_barriers=add_barriers,
+    )
+
+    # Map abstract encoder qubits 0–6 to the corresponding patch data sites.
+    data_qubits = [q[_STEANE_TO_PATCH[i]] for i in range(7)]
+    circuit.compose(encoder, qubits=data_qubits, inplace=True)
+    if add_barriers:
+        circuit.barrier(label="state injection")
+
+
+# ---------------------------------------------------------------------------
+# Stabilizer measurement on the 11-site patch
+# ---------------------------------------------------------------------------
+
+def append_patch_stabilizer_measurement(
+    circuit: QuantumCircuit,
+    *,
+    patch_qubits: Sequence,
+    ancilla_qubits: Sequence,
+    classical_bits: Sequence,
+    add_barriers: bool = True,
+) -> None:
+    """Append non-destructive stabilizer measurements on the 11-site patch.
+
+    Uses 6 ancilla qubits (one per stabilizer) to measure all stabilizers
+    without disturbing the encoded state on the patch data sites.
+
+    Parameters
+    ----------
+    circuit
+        Circuit being modified.
+    patch_qubits
+        Eleven qubits indexed by the 11-site patch labels.
+    ancilla_qubits
+        Six ancilla qubits: indices 0–2 for X-stabilizers, 3–5 for Z-stabilizers.
+    classical_bits
+        Six classical bits: bits 0–2 hold X-stabilizer outcomes,
+        bits 3–5 hold Z-stabilizer outcomes.
+    add_barriers
+        Whether to insert a barrier between X and Z stabilizer rounds.
+    """
+    if len(patch_qubits) < 11:
+        raise ValueError("patch_qubits must contain at least 11 qubits.")
+    if len(ancilla_qubits) < 6:
+        raise ValueError("ancilla_qubits must contain at least 6 qubits.")
+    if len(classical_bits) < 6:
+        raise ValueError("classical_bits must contain at least 6 bits.")
+
+    pq = list(patch_qubits)
+    aq = list(ancilla_qubits)
+    cb = list(classical_bits)
+
+    # X-stabilizer measurement: ancilla in |+⟩, CX(anc→data), H, measure.
+    for i, support in enumerate(PATCH_X_STABILIZERS):
+        circuit.h(aq[i])
+        for site in support:
+            circuit.cx(aq[i], pq[site])
+        circuit.h(aq[i])
+        circuit.measure(aq[i], cb[i])
+
+    if add_barriers:
+        circuit.barrier()
+
+    # Z-stabilizer measurement: ancilla in |0⟩, CX(data→anc), measure.
+    for i, support in enumerate(PATCH_Z_STABILIZERS):
+        for site in support:
+            circuit.cx(pq[site], aq[3 + i])
+        circuit.measure(aq[3 + i], cb[3 + i])
+
+
+# ---------------------------------------------------------------------------
+# Logical measurement on the 11-site patch
+# ---------------------------------------------------------------------------
+
+def append_patch_logical_measurement(
+    circuit: QuantumCircuit,
+    basis: str = "Z",
+    *,
+    patch_qubits: Sequence,
+    support: tuple[int, ...] | None = None,
+    ancilla_qubit=None,
+    classical_bits: Sequence,
+    destructive: bool = True,
+) -> None:
+    """Append a logical measurement on the 11-site patch.
+
+    Parameters
+    ----------
+    circuit
+        Circuit being modified.
+    basis
+        Which logical to measure: ``"Z"`` for Z_L or ``"X"`` for X_L.
+    patch_qubits
+        Eleven qubits indexed by the 11-site patch labels.
+    support
+        Patch-site indices for the logical representative. Defaults to
+        ``PATCH_DEFAULT_LOGICAL_Z`` or ``PATCH_DEFAULT_LOGICAL_X``.
+    ancilla_qubit
+        For non-destructive measurement, the ancilla qubit to use. Required
+        when ``destructive=False``.
+    classical_bits
+        Classical bits for measurement results. For destructive: one per
+        support qubit. For non-destructive: at least one bit.
+    destructive
+        If True (default), directly measure the data qubits in the
+        appropriate basis. If False, use the ancilla for indirect measurement.
+    """
+    if len(patch_qubits) < 11:
+        raise ValueError("patch_qubits must contain at least 11 qubits.")
+    if support is None:
+        support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
+
+    pq = list(patch_qubits)
+    cb = list(classical_bits)
+
+    if destructive:
+        if len(cb) < len(support):
+            raise ValueError(
+                f"classical_bits must have at least {len(support)} entries for destructive measurement."
+            )
+        if basis == "X":
+            for site in support:
+                circuit.h(pq[site])
+        for i, site in enumerate(support):
+            circuit.measure(pq[site], cb[i])
+    else:
+        if ancilla_qubit is None:
+            raise ValueError("ancilla_qubit is required for non-destructive measurement.")
+        if len(cb) < 1:
+            raise ValueError("classical_bits must have at least 1 entry for non-destructive measurement.")
+        if basis == "Z":
+            for site in support:
+                circuit.cx(pq[site], ancilla_qubit)
+            circuit.measure(ancilla_qubit, cb[0])
+        else:
+            circuit.h(ancilla_qubit)
+            for site in support:
+                circuit.cx(ancilla_qubit, pq[site])
+            circuit.h(ancilla_qubit)
+            circuit.measure(ancilla_qubit, cb[0])
