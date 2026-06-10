@@ -5,7 +5,7 @@ from typing import Literal
 from qiskit import QuantumCircuit
 from qiskit.circuit import Qubit
 
-from research_qec_haoran.utils.gates import apply_google_ty
+from research_qec_haoran.utils.gates import apply_ty
 
 
 InjectedStateName = Literal["0", "1", "+", "-", "i", "-i", "Y+", "Y-", "S", "T", "Tdg", "H"]
@@ -126,7 +126,7 @@ def prepare_physical_state(
     if state == "H":
         # +1 eigenstate of H
         # |H> = cos(pi/8)|0> + sin(pi/8)|1> = T_y|0>
-        apply_google_ty(circuit, qubit)
+        apply_ty(circuit, qubit)
         return
 
     raise ValueError(f"Unknown state name: {state!r}")
@@ -138,6 +138,9 @@ def build_steane_state_injection_encoder(
     add_barriers: bool = True,
 ) -> QuantumCircuit:
     """Build a Steane-code state-injection encoder.
+
+    The circuit implements the map
+    |psi> |+> |+> |+> |0> |0> |0> -> |psi_L>.
 
     Parameters
     ----------
@@ -151,12 +154,6 @@ def build_steane_state_injection_encoder(
     -------
     QuantumCircuit
         A 7-qubit circuit preparing the encoded Steane state.
-
-    Notes
-    -----
-    The circuit implements the map
-
-    ``|psi> |+> |+> |+> |0> |0> |0> -> |psi_L>``.
     """
     circuit = QuantumCircuit(7, name=f"steane_encode_{injected_state}")
 
