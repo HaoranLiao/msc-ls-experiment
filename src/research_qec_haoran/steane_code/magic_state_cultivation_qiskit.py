@@ -356,6 +356,7 @@ def append_hadamard_axis_projection_round(
 # =============================================================================
 
 def build_steane_injection_with_h_cultivation(
+    injected_state: InjectedStateName = "H",
     *,
     add_barriers: bool = True,
     skip_cx_1_4: bool = False,
@@ -386,6 +387,11 @@ def build_steane_injection_with_h_cultivation(
 
     Parameters
     ----------
+    injected_state
+        Name of the single-qubit state injected on site 0 before encoding.
+        Must be one of the values accepted by ``InjectedStateName``
+        (e.g. "0", "+", "T", "H").  Defaults to ``"H"`` for H-state
+        cultivation.
     add_barriers
         Whether to insert barriers between conceptual stages.
     skip_cx_1_4
@@ -406,7 +412,7 @@ def build_steane_injection_with_h_cultivation(
     append_patch_steane_state_injection_encoder(
         circuit,
         patch_qubits=list(qreg),  # type: ignore[arg-type]
-        injected_state="H",
+        injected_state=injected_state,
         add_barriers=add_barriers,
     )
 
