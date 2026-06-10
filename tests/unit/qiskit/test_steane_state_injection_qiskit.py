@@ -6,7 +6,7 @@ import math
 
 import pytest
 from qiskit import QuantumCircuit
-from qiskit.quantum_info import SparsePauliOp
+from qiskit.quantum_info import SparsePauliOp, Statevector
 from qiskit_aer import AerSimulator
 
 from research_qec_haoran.steane_code.state_injection_qiskit import (
@@ -319,6 +319,7 @@ def test_patch_logical_z_expectation(state: InjectedStateName) -> None:
     """Verify ⟨Z_L⟩ on 11-site patch for all mapped representatives."""
     expected_z, _ = _expected_logical_expectation_values(state)
     for rep in PATCH_LOGICAL_Z_REPRESENTATIVES:
+        print(rep)
         measured_z = _patch_measure_logical_expectation_destructive(state, "Z", support=rep)
         assert measured_z == pytest.approx(expected_z, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: ⟨Z_L⟩ expected {expected_z:.4f}, got {measured_z:.4f}"
@@ -347,7 +348,7 @@ def _patch_measure_logical_expectation_non_destructive(
     support: tuple[int, ...],
 ) -> float:
     """Encode on 11-site patch, append non-destructive logical measurement,
-    and compute ⟨Z⟩ on the ancilla."""
+    and compute ⟨Z⟩ on the ancilla via Statevector."""
     anc_qubit = NUM_PATCH_QUBITS  # qubit index 11
 
     circuit = QuantumCircuit(NUM_PATCH_QUBITS + 1, 1)
@@ -366,12 +367,11 @@ def _patch_measure_logical_expectation_non_destructive(
         destructive=False,
     )
 
+    # Remove measurements so Statevector can be computed.
     circuit.remove_final_measurements(inplace=True)
-    circuit.save_expectation_value(SparsePauliOp("Z"), [anc_qubit], label="ev")
 
-    simulator = AerSimulator(method="statevector")
-    result = simulator.run(circuit).result()
-    return result.data()["ev"].real
+    sv = Statevector(circuit)
+    return sv.expectation_value(SparsePauliOp("Z"), [anc_qubit]).real
 
 
 @pytest.mark.parametrize("state", ALL_STATES)
@@ -415,17 +415,15 @@ def test_patch_all_stabilizers_plus_one(state: InjectedStateName) -> None:
         patch_qubits=list(range(NUM_PATCH_QUBITS)),
         ancilla_qubits=list(range(NUM_PATCH_QUBITS, NUM_PATCH_QUBITS + N_PATCH_ANCILLA)),
         classical_bits=list(range(N_PATCH_ANCILLA)),
+        add_barriers=False,
     )
 
     circuit.remove_final_measurements(inplace=True)
 
-    simulator = AerSimulator(method="statevector")
+    sv = Statevector(circuit)
     for idx in range(N_PATCH_ANCILLA):
         anc = NUM_PATCH_QUBITS + idx
-        circ_copy = circuit.copy()
-        circ_copy.save_expectation_value(SparsePauliOp("Z"), [anc], label="ev")
-        result = simulator.run(circ_copy).result()
-        ev = result.data()["ev"].real
+        ev = sv.expectation_value(SparsePauliOp("Z"), [anc]).real
 
         stab_type = "X" if idx < 3 else "Z"
         stab_idx = idx if idx < 3 else idx - 3

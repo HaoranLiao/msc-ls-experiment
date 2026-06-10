@@ -11,56 +11,70 @@ from research_qec_haoran.utils.gates import apply_ty
 
 InjectedStateName = Literal["0", "1", "+", "-", "i", "-i", "Y+", "Y-", "S", "T", "Tdg", "H"]
 
+# Steane [[7,1,3]] qubit layout (Fano plane in triangular form):
+#
+#        0
+#     1     2
+#        3
+# 4      5      6
+#
+# Faces (stabilizers, weight-4):
+#   Top: {0, 1, 2, 3}
+#   Bottom-left: {1, 3, 4, 5}
+#   Bottom-right: {2, 3, 5, 6}
+#
+# Sides (logicals, weight-3):
+#   Left: {0, 1, 4}    Right: {0, 2, 6}    Bottom: {4, 5, 6}
 
 # Steane [[7,1,3]] stabilizers and logical operators for qubits 0–6.
 X_STABILIZERS: tuple[tuple[int, ...], ...] = (
-    (0, 2, 4, 6),
-    (1, 2, 5, 6),
-    (3, 4, 5, 6),
+    (0, 1, 2, 3),
+    (1, 3, 4, 5),
+    (2, 3, 5, 6),
 )
 
 Z_STABILIZERS: tuple[tuple[int, ...], ...] = (
-    (0, 2, 4, 6),
-    (1, 2, 5, 6),
-    (3, 4, 5, 6),
+    (0, 1, 2, 3),
+    (1, 3, 4, 5),
+    (2, 3, 5, 6),
 )
 
-DEFAULT_LOGICAL_X: tuple[int, ...] = (0, 1, 2)
-DEFAULT_LOGICAL_Z: tuple[int, ...] = (0, 1, 2)
+DEFAULT_LOGICAL_X: tuple[int, ...] = (0, 1, 4)
+DEFAULT_LOGICAL_Z: tuple[int, ...] = (0, 1, 4)
 
-# All weight-3 logical representatives (related by stabilizer multiplication).
+# All weight-3 logical representatives (Fano plane lines).
 LOGICAL_X_REPRESENTATIVES: tuple[tuple[int, ...], ...] = (
-    (0, 1, 2),
-    (0, 3, 4),
-    (0, 5, 6),
-    (1, 3, 5),
-    (1, 4, 6),
-    (2, 3, 6),
-    (2, 4, 5),
+    (0, 1, 4),
+    (0, 2, 6),
+    (0, 3, 5),
+    (1, 2, 5),
+    (1, 3, 6),
+    (2, 3, 4),
+    (4, 5, 6),
 )
 
 LOGICAL_Z_REPRESENTATIVES: tuple[tuple[int, ...], ...] = (
-    (0, 1, 2),
-    (0, 3, 4),
-    (0, 5, 6),
-    (1, 3, 5),
-    (1, 4, 6),
-    (2, 3, 6),
-    (2, 4, 5),
+    (0, 1, 4),
+    (0, 2, 6),
+    (0, 3, 5),
+    (1, 2, 5),
+    (1, 3, 6),
+    (2, 3, 4),
+    (4, 5, 6),
 )
 
 
 STEANE_ENCODER_CNOTS: tuple[tuple[int, int], ...] = (
-    (3, 4),
-    (0, 3),
-    (1, 0),
+    (6, 2),
+    (0, 6),
+    (4, 0),
+    (2, 5),
+    (2, 3),
+    (0, 1),
+    (1, 3),
+    (1, 4),
     (4, 5),
-    (4, 6),
     (0, 2),
-    (2, 6),
-    (2, 1),
-    (1, 5),
-    (0, 4),
 )
 
 
@@ -163,8 +177,8 @@ def build_steane_state_injection_encoder(
 
     # Prepare the three Steane codeword-superposition variables u, v, w.
     circuit.h(1)
-    circuit.h(2)
-    circuit.h(3)
+    circuit.h(4)
+    circuit.h(6)
 
     if add_barriers:
         circuit.barrier()
@@ -321,18 +335,18 @@ def append_logical_measurement(
 
 # The 7 abstract Steane qubits (0–6) map to 11-site patch data sites as:
 #   abstract 0 → patch site 0  (injection)
-#   abstract 1 → patch site 5  (|+⟩)
-#   abstract 2 → patch site 9  (|+⟩)
-#   abstract 3 → patch site 10 (|+⟩)
-#   abstract 4 → patch site 3  (|0⟩)
-#   abstract 5 → patch site 4  (|0⟩)
-#   abstract 6 → patch site 8  (|0⟩)
+#   abstract 1 → patch site 3  (|+⟩)
+#   abstract 2 → patch site 5  (|0⟩)
+#   abstract 3 → patch site 4  (|0⟩)
+#   abstract 4 → patch site 8  (|+⟩)
+#   abstract 5 → patch site 9  (|0⟩)
+#   abstract 6 → patch site 10 (|+⟩)
 
 INJECTION_SITE: int = 0
-PLUS_SITES: tuple[int, ...] = (5, 9, 10)
+PLUS_SITES: tuple[int, ...] = (3, 8, 10)
 
 # Map from abstract Steane qubit index (0–6) to 11-site patch data site.
-_STEANE_TO_PATCH: tuple[int, ...] = (0, 5, 9, 10, 3, 4, 8)
+_STEANE_TO_PATCH: tuple[int, ...] = (0, 3, 5, 4, 8, 9, 10)
 
 NUM_PATCH_QUBITS: int = 11
 PATCH_DATA_SITES: tuple[int, ...] = (0, 3, 4, 5, 8, 9, 10)
@@ -348,35 +362,45 @@ def _map_support_to_patch(support: tuple[int, ...]) -> tuple[int, ...]:
 # Mapped stabilizers (expressed in 11-site patch labels)
 # ---------------------------------------------------------------------------
 
-PATCH_X_STABILIZERS: tuple[tuple[int, ...], ...] = tuple(
-    _map_support_to_patch(s) for s in X_STABILIZERS
+PATCH_X_STABILIZERS: tuple[tuple[int, ...], ...] = (
+    (0, 3, 4, 5),
+    (3, 4, 8, 9),
+    (4, 5, 9, 10),
 )
-# (0, 3, 8, 9), (4, 5, 8, 9), (3, 4, 8, 10)
 
-PATCH_Z_STABILIZERS: tuple[tuple[int, ...], ...] = tuple(
-    _map_support_to_patch(s) for s in Z_STABILIZERS
+PATCH_Z_STABILIZERS: tuple[tuple[int, ...], ...] = (
+    (0, 3, 4, 5),
+    (3, 4, 8, 9),
+    (4, 5, 9, 10),
 )
-# (0, 3, 8, 9), (4, 5, 8, 9), (3, 4, 8, 10)
 
 # ---------------------------------------------------------------------------
 # Mapped logical operators (expressed in 11-site patch labels)
 # ---------------------------------------------------------------------------
 
-PATCH_DEFAULT_LOGICAL_X: tuple[int, ...] = _map_support_to_patch(DEFAULT_LOGICAL_X)
-# (0, 5, 9)
+PATCH_DEFAULT_LOGICAL_X: tuple[int, ...] = (0, 3, 8)
 
-PATCH_DEFAULT_LOGICAL_Z: tuple[int, ...] = _map_support_to_patch(DEFAULT_LOGICAL_Z)
-# (0, 5, 9)
+PATCH_DEFAULT_LOGICAL_Z: tuple[int, ...] = (0, 3, 8)
 
-PATCH_LOGICAL_X_REPRESENTATIVES: tuple[tuple[int, ...], ...] = tuple(
-    _map_support_to_patch(rep) for rep in LOGICAL_X_REPRESENTATIVES
+PATCH_LOGICAL_X_REPRESENTATIVES: tuple[tuple[int, ...], ...] = (
+    (0, 3, 8),
+    (0, 5, 10),
+    (0, 4, 9),
+    (3, 5, 9),
+    (3, 4, 10),
+    (4, 5, 8),
+    (8, 9, 10),
 )
-# (0, 5, 9), (0, 3, 10), (0, 4, 8), (4, 5, 10), (3, 5, 8), (8, 9, 10), (3, 4, 9)
 
-PATCH_LOGICAL_Z_REPRESENTATIVES: tuple[tuple[int, ...], ...] = tuple(
-    _map_support_to_patch(rep) for rep in LOGICAL_Z_REPRESENTATIVES
+PATCH_LOGICAL_Z_REPRESENTATIVES: tuple[tuple[int, ...], ...] = (
+    (0, 3, 8),
+    (0, 5, 10),
+    (0, 4, 9),
+    (3, 5, 9),
+    (3, 4, 10),
+    (4, 5, 8),
+    (8, 9, 10),
 )
-# (0, 5, 9), (0, 3, 10), (0, 4, 8), (4, 5, 10), (3, 5, 8), (8, 9, 10), (3, 4, 9)
 
 
 # ---------------------------------------------------------------------------
