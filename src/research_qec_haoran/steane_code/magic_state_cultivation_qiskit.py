@@ -6,7 +6,7 @@ from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
 from research_qec_haoran.steane_code.state_injection_qiskit import (
     InjectedStateName,
-    build_steane_state_injection_encoder,
+    append_patch_steane_state_injection_encoder,
 )
 from research_qec_haoran.utils.gates import apply_ty, apply_ty_dagger
 
@@ -82,61 +82,9 @@ FOLDED_MEASUREMENT_SITE: int = 7
 # 1. Steane state-injection encoder (expressed in 11-site patch labels)
 # =============================================================================
 
-# The encoder prepares |ψ_L⟩ on the seven data sites of the 11-site patch.
-#
-# The 7 abstract Steane qubits (0–6) map to 11-site patch data sites as:
-#   abstract 0 → patch site 0  (injection)
-#   abstract 1 → patch site 5  (|+⟩)
-#   abstract 2 → patch site 9  (|+⟩)
-#   abstract 3 → patch site 10 (|+⟩)
-#   abstract 4 → patch site 3  (|0⟩)
-#   abstract 5 → patch site 4  (|0⟩)
-#   abstract 6 → patch site 8  (|0⟩)
-
-INJECTION_SITE: int = 0
-PLUS_SITES: tuple[int, ...] = (5, 9, 10)
-
-# Map from abstract Steane qubit index (0–6) to 11-site patch data site.
-_STEANE_TO_PATCH: tuple[int, ...] = (0, 5, 9, 10, 3, 4, 8)
-
-
-def append_steane_state_injection_encoder(
-    circuit: QuantumCircuit,
-    *,
-    patch_qubits: Sequence,
-    injected_state: InjectedStateName = "H",
-    add_barriers: bool = True,
-) -> None:
-    """Append the Steane-code state-injection encoder on the 11-site patch.
-
-    Composes the 7-qubit encoder from build_steane_state_injection_encoder
-    onto the 7 data sites of the 11-site patch via _STEANE_TO_PATCH.
-
-    Parameters
-    ----------
-    circuit
-        Circuit being modified.
-    patch_qubits
-        Eleven Qiskit qubits indexed by the 11-site patch labels.
-    injected_state
-        The physical one-qubit state to inject on site 0.
-    add_barriers
-        Whether to insert a barrier after the encoder.
-    """
-    if len(patch_qubits) != 11:
-        raise ValueError("patch_qubits must contain exactly 11 qubits.")
-
-    q = list(patch_qubits)
-
-    encoder = build_steane_state_injection_encoder(
-        injected_state=injected_state, add_barriers=add_barriers,
-    )
-
-    # Map abstract encoder qubits 0–6 to the corresponding patch data sites.
-    data_qubits = [q[_STEANE_TO_PATCH[i]] for i in range(7)]
-    circuit.compose(encoder, qubits=data_qubits, inplace=True)
-    if add_barriers:
-        circuit.barrier(label="state injection")
+# The encoder and its patch-mapping constants (INJECTION_SITE, PLUS_SITES,
+# _STEANE_TO_PATCH, append_steane_state_injection_encoder) live in
+# state_injection_qiskit.py and are imported above.
 
 
 # =============================================================================
@@ -455,7 +403,7 @@ def build_steane_injection_with_h_cultivation(
     creg = ClassicalRegister(5, "c")
     circuit = QuantumCircuit(qreg, creg)
 
-    append_steane_state_injection_encoder(
+    append_patch_steane_state_injection_encoder(
         circuit,
         patch_qubits=list(qreg),  # type: ignore[arg-type]
         injected_state="H",
