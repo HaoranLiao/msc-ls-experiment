@@ -30,9 +30,11 @@ from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
 from research_qec_haoran.decoding.pauli_frame import PauliFrame
 from research_qec_haoran.steane_code.magic_state_cultivation_qiskit import (
-    InjectedStateName,
     append_hadamard_axis_projection_round,
-    append_steane_state_injection_encoder,
+)
+from research_qec_haoran.steane_code.state_injection_qiskit import (
+    InjectedStateName,
+    append_patch_steane_state_injection_encoder,
 )
 from research_qec_haoran.surface_code.rotated_d3_layout_qiskit import (
     ROTATED_D3_LOGICAL_X,
@@ -592,7 +594,7 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     circuit = QuantumCircuit(*qubit_registers, *classical_registers)
     patch_qubits = _hirano_labeled_patch_qubits(qregs)
 
-    append_steane_state_injection_encoder(
+    append_patch_steane_state_injection_encoder(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
