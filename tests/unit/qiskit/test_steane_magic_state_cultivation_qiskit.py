@@ -89,6 +89,7 @@ def _build_cultivation_with_logical_measurement(
         patch_qubits=list(qreg),
         classical_bits=[creg[i] for i in range(5)],
         add_barriers=False,
+        skip_cx_1_4=True,
     )
 
     # Destructive logical measurement (3 classical bits: indices 5–7)
@@ -188,7 +189,7 @@ class TestPostselectedLogicalExpectation:
         """Acceptance rate matches |⟨H|ψ⟩|² for each injected state."""
         # Use the cultivation-only circuit (no logical measurement needed)
         circuit = build_steane_injection_with_h_cultivation(
-            injected_state=state, add_barriers=False,
+            injected_state=state, add_barriers=False, skip_cx_1_4=True,
         )
         sim = AerSimulator()
         counts = sim.run(circuit, shots=NUM_SHOTS).result().get_counts()
@@ -241,6 +242,7 @@ class TestStabilizerSyndromesAfterCultivation:
             patch_qubits=list(qreg),
             classical_bits=list(cult_creg),
             add_barriers=False,
+            skip_cx_1_4=True,
         )
 
         # Stabilizer measurement
@@ -330,6 +332,7 @@ def _build_multi_round_cultivation_circuit(
             patch_qubits=list(qreg),
             classical_bits=[creg[offset + i] for i in range(5)],
             add_barriers=False,
+            skip_cx_1_4=True,
         )
 
     # Destructive logical measurement

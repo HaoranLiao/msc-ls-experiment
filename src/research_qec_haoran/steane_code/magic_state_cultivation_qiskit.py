@@ -253,7 +253,7 @@ def append_hadamard_axis_projection_round(
     patch_qubits: Sequence,
     classical_bits: Sequence,
     add_barriers: bool = True,
-    skip_cx_1_4: bool = False,
+    skip_cx_1_4: bool = True,
     skip_cx: tuple[int, int] | None = None,
 ) -> None:
     """Append one H_L projection / cultivation round.
@@ -359,7 +359,7 @@ def build_steane_injection_with_h_cultivation(
     injected_state: InjectedStateName = "H",
     *,
     add_barriers: bool = True,
-    skip_cx_1_4: bool = False,
+    skip_cx_1_4: bool = True,
     skip_cx: tuple[int, int] | None = None,
 ) -> QuantumCircuit:
     """Build the full 11-site Steane injection + H_L projection circuit.
@@ -461,10 +461,3 @@ def postselect_success_counts(counts: dict[str, int]) -> dict[str, int]:
         for bitstring, count in counts.items()
         if set(bitstring.replace(" ", "")) <= {"0"}
     }
-
-
-if __name__ == "__main__":
-    qc = build_steane_injection_with_h_cultivation(add_barriers=True)
-
-    print(SITE_LAYOUT_DOC)
-    print(qc.draw(output="text", fold=-1))
