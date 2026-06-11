@@ -253,7 +253,7 @@ def append_hadamard_axis_projection_round(
     patch_qubits: Sequence,
     classical_bits: Sequence,
     add_barriers: bool = True,
-    skip_cx_1_4: bool = True,
+    skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
 ) -> None:
     """Append one H_L projection / cultivation round.
@@ -359,7 +359,7 @@ def build_steane_injection_with_h_cultivation(
     injected_state: InjectedStateName = "H",
     *,
     add_barriers: bool = True,
-    skip_cx_1_4: bool = True,
+    skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
 ) -> QuantumCircuit:
     """Build the full 11-site Steane injection + H_L projection circuit.
@@ -432,32 +432,47 @@ def build_steane_injection_with_h_cultivation(
 # 4. Postselection helpers
 # =============================================================================
 
-def postselect_success_counts(counts: dict[str, int]) -> dict[str, int]:
+def postselect_success_counts(
+    counts: dict[str, int],
+    cult_bit_positions: list[int] | None = None,
+) -> dict[str, int]:
     """Filter a Qiskit counts dictionary to successful cultivation shots.
 
     In Qiskit's convention, X-basis measurement outcome 0 means eigenvalue +1.
-    The desired successful postselection condition is
-
-        classical_bits[:] == 00000
-
-    i.e. the folded logical measurement (bit 0, site 7) is +1 and all four
-    helper/flag measurements (bits 1-4, sites 1, 2, 6, 7) are +1.
-
-    Since the success condition is all-zero, Qiskit's endian convention for
-    displaying classical registers does not matter here.
+    The desired successful postselection condition is that all cultivation
+    classical bits equal 0 (i.e. the folded logical measurement and all
+    helper/flag measurements are +1).
 
     Parameters
     ----------
     counts
         Qiskit counts dictionary from a cultivation circuit run.
+    cult_bit_positions
+        Indices of the cultivation bits within the bitstring, using Qiskit's
+        convention where index 0 is the *rightmost* character.  Only these
+        positions are checked for the all-zero acceptance condition; any other
+        bits (e.g. a subsequent logical measurement) are ignored during
+        filtering.
+
+        If ``None`` (default), the *entire* bitstring is required to be
+        all-zero.  This is the correct behaviour when the circuit contains
+        only cultivation measurements.
 
     Returns
     -------
     dict[str, int]
-        Filtered dictionary containing only successful (all-zero) bitstrings.
+        Filtered dictionary containing only shots that passed the cultivation
+        postselection check.
     """
-    return {
-        bitstring: count
-        for bitstring, count in counts.items()
-        if set(bitstring.replace(" ", "")) <= {"0"}
-    }
+    accepted: dict[str, int] = {}
+    for bitstring, count in counts.items():
+        bs = bitstring.replace(" ", "")
+        if cult_bit_positions is None:
+            if set(bs) <= {"0"}:
+                accepted[bitstring] = count
+        else:
+            # Qiskit convention: index 0 is rightmost char
+            n = len(bs)
+            if all(bs[n - 1 - i] == "0" for i in cult_bit_positions):
+                accepted[bitstring] = count
+    return accepted

@@ -606,7 +606,6 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
             patch_qubits=patch_qubits,
             classical_bits=list(classical_registers_by_name["cult"]),
             add_barriers=add_barriers,
-            skip_cx_1_4=True,
         )
 
     surface_qubits = _surface_data_qubits(qregs)

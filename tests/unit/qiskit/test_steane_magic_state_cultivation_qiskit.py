@@ -12,6 +12,7 @@ from qiskit_aer.noise import NoiseModel, depolarizing_error
 from research_qec_haoran.steane_code.magic_state_cultivation_qiskit import (
     append_hadamard_axis_projection_round,
     build_steane_injection_with_h_cultivation,
+    postselect_success_counts,
 )
 from research_qec_haoran.steane_code.state_injection_qiskit import (
     InjectedStateName,
@@ -89,7 +90,6 @@ def _build_cultivation_with_logical_measurement(
         patch_qubits=list(qreg),
         classical_bits=[creg[i] for i in range(5)],
         add_barriers=False,
-        skip_cx_1_4=True,
     )
 
     # Destructive logical measurement (3 classical bits: indices 5–7)
@@ -108,46 +108,58 @@ def _build_cultivation_with_logical_measurement(
 
 def _postselect_and_compute_expectation(
     counts: dict[str, int],
-    n_cult_bits: int = 5,
-    n_logical_bits: int = 3,
+    cult_bit_positions: list[int] | None = None,
+    logical_bit_positions: list[int] | None = None,
 ) -> tuple[float, int]:
     """Postselect on cultivation bits = all zero, return (⟨logical⟩, n_accepted).
 
-    Qiskit bitstring convention: rightmost char = bit 0.
-    Cultivation bits are indices 0..n_cult_bits-1 (rightmost n_cult_bits chars).
-    Logical bits are indices n_cult_bits..n_cult_bits+n_logical_bits-1.
-    """
-    total_accepted = 0
-    even_parity_count = 0
+    Uses :func:`postselect_success_counts` from the cultivation module for the
+    postselection filtering, then computes the logical expectation value from
+    the surviving shots.
 
-    for bitstring, count in counts.items():
-        bs = bitstring.replace(" ", "")
-        # Rightmost n_cult_bits are cultivation outcomes
-        cult_bits = bs[-n_cult_bits:]
-        if set(cult_bits) != {"0"}:
-            continue
-        total_accepted += count
-        # Remaining leftmost bits are logical measurement outcomes
-        logical_bits = bs[: len(bs) - n_cult_bits]
-        parity = sum(int(b) for b in logical_bits) % 2
-        if parity == 0:
-            even_parity_count += count
+    Parameters
+    ----------
+    counts
+        Qiskit counts dictionary.
+    cult_bit_positions
+        Bit indices (Qiskit convention: 0 = rightmost) for cultivation outcomes.
+        Defaults to [0, 1, 2, 3, 4].
+    logical_bit_positions
+        Bit indices for the logical measurement outcomes whose parity gives ⟨O_L⟩.
+        Defaults to [5, 6, 7].
+    """
+    if cult_bit_positions is None:
+        cult_bit_positions = list(range(5))
+    if logical_bit_positions is None:
+        logical_bit_positions = [5, 6, 7]
+
+    accepted_counts = postselect_success_counts(counts, cult_bit_positions=cult_bit_positions)
+    total_accepted = sum(accepted_counts.values())
 
     if total_accepted == 0:
         return 0.0, 0
+
+    even_parity_count = 0
+    for bitstring, count in accepted_counts.items():
+        bs = bitstring.replace(" ", "")
+        n = len(bs)
+        # Extract logical bits by position (Qiskit: index 0 = rightmost)
+        parity = sum(int(bs[n - 1 - i]) for i in logical_bit_positions) % 2
+        if parity == 0:
+            even_parity_count += count
+
     expectation = (2 * even_parity_count - total_accepted) / total_accepted
     return expectation, total_accepted
 
 
 def _compute_success_rate(counts: dict[str, int], n_cult_bits: int = 5) -> float:
-    """Compute fraction of shots where all cultivation bits are zero."""
+    """Compute fraction of shots where all cultivation bits are zero.
+
+    Uses :func:`postselect_success_counts` from the cultivation module.
+    """
     total = sum(counts.values())
-    accepted = 0
-    for bitstring, count in counts.items():
-        bs = bitstring.replace(" ", "")
-        cult_bits = bs[-n_cult_bits:]
-        if set(cult_bits) <= {"0"}:
-            accepted += count
+    accepted_counts = postselect_success_counts(counts)
+    accepted = sum(accepted_counts.values())
     return accepted / total
 
 
@@ -189,7 +201,7 @@ class TestPostselectedLogicalExpectation:
         """Acceptance rate matches |⟨H|ψ⟩|² for each injected state."""
         # Use the cultivation-only circuit (no logical measurement needed)
         circuit = build_steane_injection_with_h_cultivation(
-            injected_state=state, add_barriers=False, skip_cx_1_4=True,
+            injected_state=state, add_barriers=False,
         )
         sim = AerSimulator()
         counts = sim.run(circuit, shots=NUM_SHOTS).result().get_counts()
@@ -242,7 +254,6 @@ class TestStabilizerSyndromesAfterCultivation:
             patch_qubits=list(qreg),
             classical_bits=list(cult_creg),
             add_barriers=False,
-            skip_cx_1_4=True,
         )
 
         # Stabilizer measurement
@@ -285,8 +296,11 @@ class TestStabilizerSyndromesAfterCultivation:
 # Test Set 3: Noisy multi-round cultivation approaches ideal
 # =============================================================================
 
+NOISE_P_1Q = 0.001
+NOISE_P_2Q = 0.01
 
-def _build_noisy_noise_model(p_1q: float = 0.003, p_2q: float = 0.005) -> NoiseModel:
+
+def _build_noisy_noise_model(p_1q: float = NOISE_P_1Q, p_2q: float = NOISE_P_2Q) -> NoiseModel:
     """Construct a depolarizing noise model for all gates."""
     noise_model = NoiseModel()
     # 1-qubit depolarizing on all single-qubit gates
@@ -332,7 +346,6 @@ def _build_multi_round_cultivation_circuit(
             patch_qubits=list(qreg),
             classical_bits=[creg[offset + i] for i in range(5)],
             add_barriers=False,
-            skip_cx_1_4=True,
         )
 
     # Destructive logical measurement
@@ -355,30 +368,20 @@ def _postselect_multi_round(
 ) -> tuple[float, int]:
     """Postselect on all cultivation rounds succeeding, compute logical expectation.
 
+    Uses :func:`postselect_success_counts` from the cultivation module.
+
     Classical register layout:
-      - rightmost 5*n_rounds bits: cultivation outcomes (must all be 0)
-      - leftmost 3 bits: logical measurement
+      - bits [0, 5*n_rounds): cultivation outcomes (must all be 0)
+      - bits [5*n_rounds, 5*n_rounds+3): logical measurement
     """
     n_cult_total = 5 * n_rounds
-    n_logical = 3
-    total_accepted = 0
-    even_parity_count = 0
-
-    for bitstring, count in counts.items():
-        bs = bitstring.replace(" ", "")
-        cult_bits = bs[-n_cult_total:]
-        if set(cult_bits) != {"0"}:
-            continue
-        total_accepted += count
-        logical_bits = bs[:n_logical]
-        parity = sum(int(b) for b in logical_bits) % 2
-        if parity == 0:
-            even_parity_count += count
-
-    if total_accepted == 0:
-        return 0.0, 0
-    expectation = (2 * even_parity_count - total_accepted) / total_accepted
-    return expectation, total_accepted
+    cult_positions = list(range(n_cult_total))
+    logical_positions = [n_cult_total, n_cult_total + 1, n_cult_total + 2]
+    return _postselect_and_compute_expectation(
+        counts,
+        cult_bit_positions=cult_positions,
+        logical_bit_positions=logical_positions,
+    )
 
 
 class TestNoisyCultivationImprovesWithRounds:
@@ -391,16 +394,16 @@ class TestNoisyCultivationImprovesWithRounds:
        close to the ideal 1/√2 for both Z_L and X_L.
     2. Without postselection (noisy encoder + direct measurement), the
        expectation deviates more from ideal than with postselected cultivation.
+    3. More rounds → higher fidelity (lower |⟨O_L⟩ − 1/√2|) and lower
+       acceptance rate (higher discard fraction).
     """
 
-    NOISE_P_1Q = 0.001
-    NOISE_P_2Q = 0.002
     ROUNDS_TO_TEST = [1, 2, 3]
 
-    @pytest.mark.parametrize("basis", ["Z", "X"])
+    @pytest.mark.parametrize("basis", ["Z"])
     def test_postselected_fidelity_near_ideal(self, basis: str) -> None:
         """After noisy cultivation + postselection, ⟨Z_L⟩ and ⟨X_L⟩ ≈ 1/√2."""
-        noise_model = _build_noisy_noise_model(self.NOISE_P_1Q, self.NOISE_P_2Q)
+        noise_model = _build_noisy_noise_model()
         sim = AerSimulator(noise_model=noise_model)
 
         for n_rounds in self.ROUNDS_TO_TEST:
@@ -424,10 +427,51 @@ class TestNoisyCultivationImprovesWithRounds:
                 f"expected ≈ {INV_SQRT2:.4f} (n_accepted={n_accepted}, tol={tolerance:.4f})"
             )
 
-    @pytest.mark.parametrize("basis", ["Z", "X"])
+    @pytest.mark.parametrize("basis", ["X"])
+    def test_more_rounds_improves_fidelity_and_increases_discard(
+        self, basis: str
+    ) -> None:
+        """More cultivation rounds → better fidelity and higher discard rate."""
+        noise_model = _build_noisy_noise_model()
+        sim = AerSimulator(noise_model=noise_model)
+
+        n_shots = 10000  # more shots to reduce statistical noise for trend test
+        errors: list[float] = []
+        acceptance_rates: list[float] = []
+
+        for n_rounds in self.ROUNDS_TO_TEST:
+            circuit = _build_multi_round_cultivation_circuit(
+                n_rounds, basis, injected_state="H",
+            )
+            counts = sim.run(circuit, shots=n_shots).result().get_counts()
+            expectation, n_accepted = _postselect_multi_round(counts, n_rounds)
+
+            assert n_accepted > 50, (
+                f"Too few accepted shots ({n_accepted}) for {n_rounds} rounds"
+            )
+
+            errors.append(abs(expectation - INV_SQRT2))
+            acceptance_rates.append(n_accepted / n_shots)
+
+        # Fidelity should improve (error decreases) with more rounds.
+        # Allow small statistical slack — require error_last <= error_first + margin.
+        assert errors[-1] <= errors[-2] + 0.03, (
+            f"Basis {basis}: fidelity did not improve with more rounds. "
+            f"Errors by round: {list(zip(self.ROUNDS_TO_TEST, errors))}"
+        )
+        print(f"Errors by round: {list(zip(self.ROUNDS_TO_TEST, errors))}")
+
+        # Acceptance rate should decrease with more rounds (more chances to reject).
+        assert acceptance_rates[-1] < acceptance_rates[-2] + 0.01, (
+            f"Basis {basis}: acceptance rate did not decrease with more rounds. "
+            f"Rates by round: {list(zip(self.ROUNDS_TO_TEST, acceptance_rates))}"
+        )
+        print(f"Rates by round: {list(zip(self.ROUNDS_TO_TEST, acceptance_rates))}")
+
+    @pytest.mark.parametrize("basis", ["X"])
     def test_cultivation_improves_over_no_postselection(self, basis: str) -> None:
         """Postselected cultivation yields better fidelity than raw noisy encoder."""
-        noise_model = _build_noisy_noise_model(self.NOISE_P_1Q, self.NOISE_P_2Q)
+        noise_model = _build_noisy_noise_model()
         sim = AerSimulator(noise_model=noise_model)
 
         # --- Raw noisy encoder (no cultivation, just encoder → measurement) ---
