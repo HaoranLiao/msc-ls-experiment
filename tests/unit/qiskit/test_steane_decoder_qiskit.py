@@ -18,17 +18,17 @@ from qiskit_aer import AerSimulator
 
 from research_qec_haoran.decoding import (
     PauliFrame,
+    SteaneDecoder,
     SteaneRecovery,
     StabilizerFrame,
-    decode_steane_syndrome,
-    STEANE_PATCH_X_STABILIZER_LABELS,
-    STEANE_PATCH_Z_STABILIZER_LABELS,
 )
 from research_qec_haoran.steane_code.state_injection_qiskit import (
     NUM_PATCH_QUBITS,
     PATCH_DATA_SITES,
     PATCH_DEFAULT_LOGICAL_X,
     PATCH_DEFAULT_LOGICAL_Z,
+    PATCH_X_STABILIZERS,
+    PATCH_Z_STABILIZERS,
     InjectedStateName,
     append_patch_stabilizer_measurement,
     append_patch_steane_state_injection_encoder,
@@ -36,6 +36,13 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
 from research_qec_haoran.noise import append_patch_pauli_faults
 
 TOLERANCE = 1e-10
+
+_X_STAB_LABELS = tuple(
+    f"X_{''.join(str(s) for s in support)}" for support in PATCH_X_STABILIZERS
+)
+_Z_STAB_LABELS = tuple(
+    f"Z_{''.join(str(s) for s in support)}" for support in PATCH_Z_STABILIZERS
+)
 
 # (⟨Z_L⟩, ⟨X_L⟩) for each injected state.
 _inv_sqrt2 = 1.0 / math.sqrt(2)
@@ -107,9 +114,9 @@ _PATCH_QUBIT_INDICES = list(range(NUM_PATCH_QUBITS))
 def _init_stab_frame() -> StabilizerFrame:
     """Return a StabilizerFrame initialized to all +1."""
     frame = StabilizerFrame()
-    for label in STEANE_PATCH_X_STABILIZER_LABELS:
+    for label in _X_STAB_LABELS:
         frame.register(label, 0)
-    for label in STEANE_PATCH_Z_STABILIZER_LABELS:
+    for label in _Z_STAB_LABELS:
         frame.register(label, 0)
     return frame
 
@@ -126,16 +133,16 @@ def _decode_one_syndrome(
     stab_frame: StabilizerFrame,
 ) -> SteaneRecovery:
     """Advance the stabilizer frame and decode the change-detected syndrome."""
-    x_meas = {label: x_raw[i] for i, label in enumerate(STEANE_PATCH_X_STABILIZER_LABELS)}
-    z_meas = {label: z_raw[i] for i, label in enumerate(STEANE_PATCH_Z_STABILIZER_LABELS)}
+    x_meas = {label: x_raw[i] for i, label in enumerate(_X_STAB_LABELS)}
+    z_meas = {label: z_raw[i] for i, label in enumerate(_Z_STAB_LABELS)}
 
     x_deltas = stab_frame.advance(x_meas)
     z_deltas = stab_frame.advance(z_meas)
 
-    x_syn = tuple(x_deltas[l] for l in STEANE_PATCH_X_STABILIZER_LABELS)
-    z_syn = tuple(z_deltas[l] for l in STEANE_PATCH_Z_STABILIZER_LABELS)
+    x_syn = tuple(x_deltas[l] for l in _X_STAB_LABELS)
+    z_syn = tuple(z_deltas[l] for l in _Z_STAB_LABELS)
 
-    return decode_steane_syndrome(z_syndrome=z_syn, x_syndrome=x_syn)
+    return SteaneDecoder().decode(z_syndrome=z_syn, x_syndrome=x_syn)
 
 
 def _corrected_logical_expectations(

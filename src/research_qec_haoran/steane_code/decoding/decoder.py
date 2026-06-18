@@ -27,23 +27,6 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
 
 
 # ---------------------------------------------------------------------------
-# Stabilizer labels (canonical ordering)
-# ---------------------------------------------------------------------------
-
-STEANE_PATCH_X_STABILIZER_LABELS: tuple[str, ...] = tuple(
-    f"X_{''.join(str(s) for s in support)}" for support in PATCH_X_STABILIZERS
-)
-
-STEANE_PATCH_Z_STABILIZER_LABELS: tuple[str, ...] = tuple(
-    f"Z_{''.join(str(s) for s in support)}" for support in PATCH_Z_STABILIZERS
-)
-
-STEANE_PATCH_ALL_STABILIZER_LABELS: tuple[str, ...] = (
-    STEANE_PATCH_X_STABILIZER_LABELS + STEANE_PATCH_Z_STABILIZER_LABELS
-)
-
-
-# ---------------------------------------------------------------------------
 # Lookup tables
 # ---------------------------------------------------------------------------
 
@@ -172,30 +155,5 @@ class SteaneDecoder:
             flips_logical_z=flips_z,
             flips_logical_x=flips_x,
         )
-
-
-# ---------------------------------------------------------------------------
-# Module-level singleton
-# ---------------------------------------------------------------------------
-
-_DEFAULT_DECODER: SteaneDecoder | None = None
-
-
-def get_steane_decoder() -> SteaneDecoder:
-    """Return the module-level SteaneDecoder singleton (default logical supports)."""
-    global _DEFAULT_DECODER
-    if _DEFAULT_DECODER is None:
-        _DEFAULT_DECODER = SteaneDecoder()
-    assert _DEFAULT_DECODER is not None
-    return _DEFAULT_DECODER
-
-
-def decode_steane_syndrome(
-    *,
-    z_syndrome: tuple[int, int, int],
-    x_syndrome: tuple[int, int, int],
-) -> SteaneRecovery:
-    """Convenience function: decode a Steane-code syndrome using default logicals."""
-    return get_steane_decoder().decode(z_syndrome=z_syndrome, x_syndrome=x_syndrome)
 
 
