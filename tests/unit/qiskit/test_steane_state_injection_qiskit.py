@@ -28,6 +28,7 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     append_patch_steane_state_injection_encoder,
     build_steane_state_injection_encoder,
 )
+from research_qec_haoran.noise import append_patch_pauli_faults
 
 NUM_DATA_QUBITS = 7
 TOLERANCE = 1e-10
@@ -529,14 +530,7 @@ def _build_and_run_patch_syndrome(
     )
 
     # Inject faults.
-    for pauli, site in faults:
-        p = pauli.upper()
-        if p == "X":
-            circuit.x(site)
-        elif p == "Y":
-            circuit.y(site)
-        elif p == "Z":
-            circuit.z(site)
+    append_patch_pauli_faults(circuit, faults)
 
     # Measure all 6 stabilizers.
     append_patch_stabilizer_measurement(

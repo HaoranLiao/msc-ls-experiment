@@ -28,6 +28,7 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     append_patch_stabilizer_measurement,
     append_patch_steane_state_injection_encoder,
 )
+from research_qec_haoran.noise import append_patch_pauli_faults
 
 
 # States for which we test logical Z readout (eigenvalue is deterministic).
@@ -81,15 +82,7 @@ def _build_patch_inject_fault_and_measure(
     )
 
     # 2. Inject a single-qubit fault.
-    gate = fault_pauli.upper()
-    if gate == "X":
-        circuit.x(patch[fault_site])
-    elif gate == "Y":
-        circuit.y(patch[fault_site])
-    elif gate == "Z":
-        circuit.z(patch[fault_site])
-    else:
-        raise ValueError(f"unsupported Pauli {fault_pauli!r}")
+    append_patch_pauli_faults(circuit, [(fault_pauli, fault_site)], patch_qubits=list(patch))
 
     # 3. Measure all 6 stabilizers (1 round).
     append_patch_stabilizer_measurement(
