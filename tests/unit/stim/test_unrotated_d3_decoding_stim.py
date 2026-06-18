@@ -4,7 +4,7 @@ from research_qec_haoran.surface_code.decoding import (
     decode_memory_shots,
     generate_noisy_memory_circuit,
 )
-from research_qec_haoran.surface_code.decoding.unrotated_d3_memory_stim import (
+from archive.surface_code.decoding.unrotated_d3_memory_stim import (
     _boundary_data_qubit,
     _interpret_stabilizer_sector,
     _interpret_time_label,
@@ -17,7 +17,7 @@ from research_qec_haoran.noise import (
     inject_pauli_errors_before_final_measurement,
 )
 from research_qec_haoran.surface_code import generate_d3_unrotated_memory_circuit
-from research_qec_haoran.surface_code.decoding.unrotated_d3_memory_stim import detector_coords_by_index
+from archive.surface_code.decoding.unrotated_d3_memory_stim import detector_coords_by_index
 
 
 # ---------------------------------------------------------------------------

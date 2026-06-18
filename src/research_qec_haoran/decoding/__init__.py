@@ -2,7 +2,7 @@
 
 from research_qec_haoran.decoding.pauli_frame import PauliFrame
 from research_qec_haoran.decoding.stabilizer_frame import StabilizerFrame
-from research_qec_haoran.decoding.steane_decoder import (
+from research_qec_haoran.steane_code.decoding.steane_decoder import (
     SteaneDecoder,
     SteaneRecovery,
     decode_steane_syndrome,
