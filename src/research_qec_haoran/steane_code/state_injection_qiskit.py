@@ -378,9 +378,9 @@ PATCH_Z_STABILIZERS: tuple[tuple[int, ...], ...] = (
 # Mapped logical operators (expressed in 11-site patch labels)
 # ---------------------------------------------------------------------------
 
-PATCH_DEFAULT_LOGICAL_X: tuple[int, ...] = (0, 3, 8)
+PATCH_DEFAULT_LOGICAL_X: tuple[int, ...] = (8, 9, 10)
 
-PATCH_DEFAULT_LOGICAL_Z: tuple[int, ...] = (0, 3, 8)
+PATCH_DEFAULT_LOGICAL_Z: tuple[int, ...] = (8, 9, 10)
 
 PATCH_LOGICAL_X_REPRESENTATIVES: tuple[tuple[int, ...], ...] = (
     (0, 3, 8),
