@@ -16,7 +16,6 @@ from research_qec_haoran.surface_code.rotated_d3_layout_qiskit import (
     ROTATED_D3_X_STABILIZERS,
     ROTATED_D3_Z_STABILIZERS,
     draw_rotated_d3_patch,
-    rotated_d3_single_qubit_relative_syndrome,
 )
 from research_qec_haoran.surface_code.rotated_d3_qiskit import (
     ROTATED_D3_INIT_Z_LABELS,
@@ -50,6 +49,5 @@ __all__ = [
     "append_rotated_d3_z_stabilizer_measurements",
     "append_surface_d3_stabilizer_round",
     "draw_rotated_d3_patch",
-    "rotated_d3_single_qubit_relative_syndrome",
     "rotated_d3_z_syndrome_bits_from_measurements",
 ]
