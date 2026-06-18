@@ -397,43 +397,6 @@ def test_patch_logical_x_via_measurement_circuit(state: InjectedStateName) -> No
 
 
 # -----------------------------------------------
-# Stabilizer syndrome on 11-site patch
-# -----------------------------------------------
-
-
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_all_stabilizers_plus_one(state: InjectedStateName) -> None:
-    """Verify all 6 syndrome ancillas give ⟨Z⟩ = +1 on the 11-site patch."""
-    circuit = QuantumCircuit(NUM_PATCH_QUBITS + N_PATCH_ANCILLA, N_PATCH_ANCILLA)
-    append_patch_steane_state_injection_encoder(
-        circuit, patch_qubits=list(range(NUM_PATCH_QUBITS)),
-        injected_state=state, add_barriers=False,
-    )
-
-    append_patch_stabilizer_measurement(
-        circuit,
-        patch_qubits=list(range(NUM_PATCH_QUBITS)),
-        ancilla_qubits=list(range(NUM_PATCH_QUBITS, NUM_PATCH_QUBITS + N_PATCH_ANCILLA)),
-        classical_bits=list(range(N_PATCH_ANCILLA)),
-        add_barriers=False,
-    )
-
-    circuit.remove_final_measurements(inplace=True)
-
-    sv = Statevector(circuit)
-    for idx in range(N_PATCH_ANCILLA):
-        anc = NUM_PATCH_QUBITS + idx
-        ev = sv.expectation_value(SparsePauliOp("Z"), [anc]).real
-
-        stab_type = "X" if idx < 3 else "Z"
-        stab_idx = idx if idx < 3 else idx - 3
-        assert ev == pytest.approx(1.0, abs=TOLERANCE), (
-            f"State {state!r}: {stab_type}-stabilizer {stab_idx} "
-            f"⟨Z_anc⟩ expected 1.0, got {ev:.6f}"
-        )
-
-
-# -----------------------------------------------
 # Patch logical representative consistency check
 # -----------------------------------------------
 
@@ -492,5 +455,174 @@ def test_patch_steane_code_is_css_self_dual() -> None:
     assert PATCH_LOGICAL_X_REPRESENTATIVES == PATCH_LOGICAL_Z_REPRESENTATIVES
 
 
+# -----------------------------------------------
+# Stabilizer syndrome on 11-site patch
+# -----------------------------------------------
 
 
+@pytest.mark.parametrize("state", ALL_STATES)
+def test_patch_all_stabilizers_plus_one(state: InjectedStateName) -> None:
+    """Verify all 6 syndrome ancillas give ⟨Z⟩ = +1 on the 11-site patch."""
+    circuit = QuantumCircuit(NUM_PATCH_QUBITS + N_PATCH_ANCILLA, N_PATCH_ANCILLA)
+    append_patch_steane_state_injection_encoder(
+        circuit, patch_qubits=list(range(NUM_PATCH_QUBITS)),
+        injected_state=state, add_barriers=False,
+    )
+
+    append_patch_stabilizer_measurement(
+        circuit,
+        patch_qubits=list(range(NUM_PATCH_QUBITS)),
+        ancilla_qubits=list(range(NUM_PATCH_QUBITS, NUM_PATCH_QUBITS + N_PATCH_ANCILLA)),
+        classical_bits=list(range(N_PATCH_ANCILLA)),
+        add_barriers=False,
+    )
+
+    circuit.remove_final_measurements(inplace=True)
+
+    sv = Statevector(circuit)
+    for idx in range(N_PATCH_ANCILLA):
+        anc = NUM_PATCH_QUBITS + idx
+        ev = sv.expectation_value(SparsePauliOp("Z"), [anc]).real
+
+        stab_type = "X" if idx < 3 else "Z"
+        stab_idx = idx if idx < 3 else idx - 3
+        assert ev == pytest.approx(1.0, abs=TOLERANCE), (
+            f"State {state!r}: {stab_type}-stabilizer {stab_idx} "
+            f"⟨Z_anc⟩ expected 1.0, got {ev:.6f}"
+        )
+
+# ---------------------------------------------------------
+# Stabilizer syndrome on 11-site patch with injected faults
+# ---------------------------------------------------------
+
+def _expected_patch_syndrome(
+    faults: list[tuple[str, int]],
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Compute expected (x_syndrome, z_syndrome) for a list of (pauli, site) faults.
+
+    x_syndrome: 3 bits from X-stabilizer measurements (flag Z-type errors).
+    z_syndrome: 3 bits from Z-stabilizer measurements (flag X-type errors).
+    """
+    x_syn = [0, 0, 0]
+    z_syn = [0, 0, 0]
+    for pauli, site in faults:
+        p = pauli.upper()
+        for i, support in enumerate(PATCH_X_STABILIZERS):
+            if site in support and p in ("Z", "Y"):
+                x_syn[i] ^= 1
+        for i, support in enumerate(PATCH_Z_STABILIZERS):
+            if site in support and p in ("X", "Y"):
+                z_syn[i] ^= 1
+    return tuple(x_syn), tuple(z_syn)
+
+
+def _build_and_run_patch_syndrome(
+    faults: list[tuple[str, int]],
+    injected_state: InjectedStateName = "0",
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Inject faults after state injection, measure stabilizers, return (x_syn, z_syn)."""
+    circuit = QuantumCircuit(NUM_PATCH_QUBITS + N_PATCH_ANCILLA, N_PATCH_ANCILLA)
+
+    append_patch_steane_state_injection_encoder(
+        circuit, patch_qubits=list(range(NUM_PATCH_QUBITS)),
+        injected_state=injected_state, add_barriers=False,
+    )
+
+    # Inject faults.
+    for pauli, site in faults:
+        p = pauli.upper()
+        if p == "X":
+            circuit.x(site)
+        elif p == "Y":
+            circuit.y(site)
+        elif p == "Z":
+            circuit.z(site)
+
+    # Measure all 6 stabilizers.
+    append_patch_stabilizer_measurement(
+        circuit,
+        patch_qubits=list(range(NUM_PATCH_QUBITS)),
+        ancilla_qubits=list(range(NUM_PATCH_QUBITS, NUM_PATCH_QUBITS + N_PATCH_ANCILLA)),
+        classical_bits=list(range(N_PATCH_ANCILLA)),
+        add_barriers=False,
+    )
+
+    # Run 1 shot (noiseless, deterministic).
+    sim = AerSimulator()
+    bitstring = next(iter(sim.run(circuit, shots=1).result().get_counts())).replace(" ", "")
+    bits = [int(b) for b in reversed(bitstring)]
+    # bits[0..2] = X-stabilizer outcomes, bits[3..5] = Z-stabilizer outcomes.
+    x_syn = tuple(bits[0:3])
+    z_syn = tuple(bits[3:6])
+    return x_syn, z_syn
+
+
+# -- Fault parametrizations --
+
+_SINGLE_FAULTS = [[(p, s)] for p in ("X", "Y", "Z") for s in PATCH_DATA_SITES]
+_SINGLE_IDS = [f"{p}_{s}" for p in ("X", "Y", "Z") for s in PATCH_DATA_SITES]
+
+_TWO_SAME_FAULTS: list[list[tuple[str, int]]] = []
+_TWO_SAME_IDS: list[str] = []
+for _p in ("X", "Y", "Z"):
+    for _i, _s1 in enumerate(PATCH_DATA_SITES):
+        for _s2 in PATCH_DATA_SITES[_i + 1:]:
+            _TWO_SAME_FAULTS.append([(_p, _s1), (_p, _s2)])
+            _TWO_SAME_IDS.append(f"{_p}{_p}_{_s1}_{_s2}")
+
+_TWO_MIXED_FAULTS: list[list[tuple[str, int]]] = []
+_TWO_MIXED_IDS: list[str] = []
+for _p1, _p2 in [("X", "Z"), ("X", "Y"), ("Z", "Y")]:
+    for _i, _s1 in enumerate(PATCH_DATA_SITES):
+        for _s2 in PATCH_DATA_SITES[_i + 1:]:
+            _TWO_MIXED_FAULTS.append([(_p1, _s1), (_p2, _s2)])
+            _TWO_MIXED_IDS.append(f"{_p1}{_p2}_{_s1}_{_s2}")
+
+
+class TestPatchSyndromeExtraction:
+    """Verify stabilizer measurement outputs match expected syndromes for injected faults."""
+
+    @pytest.mark.parametrize("state", ["0", "T", "H"])
+    def test_no_fault_trivial(self, state: InjectedStateName) -> None:
+        """No faults → all syndrome bits zero for any encoded state."""
+        x_syn, z_syn = _build_and_run_patch_syndrome([], injected_state=state)
+        assert x_syn == (0, 0, 0) and z_syn == (0, 0, 0), (
+            f"State {state!r}: expected trivial syndrome, got X={x_syn}, Z={z_syn}"
+        )
+
+    @pytest.mark.parametrize("state", ["0", "T", "H"])
+    @pytest.mark.parametrize("faults", _SINGLE_FAULTS, ids=_SINGLE_IDS)
+    def test_single_fault(self, state: InjectedStateName, faults: list[tuple[str, int]]) -> None:
+        """Single-qubit fault produces the correct unique syndrome."""
+        expected_x, expected_z = _expected_patch_syndrome(faults)
+        measured_x, measured_z = _build_and_run_patch_syndrome(faults, injected_state=state)
+        pauli, site = faults[0]
+        assert (measured_x, measured_z) == (expected_x, expected_z), (
+            f"State {state!r}, {pauli}@{site}: "
+            f"got X={measured_x} Z={measured_z}, expected X={expected_x} Z={expected_z}"
+        )
+
+    @pytest.mark.parametrize("state", ["0", "T", "H"])
+    @pytest.mark.parametrize("faults", _TWO_SAME_FAULTS, ids=_TWO_SAME_IDS)
+    def test_two_qubit_same_pauli(self, state: InjectedStateName, faults: list[tuple[str, int]]) -> None:
+        """Two same-Pauli faults: syndrome is XOR of individual syndromes."""
+        expected_x, expected_z = _expected_patch_syndrome(faults)
+        measured_x, measured_z = _build_and_run_patch_syndrome(faults, injected_state=state)
+        p, s1, s2 = faults[0][0], faults[0][1], faults[1][1]
+        assert (measured_x, measured_z) == (expected_x, expected_z), (
+            f"State {state!r}, {p}{p}@{s1},{s2}: "
+            f"got X={measured_x} Z={measured_z}, expected X={expected_x} Z={expected_z}"
+        )
+
+    @pytest.mark.parametrize("state", ["0", "T", "H"])
+    @pytest.mark.parametrize("faults", _TWO_MIXED_FAULTS, ids=_TWO_MIXED_IDS)
+    def test_two_qubit_mixed_pauli(self, state: InjectedStateName, faults: list[tuple[str, int]]) -> None:
+        """Two different-Pauli faults: X and Z sectors detect independently."""
+        expected_x, expected_z = _expected_patch_syndrome(faults)
+        measured_x, measured_z = _build_and_run_patch_syndrome(faults, injected_state=state)
+        p1, s1 = faults[0]
+        p2, s2 = faults[1]
+        assert (measured_x, measured_z) == (expected_x, expected_z), (
+            f"State {state!r}, {p1}@{s1}+{p2}@{s2}: "
+            f"got X={measured_x} Z={measured_z}, expected X={expected_x} Z={expected_z}"
+        )
