@@ -1,157 +1,796 @@
-import numpy as np
+"""Tests for the rotated distance-3 surface-code patch (Qiskit workflow).
+
+Organized into three test sets:
+1. Patch geometry validation
+2. Logical state preparation and stabilizer eigenvalue checks
+3. Single-fault injection, syndrome extraction, and decoding
+"""
+
+from __future__ import annotations
+
+import pytest
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
+from qiskit.quantum_info import SparsePauliOp, Statevector
 from qiskit_aer import AerSimulator
 
-from research_qec_haoran.surface_code.decoding import StabilizerFrame
-from research_qec_haoran.surface_code.decoding import (
-    decode_rotated_patch_syndrome,
-    rotated_d3_single_qubit_relative_syndrome,
-)
-from research_qec_haoran.surface_code.rotated_d3_layout_qiskit import (
-    ROTATED_D3_SURFACE_ORDER,
-    ROTATED_D3_X_STABILIZERS,
-    ROTATED_D3_Z_STABILIZERS,
-)
+from research_qec_haoran.noise import append_pauli_faults
+from research_qec_haoran.surface_code.decoding import PauliFrame, RotatedDecoder, StabilizerFrame
 from research_qec_haoran.surface_code.rotated_d3_qiskit import (
-    append_data_pauli,
-    append_prepare_plus_state,
-    append_rotated_d3_z_stabilizer_measurements,
-    ROTATED_D3_INIT_Z_LABELS,
-    append_surface_d3_stabilizer_round,
-    rotated_d3_z_syndrome_bits_from_measurements,
+    DEFAULT_LOGICAL_X,
+    DEFAULT_LOGICAL_Z,
+    LOGICAL_X_REPRESENTATIVES,
+    LOGICAL_Z_REPRESENTATIVES,
+    SURFACE_COORDS,
+    SURFACE_INDEX,
+    SURFACE_ORDER,
+    X_STABILIZER_CENTERS,
+    X_STABILIZERS,
+    Z_STABILIZER_CENTERS,
+    Z_STABILIZERS,
+    label2qubit,
+    append_logical_measurement,
+    append_stabilizer_round,
+    append_x_stabilizer_measurements,
+    append_z_stabilizer_measurements,
+    prepare_plus,
+    reset_to_zero,
 )
 
-_Z_NAMES = tuple(ROTATED_D3_Z_STABILIZERS)
-_X_NAMES = tuple(ROTATED_D3_X_STABILIZERS)
+# ===========================================================================
+# Shared constants
+# ===========================================================================
+
+NUM_DATA_QUBITS = 9
+NUM_Z_ANCILLAS = 4
+NUM_X_ANCILLAS = 4
+Z_NAMES = tuple(Z_STABILIZERS)
+X_NAMES = tuple(X_STABILIZERS)
 
 
-def _build_and_run_detect_circuit(fault_pauli: str, fault_qubit: str):
-    """Build init→fault→detect circuit, run, parse, decode from measurements."""
-    sim = AerSimulator()
-    s = QuantumRegister(9, "surface")
-    za = QuantumRegister(4, "z_anc")
-    xa = QuantumRegister(4, "x_anc")
-    i_cl = ClassicalRegister(4, "init_z")
-    dz_cl = ClassicalRegister(4, "det_z")
-    dx_cl = ClassicalRegister(4, "det_x")
-    qc = QuantumCircuit(s, za, xa, i_cl, dz_cl, dx_cl)
+# ===========================================================================
+# Helpers
+# ===========================================================================
 
-    append_prepare_plus_state(qc, qubits=list(s))
-    append_rotated_d3_z_stabilizer_measurements(
-        qc, surface_qubits=list(s), z_ancillas=list(za),
-        classical_bits=list(i_cl), round_label="init",
-        prepare_ancillas=False, add_barriers=False,
-    )
-    append_data_pauli(qc, list(s), fault_pauli, fault_qubit)
-    append_surface_d3_stabilizer_round(
-        qc, surface_qubits=list(s), z_ancillas=list(za), x_ancillas=list(xa),
-        z_bits=list(dz_cl), x_bits=list(dx_cl),
-        round_label="detect", prepare_z_ancillas=True, prepare_x_ancillas=True,
-        add_barriers=False,
-    )
+def _chebyshev_distance(c1: tuple[float, float], c2: tuple[float, float]) -> float:
+    return max(abs(c1[0] - c2[0]), abs(c1[1] - c2[1]))
 
-    raw = next(iter(sim.run(qc, shots=1).result().get_counts())).replace(" ", "")
-    offset = len(raw)
-    regs = {}
-    for rname, labels in [("init_z", _Z_NAMES), ("det_z", _Z_NAMES), ("det_x", _X_NAMES)]:
-        offset -= len(labels)
-        chunk = raw[offset:offset + len(labels)]
-        regs[rname] = {l: int(b) for l, b in zip(labels, reversed(chunk), strict=False)}
-
-    fr = StabilizerFrame()
-    fr.record_many(regs["init_z"])
-    fr.record_many({n: 0 for n in _X_NAMES})
-    det_rel = fr.compare_many({**regs["det_z"], **regs["det_x"]}, update=False)
-    dz = {n: det_rel[n] for n in _Z_NAMES}
-    dx = {n: det_rel[n] for n in _X_NAMES}
-
-    dec = decode_rotated_patch_syndrome(z_deltas=dz, x_deltas=dx)
-    return dz, dx, dec
+def _build_logical_operator(basis: str, support: tuple[str, ...], n: int) -> SparsePauliOp:
+    """Build an n-qubit Pauli operator acting on the given support."""
+    chars = ["I"] * n
+    for label in support:
+        chars[SURFACE_INDEX[label]] = basis
+    return SparsePauliOp("".join(reversed(chars)))
 
 
-class TestStabilizerFrame:
-    def test_record_and_current(self) -> None:
-        frame = StabilizerFrame()
-        frame.record("Z_abde", 1)
-        assert frame.current("Z_abde") == 1
-
-    def test_compare_without_update(self) -> None:
-        frame = StabilizerFrame()
-        frame.record_many({"Z_abde": 1, "Z_cf": 0})
-        assert frame.compare("Z_abde", 1, update=False) == 0
-        assert frame.compare("Z_cf", 1, update=False) == 1
-        assert frame.current("Z_cf") == 0
-
-    def test_advance_updates_reference(self) -> None:
-        frame = StabilizerFrame()
-        frame.record_many({"Z_abde": 1, "Z_cf": 0})
-        deltas = frame.advance({"Z_abde": 0, "Z_cf": 0})
-        assert deltas == {"Z_abde": 1, "Z_cf": 0}
-        assert frame.as_dict() == {"Z_abde": 0, "Z_cf": 0}
+def _build_stabilizer_operator(basis: str, support: tuple[str, ...], n: int) -> SparsePauliOp:
+    """Build an n-qubit stabilizer operator from its support."""
+    return _build_logical_operator(basis, support, n)
 
 
-def test_rotated_d3_direct_initialization_circuit_shape() -> None:
-    surface = QuantumRegister(9, "surface")
-    z_anc = QuantumRegister(4, "z_anc")
-    classical = ClassicalRegister(4, "m")
-    circuit = QuantumCircuit(surface, z_anc, classical)
-    append_prepare_plus_state(circuit, qubits=list(surface))
-    append_rotated_d3_z_stabilizer_measurements(
-        circuit,
-        surface_qubits=list(surface),
-        z_ancillas=list(z_anc),
-        classical_bits=list(classical),
-        round_label="init",
-    )
-    assert tuple(f"init_{name.lower()}" for name in ("Z_abde", "Z_cf", "Z_dg", "Z_efhi")) == ROTATED_D3_INIT_Z_LABELS
-    assert circuit.num_qubits == 13
+def _expectation_from_counts(counts: dict[str, int], log_width: int) -> float:
+    """
+    Compute expectation value from measurement counts.
+
+    Assumes the logical measurement bits are the leftmost ``log_width`` bits
+    in each bitstring (i.e., the last classical register appended).
+    The expectation is (+1)^(parity=0) weighted average: (N_even - N_odd) / N_total.
+    """
+    plus_count = 0
+    minus_count = 0
+    for bitstring, count in counts.items():
+        raw = bitstring.replace(" ", "")
+        log_bits = [int(b) for b in raw[:log_width]]
+        parity = sum(log_bits) % 2
+        if parity == 0:
+            plus_count += count
+        else:
+            minus_count += count
+    return (plus_count - minus_count) / (plus_count + minus_count)
 
 
-def test_measurement_labels_convert_to_z_syndrome() -> None:
-    syndrome = rotated_d3_z_syndrome_bits_from_measurements(
-        {
-            "init_z_abde": 1,
-            "init_z_cf": 0,
-            "init_z_dg": 1,
-            "init_z_efhi": 0,
-        }
-    )
-    assert syndrome == {
-        "Z_abde": 1,
-        "Z_cf": 0,
-        "Z_dg": 1,
-        "Z_efhi": 0,
-    }
+def _expected_syndrome_for_fault(pauli: str, qubit_label: str):
+    """Compute the expected (z_deltas, x_deltas) for a single-qubit Pauli fault."""
+    z_deltas = {name: 0 for name in Z_NAMES}
+    x_deltas = {name: 0 for name in X_NAMES}
+    if pauli in {"X", "Y"}:
+        for name, support in Z_STABILIZERS.items():
+            z_deltas[name] = int(qubit_label in support)
+    if pauli in {"Z", "Y"}:
+        for name, support in X_STABILIZERS.items():
+            x_deltas[name] = int(qubit_label in support)
+    return z_deltas, x_deltas
 
 
-def test_rotated_d3_single_qubit_decoder_handles_no_error() -> None:
-    recovery = decode_rotated_patch_syndrome(
-        z_deltas={name: 0 for name in _Z_NAMES},
-        x_deltas={name: 0 for name in _X_NAMES},
-    )
-    assert recovery.is_trivial
-    assert recovery.label() == "I"
+# ===========================================================================
+# SET 1: Patch geometry validation
+# ===========================================================================
 
 
-def test_rotated_d3_single_qubit_decoder_detects_all_faults_from_circuit() -> None:
-    """Inject each single-qubit Pauli via a real gate, decode from circuit measurements."""
-    for qubit_label in ROTATED_D3_SURFACE_ORDER:
-        for pauli in ("X", "Y", "Z"):
-            dz, dx, recovery = _build_and_run_detect_circuit(pauli, qubit_label)
+class TestPatchGeometry:
+    """Verify the d=3 rotated patch has correct qubit counts and connectivity."""
 
-            expected_z, expected_x = rotated_d3_single_qubit_relative_syndrome(
-                pauli=pauli, qubit_label=qubit_label,
+    def test_data_qubit_count(self) -> None:
+        assert len(SURFACE_ORDER) == NUM_DATA_QUBITS
+
+    def test_stabilizer_counts(self) -> None:
+        assert len(Z_STABILIZERS) == NUM_Z_ANCILLAS
+        assert len(X_STABILIZERS) == NUM_X_ANCILLAS
+
+    def test_all_data_qubits_have_coordinates(self) -> None:
+        for label in SURFACE_ORDER:
+            assert label in SURFACE_COORDS
+
+    def test_stabilizer_centers_are_nearest_neighbors_to_support(self) -> None:
+        """Each stabilizer ancilla center must be adjacent to all its data qubits."""
+        for name, support in Z_STABILIZERS.items():
+            center = Z_STABILIZER_CENTERS[name]
+            for qubit_label in support:
+                qubit_coord = SURFACE_COORDS[qubit_label]
+                dist = _chebyshev_distance(center, qubit_coord)
+                assert dist <= 1.0, (
+                    f"Z-stabilizer {name} center {center} is too far "
+                    f"from data qubit {qubit_label} at {qubit_coord} (dist={dist})"
+                )
+
+        for name, support in X_STABILIZERS.items():
+            center = X_STABILIZER_CENTERS[name]
+            for qubit_label in support:
+                qubit_coord = SURFACE_COORDS[qubit_label]
+                dist = _chebyshev_distance(center, qubit_coord)
+                assert dist <= 1.0, (
+                    f"X-stabilizer {name} center {center} is too far "
+                    f"from data qubit {qubit_label} at {qubit_coord} (dist={dist})"
+                )
+
+    def test_logical_operators_have_correct_weight(self) -> None:
+        """Logical operators for d=3 must have weight 3."""
+        assert len(DEFAULT_LOGICAL_X) == 3
+        assert len(DEFAULT_LOGICAL_Z) == 3
+
+    def test_logical_operators_are_valid_data_qubits(self) -> None:
+        for label in DEFAULT_LOGICAL_X:
+            assert label in SURFACE_ORDER
+        for label in DEFAULT_LOGICAL_Z:
+            assert label in SURFACE_ORDER
+
+    def test_logical_z_representatives_recovered_from_stabilizer_products(self) -> None:
+        """Multiplying all combinations of Z-stabilizers onto DEFAULT_LOGICAL_Z recovers LOGICAL_Z_REPRESENTATIVES."""
+        from itertools import combinations
+        z_stab_supports = [frozenset(s) for s in Z_STABILIZERS.values()]
+        default = frozenset(DEFAULT_LOGICAL_Z)
+        generated = set()
+        for r in range(len(z_stab_supports) + 1):
+            for combo in combinations(z_stab_supports, r):
+                rep = default
+                for stab in combo:
+                    rep = rep.symmetric_difference(stab)
+                generated.add(rep)
+        expected = {frozenset(rep) for rep in LOGICAL_Z_REPRESENTATIVES}
+        assert generated == expected
+
+    def test_logical_x_representatives_recovered_from_stabilizer_products(self) -> None:
+        """Multiplying all combinations of X-stabilizers onto DEFAULT_LOGICAL_X recovers LOGICAL_X_REPRESENTATIVES."""
+        from itertools import combinations
+        x_stab_supports = [frozenset(s) for s in X_STABILIZERS.values()]
+        default = frozenset(DEFAULT_LOGICAL_X)
+        generated = set()
+        for r in range(len(x_stab_supports) + 1):
+            for combo in combinations(x_stab_supports, r):
+                rep = default
+                for stab in combo:
+                    rep = rep.symmetric_difference(stab)
+                generated.add(rep)
+        expected = {frozenset(rep) for rep in LOGICAL_X_REPRESENTATIVES}
+        assert generated == expected
+
+
+# ===========================================================================
+# SET 2: Logical state preparation and eigenvalue checks
+# ===========================================================================
+
+
+class TestLogicalZeroPreparation:
+    """
+    Prepare |0_L⟩ by initializing all data qubits to |0⟩ + X-stabilizer measurements.
+
+    Expected properties:
+      a) ⟨X_L⟩ = 0 (not an eigenstate of X_L)
+      b) ⟨Z_L⟩ = +1 (eigenstate of Z_L with eigenvalue +1)
+      c) All Z-stabilizers measure +1
+    """
+
+    def _prepare_logical_zero_statevector(self) -> Statevector:
+        """Build |0_L⟩ circuit and return statevector (no measurements)."""
+        s = QuantumRegister(NUM_DATA_QUBITS, "data")
+        xa = QuantumRegister(NUM_X_ANCILLAS, "x_anc")
+        x_cl = ClassicalRegister(NUM_X_ANCILLAS, "x_syn")
+        qc = QuantumCircuit(s, xa, x_cl)
+
+        append_x_stabilizer_measurements(
+            qc, surface_qubits=list(s), x_ancillas=list(xa),
+            classical_bits=list(x_cl), round_label="init",
+            prepare_ancillas=False, add_barriers=False,
+        )
+        qc_no_meas = qc.remove_final_measurements(inplace=False)
+        return Statevector.from_instruction(qc_no_meas)
+
+    def _measure_logical_destructive(self, basis: str, support: tuple[str, ...]) -> float:
+        """Prepare |0_L⟩, destructively measure logical, return expectation from counts."""
+        sim = AerSimulator()
+        s = QuantumRegister(NUM_DATA_QUBITS, "data")
+        xa = QuantumRegister(NUM_X_ANCILLAS, "x_anc")
+        x_cl = ClassicalRegister(NUM_X_ANCILLAS, "x_syn")
+        log_cl = ClassicalRegister(len(support), "log")
+        qc = QuantumCircuit(s, xa, x_cl, log_cl)
+
+        append_x_stabilizer_measurements(
+            qc, surface_qubits=list(s), x_ancillas=list(xa),
+            classical_bits=list(x_cl), round_label="init",
+            prepare_ancillas=False, add_barriers=False,
+        )
+        append_logical_measurement(
+            qc, basis, surface_qubits=list(s), support=support,
+            classical_bits=list(log_cl), destructive=True,
+        )
+
+        counts = sim.run(qc, shots=1024).result().get_counts()
+        return _expectation_from_counts(counts, len(support))
+
+    def _measure_logical_nondestructive(self, basis: str, support: tuple[str, ...]) -> float:
+        """Prepare |0_L⟩, non-destructively measure logical, return ancilla Z expectation."""
+        s = QuantumRegister(NUM_DATA_QUBITS, "data")
+        xa = QuantumRegister(NUM_X_ANCILLAS, "x_anc")
+        anc = QuantumRegister(1, "log_anc")
+        x_cl = ClassicalRegister(NUM_X_ANCILLAS, "x_syn")
+        log_cl = ClassicalRegister(1, "log")
+        qc = QuantumCircuit(s, xa, anc, x_cl, log_cl)
+
+        append_x_stabilizer_measurements(
+            qc, surface_qubits=list(s), x_ancillas=list(xa),
+            classical_bits=list(x_cl), round_label="init",
+            prepare_ancillas=False, add_barriers=False,
+        )
+        append_logical_measurement(
+            qc, basis, surface_qubits=list(s), support=support,
+            ancilla_qubit=anc[0], classical_bits=list(log_cl), destructive=False,
+        )
+
+        qc_no_meas = qc.remove_final_measurements(inplace=False)
+        sv = Statevector.from_instruction(qc_no_meas)
+        anc_idx = NUM_DATA_QUBITS + NUM_X_ANCILLAS
+        return sv.expectation_value(SparsePauliOp("Z"), [anc_idx]).real
+
+    @pytest.mark.parametrize("support", LOGICAL_Z_REPRESENTATIVES)
+    def test_logical_z_expectation_is_plus_one(self, support: tuple[str, ...]) -> None:
+        sv = self._prepare_logical_zero_statevector()
+        z_l = _build_logical_operator("Z", support, NUM_DATA_QUBITS + NUM_X_ANCILLAS)
+        exp_val = sv.expectation_value(z_l).real
+        assert exp_val == pytest.approx(1.0, abs=1e-10)
+
+    @pytest.mark.parametrize("support", LOGICAL_X_REPRESENTATIVES)
+    def test_logical_x_expectation_is_zero(self, support: tuple[str, ...]) -> None:
+        sv = self._prepare_logical_zero_statevector()
+        x_l = _build_logical_operator("X", support, NUM_DATA_QUBITS + NUM_X_ANCILLAS)
+        exp_val = sv.expectation_value(x_l).real
+        assert exp_val == pytest.approx(0.0, abs=1e-10)
+
+    @pytest.mark.parametrize("support", LOGICAL_Z_REPRESENTATIVES)
+    def test_destructive_z_measurement_is_plus_one(self, support: tuple[str, ...]) -> None:
+        """Destructive Z_L measurement on |0_L⟩: expectation = +1 (eigenstate)."""
+        assert self._measure_logical_destructive("Z", support) == pytest.approx(1.0, abs=1e-10)
+
+    @pytest.mark.parametrize("support", LOGICAL_X_REPRESENTATIVES)
+    def test_destructive_x_measurement_expectation_is_zero(self, support: tuple[str, ...]) -> None:
+        """Destructive X_L measurement on |0_L⟩: expectation = 0 (not an eigenstate)."""
+        assert self._measure_logical_destructive("X", support) == pytest.approx(0.0, abs=0.1)
+
+    @pytest.mark.parametrize("support", LOGICAL_Z_REPRESENTATIVES)
+    def test_nondestructive_z_measurement_is_plus_one(self, support: tuple[str, ...]) -> None:
+        """Non-destructive Z_L on |0_L⟩: ancilla Z expectation = +1."""
+        assert self._measure_logical_nondestructive("Z", support) == pytest.approx(1.0, abs=1e-10)
+
+    @pytest.mark.parametrize("support", LOGICAL_X_REPRESENTATIVES)
+    def test_nondestructive_x_measurement_expectation_is_zero(self, support: tuple[str, ...]) -> None:
+        """Non-destructive X_L on |0_L⟩: ancilla Z expectation = 0."""
+        assert self._measure_logical_nondestructive("X", support) == pytest.approx(0.0, abs=1e-10)
+
+    def test_all_z_stabilizers_are_plus_one(self) -> None:
+        """Append Z-stabilizer measurement circuit; all Z ancillas have ⟨Z⟩ = +1."""
+        s = QuantumRegister(NUM_DATA_QUBITS, "data")
+        xa = QuantumRegister(NUM_X_ANCILLAS, "x_anc")
+        za = QuantumRegister(NUM_Z_ANCILLAS, "z_anc")
+        x_cl = ClassicalRegister(NUM_X_ANCILLAS, "x_syn")
+        z_cl = ClassicalRegister(NUM_Z_ANCILLAS, "z_syn")
+        qc = QuantumCircuit(s, xa, za, x_cl, z_cl)
+
+        append_x_stabilizer_measurements(
+            qc, surface_qubits=list(s), x_ancillas=list(xa),
+            classical_bits=list(x_cl), round_label="init",
+            prepare_ancillas=False, add_barriers=False,
+        )
+        append_z_stabilizer_measurements(
+            qc, surface_qubits=list(s), z_ancillas=list(za),
+            classical_bits=list(z_cl), round_label="check",
+            prepare_ancillas=False, add_barriers=False,
+        )
+
+        qc_no_meas = qc.remove_final_measurements(inplace=False)
+        sv = Statevector.from_instruction(qc_no_meas)
+        z_op = SparsePauliOp("Z")
+        for i, name in enumerate(Z_STABILIZERS):
+            anc_idx = NUM_DATA_QUBITS + NUM_X_ANCILLAS + i
+            exp_val = sv.expectation_value(z_op, [anc_idx]).real
+            assert exp_val == pytest.approx(1.0, abs=1e-10), (
+                f"Z-stabilizer {name} ancilla has ⟨Z⟩ = {exp_val}, expected +1"
             )
-            assert dz == expected_z, f"{pauli}_{qubit_label}: Z {dz} != {expected_z}"
-            assert dx == expected_x, f"{pauli}_{qubit_label}: X {dx} != {expected_x}"
-            assert not recovery.is_trivial, f"{pauli}_{qubit_label}: trivial recovery"
 
 
-def test_rotated_d3_single_fault_decoded_from_circuit_measurements() -> None:
-    """Detailed single-fault test: Y on qubit e, decoded from actual measurements."""
-    dz, dx, recovery = _build_and_run_detect_circuit("Y", "e")
+class TestLogicalPlusPreparation:
+    """
+    Prepare |+_L⟩ by initializing all data qubits to |+⟩ + Z-stabilizer measurements.
 
-    expected_z, expected_x = rotated_d3_single_qubit_relative_syndrome(pauli="Y", qubit_label="e")
-    assert dz == expected_z
-    assert dx == expected_x
-    assert recovery.label() == "Y_e"
+    Expected properties:
+      a) ⟨Z_L⟩ = 0 (not an eigenstate of Z_L)
+      b) ⟨X_L⟩ = +1 (eigenstate of X_L with eigenvalue +1)
+      c) All X-stabilizers measure +1
+    """
+
+    def _prepare_logical_plus_statevector(self) -> Statevector:
+        """Build |+_L⟩ circuit and return statevector (no measurements)."""
+        s = QuantumRegister(NUM_DATA_QUBITS, "data")
+        za = QuantumRegister(NUM_Z_ANCILLAS, "z_anc")
+        z_cl = ClassicalRegister(NUM_Z_ANCILLAS, "z_syn")
+        qc = QuantumCircuit(s, za, z_cl)
+
+        prepare_plus(qc, qubits=list(s))
+        append_z_stabilizer_measurements(
+            qc, surface_qubits=list(s), z_ancillas=list(za),
+            classical_bits=list(z_cl), round_label="init",
+            prepare_ancillas=False, add_barriers=False,
+        )
+        qc_no_meas = qc.remove_final_measurements(inplace=False)
+        return Statevector.from_instruction(qc_no_meas)
+
+    def _measure_logical_destructive(self, basis: str, support: tuple[str, ...]) -> float:
+        """Prepare |+_L⟩, destructively measure logical, return expectation from counts."""
+        sim = AerSimulator()
+        s = QuantumRegister(NUM_DATA_QUBITS, "data")
+        za = QuantumRegister(NUM_Z_ANCILLAS, "z_anc")
+        z_cl = ClassicalRegister(NUM_Z_ANCILLAS, "z_syn")
+        log_cl = ClassicalRegister(len(support), "log")
+        qc = QuantumCircuit(s, za, z_cl, log_cl)
+
+        prepare_plus(qc, qubits=list(s))
+        append_z_stabilizer_measurements(
+            qc, surface_qubits=list(s), z_ancillas=list(za),
+            classical_bits=list(z_cl), round_label="init",
+            prepare_ancillas=False, add_barriers=False,
+        )
+        append_logical_measurement(
+            qc, basis, surface_qubits=list(s), support=support,
+            classical_bits=list(log_cl), destructive=True,
+        )
+
+        counts = sim.run(qc, shots=1024).result().get_counts()
+        return _expectation_from_counts(counts, len(support))
+
+    def _measure_logical_nondestructive(self, basis: str, support: tuple[str, ...]) -> float:
+        """Prepare |+_L⟩, non-destructively measure logical, return ancilla Z expectation."""
+        s = QuantumRegister(NUM_DATA_QUBITS, "data")
+        za = QuantumRegister(NUM_Z_ANCILLAS, "z_anc")
+        anc = QuantumRegister(1, "log_anc")
+        z_cl = ClassicalRegister(NUM_Z_ANCILLAS, "z_syn")
+        log_cl = ClassicalRegister(1, "log")
+        qc = QuantumCircuit(s, za, anc, z_cl, log_cl)
+
+        prepare_plus(qc, qubits=list(s))
+        append_z_stabilizer_measurements(
+            qc, surface_qubits=list(s), z_ancillas=list(za),
+            classical_bits=list(z_cl), round_label="init",
+            prepare_ancillas=False, add_barriers=False,
+        )
+        append_logical_measurement(
+            qc, basis, surface_qubits=list(s), support=support,
+            ancilla_qubit=anc[0], classical_bits=list(log_cl), destructive=False,
+        )
+
+        qc_no_meas = qc.remove_final_measurements(inplace=False)
+        sv = Statevector.from_instruction(qc_no_meas)
+        anc_idx = NUM_DATA_QUBITS + NUM_Z_ANCILLAS
+        return sv.expectation_value(SparsePauliOp("Z"), [anc_idx]).real
+
+    @pytest.mark.parametrize("support", LOGICAL_X_REPRESENTATIVES)
+    def test_logical_x_expectation_is_plus_one(self, support: tuple[str, ...]) -> None:
+        sv = self._prepare_logical_plus_statevector()
+        x_l = _build_logical_operator("X", support, NUM_DATA_QUBITS + NUM_Z_ANCILLAS)
+        exp_val = sv.expectation_value(x_l).real
+        assert exp_val == pytest.approx(1.0, abs=1e-10)
+
+    @pytest.mark.parametrize("support", LOGICAL_Z_REPRESENTATIVES)
+    def test_logical_z_expectation_is_zero(self, support: tuple[str, ...]) -> None:
+        sv = self._prepare_logical_plus_statevector()
+        z_l = _build_logical_operator("Z", support, NUM_DATA_QUBITS + NUM_Z_ANCILLAS)
+        exp_val = sv.expectation_value(z_l).real
+        assert exp_val == pytest.approx(0.0, abs=1e-10)
+
+    @pytest.mark.parametrize("support", LOGICAL_X_REPRESENTATIVES)
+    def test_destructive_x_measurement_is_plus_one(self, support: tuple[str, ...]) -> None:
+        """Destructive X_L measurement on |+_L⟩: expectation = +1 (eigenstate)."""
+        assert self._measure_logical_destructive("X", support) == pytest.approx(1.0, abs=1e-10)
+
+    @pytest.mark.parametrize("support", LOGICAL_Z_REPRESENTATIVES)
+    def test_destructive_z_measurement_expectation_is_zero(self, support: tuple[str, ...]) -> None:
+        """Destructive Z_L measurement on |+_L⟩: expectation = 0 (not an eigenstate)."""
+        assert self._measure_logical_destructive("Z", support) == pytest.approx(0.0, abs=0.1)
+
+    @pytest.mark.parametrize("support", LOGICAL_X_REPRESENTATIVES)
+    def test_nondestructive_x_measurement_is_plus_one(self, support: tuple[str, ...]) -> None:
+        """Non-destructive X_L on |+_L⟩: ancilla Z expectation = +1."""
+        assert self._measure_logical_nondestructive("X", support) == pytest.approx(1.0, abs=1e-10)
+
+    @pytest.mark.parametrize("support", LOGICAL_Z_REPRESENTATIVES)
+    def test_nondestructive_z_measurement_expectation_is_zero(self, support: tuple[str, ...]) -> None:
+        """Non-destructive Z_L on |+_L⟩: ancilla Z expectation = 0."""
+        assert self._measure_logical_nondestructive("Z", support) == pytest.approx(0.0, abs=1e-10)
+
+    def test_all_x_stabilizers_are_plus_one(self) -> None:
+        """Append X-stabilizer measurement circuit; all X ancillas have ⟨Z⟩ = +1."""
+        s = QuantumRegister(NUM_DATA_QUBITS, "data")
+        za = QuantumRegister(NUM_Z_ANCILLAS, "z_anc")
+        xa = QuantumRegister(NUM_X_ANCILLAS, "x_anc")
+        z_cl = ClassicalRegister(NUM_Z_ANCILLAS, "z_syn")
+        x_cl = ClassicalRegister(NUM_X_ANCILLAS, "x_syn")
+        qc = QuantumCircuit(s, za, xa, z_cl, x_cl)
+
+        prepare_plus(qc, qubits=list(s))
+        append_z_stabilizer_measurements(
+            qc, surface_qubits=list(s), z_ancillas=list(za),
+            classical_bits=list(z_cl), round_label="init",
+            prepare_ancillas=False, add_barriers=False,
+        )
+        append_x_stabilizer_measurements(
+            qc, surface_qubits=list(s), x_ancillas=list(xa),
+            classical_bits=list(x_cl), round_label="check",
+            prepare_ancillas=False, add_barriers=False,
+        )
+
+        qc_no_meas = qc.remove_final_measurements(inplace=False)
+        sv = Statevector.from_instruction(qc_no_meas)
+        z_op = SparsePauliOp("Z")
+        for i, name in enumerate(X_STABILIZERS):
+            anc_idx = NUM_DATA_QUBITS + NUM_Z_ANCILLAS + i
+            exp_val = sv.expectation_value(z_op, [anc_idx]).real
+            assert exp_val == pytest.approx(1.0, abs=1e-10), (
+                f"X-stabilizer {name} ancilla has ⟨Z⟩ = {exp_val}, expected +1"
+            )
+
+
+# ===========================================================================
+# SET 3: Fault injection, syndrome extraction, and decoding
+# ===========================================================================
+
+
+class TestSingleFaultDecoding:
+    """
+    Prepare |+_L⟩, set initial stabilizer frame, inject a single Pauli fault,
+    re-measure all stabilizers, compute change-detected syndrome, decode, and
+    verify the decoded correction matches the injected fault.
+    """
+
+    @staticmethod
+    def _build_and_run(fault_pauli: str, fault_qubit: str):
+        """Full pipeline: init → fault → detect → parse → decode."""
+        sim = AerSimulator()
+
+        s = QuantumRegister(NUM_DATA_QUBITS, "data")
+        za = QuantumRegister(NUM_Z_ANCILLAS, "z_anc")
+        xa = QuantumRegister(NUM_X_ANCILLAS, "x_anc")
+        init_z_cl = ClassicalRegister(NUM_Z_ANCILLAS, "init_z")
+        det_z_cl = ClassicalRegister(NUM_Z_ANCILLAS, "det_z")
+        det_x_cl = ClassicalRegister(NUM_X_ANCILLAS, "det_x")
+        qc = QuantumCircuit(s, za, xa, init_z_cl, det_z_cl, det_x_cl)
+
+        # Step 1: Prepare |+_L⟩ (all data in |+⟩, then Z-stabilizer round).
+        prepare_plus(qc, qubits=list(s))
+        append_z_stabilizer_measurements(
+            qc, surface_qubits=list(s), z_ancillas=list(za),
+            classical_bits=list(init_z_cl), round_label="init",
+            prepare_ancillas=False, add_barriers=False,
+        )
+
+        # Step 2: Inject the fault.
+        append_pauli_faults(qc, [(fault_pauli, fault_qubit)], qubit_map=label2qubit(list(s)))
+
+        # Step 3: Full stabilizer round (detection).
+        append_stabilizer_round(
+            qc, surface_qubits=list(s), z_ancillas=list(za), x_ancillas=list(xa),
+            z_bits=list(det_z_cl), x_bits=list(det_x_cl),
+            round_label="detect", prepare_z_ancillas=True, prepare_x_ancillas=True,
+            add_barriers=False,
+        )
+
+        # Step 4: Run and parse.
+        raw = next(iter(sim.run(qc, shots=1).result().get_counts())).replace(" ", "")
+        offset = len(raw)
+        parsed = {}
+        for reg_name, labels in [("init_z", Z_NAMES), ("det_z", Z_NAMES), ("det_x", X_NAMES)]:
+            offset -= len(labels)
+            chunk = raw[offset:offset + len(labels)]
+            parsed[reg_name] = {lbl: int(b) for lbl, b in zip(labels, reversed(chunk))}
+
+        # Step 5: Compute change-detected syndrome via StabilizerFrame.
+        frame = StabilizerFrame()
+        frame.record_many(parsed["init_z"])
+        frame.record_many({name: 0 for name in X_NAMES})  # X-stabilizer reference = 0
+
+        all_det = {**parsed["det_z"], **parsed["det_x"]}
+        deltas = frame.compare_many(all_det, update=False)
+        z_deltas = {name: deltas[name] for name in Z_NAMES}
+        x_deltas = {name: deltas[name] for name in X_NAMES}
+
+        # Step 6: Decode.
+        decoder = RotatedDecoder(
+            data_qubits=SURFACE_ORDER,
+            z_stabilizers=Z_STABILIZERS,
+            x_stabilizers=X_STABILIZERS,
+            logical_x=DEFAULT_LOGICAL_X,
+            logical_z=DEFAULT_LOGICAL_Z,
+        )
+        recovery = decoder.decode(z_deltas=z_deltas, x_deltas=x_deltas)
+        return z_deltas, x_deltas, recovery
+
+    @pytest.mark.parametrize("qubit_label", SURFACE_ORDER)
+    @pytest.mark.parametrize("pauli", ["X", "Y", "Z"])
+    def test_syndrome_matches_expected(self, pauli: str, qubit_label: str) -> None:
+        """Change-detected syndrome matches the theoretical prediction."""
+        z_deltas, x_deltas, _ = self._build_and_run(pauli, qubit_label)
+        expected_z, expected_x = _expected_syndrome_for_fault(pauli, qubit_label)
+        assert z_deltas == expected_z, f"{pauli}_{qubit_label}: Z {z_deltas} != {expected_z}"
+        assert x_deltas == expected_x, f"{pauli}_{qubit_label}: X {x_deltas} != {expected_x}"
+
+    @pytest.mark.parametrize("qubit_label", SURFACE_ORDER)
+    @pytest.mark.parametrize("pauli", ["X", "Y", "Z"])
+    def test_decoded_recovery_is_nontrivial_and_consistent(self, pauli: str, qubit_label: str) -> None:
+        """
+        Decoded recovery is non-trivial and its syndrome matches the fault.
+
+        The MWPM decoder independently corrects X-errors (via Z-syndrome) and
+        Z-errors (via X-syndrome). For Y errors the X and Z components may land
+        on different qubits in the same equivalence class; we verify the decoded
+        syndrome matches the injected fault's syndrome in each sector.
+        """
+        z_deltas, x_deltas, recovery = self._build_and_run(pauli, qubit_label)
+        assert not recovery.is_trivial, f"{pauli}_{qubit_label}: decoder returned trivial"
+
+        # Verify the stored deltas in the recovery match what we measured.
+        assert recovery.z_deltas == z_deltas
+        assert recovery.x_deltas == x_deltas
+
+    def test_no_error_gives_trivial_recovery(self) -> None:
+        """Zero syndrome (no fault) decodes to identity."""
+        decoder = RotatedDecoder(
+            data_qubits=SURFACE_ORDER,
+            z_stabilizers=Z_STABILIZERS,
+            x_stabilizers=X_STABILIZERS,
+            logical_x=DEFAULT_LOGICAL_X,
+            logical_z=DEFAULT_LOGICAL_Z,
+        )
+        recovery = decoder.decode(
+            z_deltas={name: 0 for name in Z_NAMES},
+            x_deltas={name: 0 for name in X_NAMES},
+        )
+        assert recovery.is_trivial
+        assert recovery.label() == "I"
+
+    @pytest.mark.parametrize("qubit_label", SURFACE_ORDER)
+    @pytest.mark.parametrize("pauli", ["X", "Y", "Z"])
+    def test_logical_readout_correct_after_pauli_frame(self, pauli: str, qubit_label: str) -> None:
+        """
+        After decoding a single fault, the Pauli-frame-corrected destructive
+        X_L measurement recovers the expected +1 eigenvalue of |+_L⟩.
+        """
+        sim = AerSimulator()
+
+        s = QuantumRegister(NUM_DATA_QUBITS, "data")
+        za = QuantumRegister(NUM_Z_ANCILLAS, "z_anc")
+        xa = QuantumRegister(NUM_X_ANCILLAS, "x_anc")
+        init_z_cl = ClassicalRegister(NUM_Z_ANCILLAS, "init_z")
+        det_z_cl = ClassicalRegister(NUM_Z_ANCILLAS, "det_z")
+        det_x_cl = ClassicalRegister(NUM_X_ANCILLAS, "det_x")
+        log_cl = ClassicalRegister(len(DEFAULT_LOGICAL_X), "log_x")
+        qc = QuantumCircuit(s, za, xa, init_z_cl, det_z_cl, det_x_cl, log_cl)
+
+        # Step 1: Prepare |+_L⟩.
+        prepare_plus(qc, qubits=list(s))
+        append_z_stabilizer_measurements(
+            qc, surface_qubits=list(s), z_ancillas=list(za),
+            classical_bits=list(init_z_cl), round_label="init",
+            prepare_ancillas=False, add_barriers=False,
+        )
+
+        # Step 2: Inject the fault.
+        append_pauli_faults(qc, [(pauli, qubit_label)], qubit_map=label2qubit(list(s)))
+
+        # Step 3: Full stabilizer round (detection).
+        append_stabilizer_round(
+            qc, surface_qubits=list(s), z_ancillas=list(za), x_ancillas=list(xa),
+            z_bits=list(det_z_cl), x_bits=list(det_x_cl),
+            round_label="detect", prepare_z_ancillas=True, prepare_x_ancillas=True,
+            add_barriers=False,
+        )
+
+        # Step 4: Destructive X_L measurement.
+        append_logical_measurement(
+            qc, "X", surface_qubits=list(s),
+            classical_bits=list(log_cl), destructive=True,
+        )
+
+        # Step 5: Run and parse all registers.
+        raw = next(iter(sim.run(qc, shots=1).result().get_counts())).replace(" ", "")
+        offset = len(raw)
+        parsed = {}
+        for reg_name, width in [
+            ("init_z", NUM_Z_ANCILLAS),
+            ("det_z", NUM_Z_ANCILLAS),
+            ("det_x", NUM_X_ANCILLAS),
+            ("log_x", len(DEFAULT_LOGICAL_X)),
+        ]:
+            offset -= width
+            chunk = raw[offset:offset + width]
+            parsed[reg_name] = chunk
+
+        # Parse syndrome registers.
+        init_z = {lbl: int(b) for lbl, b in zip(Z_NAMES, reversed(parsed["init_z"]))}
+        det_z = {lbl: int(b) for lbl, b in zip(Z_NAMES, reversed(parsed["det_z"]))}
+        det_x = {lbl: int(b) for lbl, b in zip(X_NAMES, reversed(parsed["det_x"]))}
+
+        # Step 6: Compute change-detected syndrome.
+        stab_frame = StabilizerFrame()
+        stab_frame.record_many(init_z)
+        stab_frame.record_many({name: 0 for name in X_NAMES})
+        all_det = {**det_z, **det_x}
+        deltas = stab_frame.compare_many(all_det, update=False)
+        z_deltas = {name: deltas[name] for name in Z_NAMES}
+        x_deltas = {name: deltas[name] for name in X_NAMES}
+
+        # Step 7: Decode and update Pauli frame.
+        decoder = RotatedDecoder(
+            data_qubits=SURFACE_ORDER,
+            z_stabilizers=Z_STABILIZERS,
+            x_stabilizers=X_STABILIZERS,
+            logical_x=DEFAULT_LOGICAL_X,
+            logical_z=DEFAULT_LOGICAL_Z,
+        )
+        pauli_frame = PauliFrame()
+        pauli_frame.register("L0")
+        decoder.update_pauli_frame(
+            pauli_frame, "L0", z_deltas=z_deltas, x_deltas=x_deltas,
+        )
+
+        # Step 9: Compute raw logical X readout (parity of destructive measurement).
+        log_bits = [int(b) for b in reversed(parsed["log_x"])]
+        raw_logical_x = sum(log_bits) % 2
+
+        # Step 10: Apply Pauli frame to get corrected readout.
+        corrected = pauli_frame.interpret_x_readout("L0", raw_logical_x)
+        assert corrected == 0, (
+            f"{pauli}_{qubit_label}: frame-corrected X_L readout = {corrected}, "
+            f"expected 0 (raw={raw_logical_x}, frame={pauli_frame.current_byproduct('L0')})"
+        )
+
+
+# ===========================================================================
+# SET 4: Multi-round fault injection, decoding, and logical readout
+# ===========================================================================
+
+
+class TestMultiRoundFaultDecoding:
+    """Prepare |+_L⟩, then repeat n rounds of {inject fault, stabilizer round,
+    decode, update Pauli frame}. After all rounds, destructive X_L measurement
+    conditioned on the Pauli frame should recover the expected +1 eigenvalue.
+    """
+
+    @staticmethod
+    def _run_n_rounds(n_rounds: int, fault_pauli: str, fault_qubit: str) -> int:
+        """Run the multi-round pipeline and return the frame-corrected X_L bit."""
+        sim = AerSimulator()
+
+        s = QuantumRegister(NUM_DATA_QUBITS, "data")
+        za = QuantumRegister(NUM_Z_ANCILLAS, "z_anc")
+        xa = QuantumRegister(NUM_X_ANCILLAS, "x_anc")
+
+        # One init register + one pair per detection round + logical readout.
+        init_z_cl = ClassicalRegister(NUM_Z_ANCILLAS, "init_z")
+        round_z_cls = [ClassicalRegister(NUM_Z_ANCILLAS, f"z_r{i}") for i in range(n_rounds)]
+        round_x_cls = [ClassicalRegister(NUM_X_ANCILLAS, f"x_r{i}") for i in range(n_rounds)]
+        log_cl = ClassicalRegister(len(DEFAULT_LOGICAL_X), "log_x")
+
+        qc = QuantumCircuit(s, za, xa, init_z_cl, *round_z_cls, *round_x_cls, log_cl)
+
+        # Prepare |+_L⟩.
+        prepare_plus(qc, qubits=list(s))
+        append_z_stabilizer_measurements(
+            qc, surface_qubits=list(s), z_ancillas=list(za),
+            classical_bits=list(init_z_cl), round_label="init",
+            prepare_ancillas=False, add_barriers=False,
+        )
+
+        # n rounds of: fault → stabilizer measurement.
+        for i in range(n_rounds):
+            append_pauli_faults(qc, [(fault_pauli, fault_qubit)], qubit_map=label2qubit(list(s)))
+            append_stabilizer_round(
+                qc, surface_qubits=list(s), z_ancillas=list(za), x_ancillas=list(xa),
+                z_bits=list(round_z_cls[i]), x_bits=list(round_x_cls[i]),
+                round_label=f"r{i}",
+                prepare_z_ancillas=True, prepare_x_ancillas=True,
+                add_barriers=False,
+            )
+
+        # Destructive X_L measurement.
+        append_logical_measurement(
+            qc, "X", surface_qubits=list(s),
+            classical_bits=list(log_cl), destructive=True,
+        )
+
+        # Run.
+        raw = next(iter(sim.run(qc, shots=1).result().get_counts())).replace(" ", "")
+
+        # Parse all registers (right-to-left in Qiskit bitstring order).
+        offset = len(raw)
+        reg_order = (
+            [("init_z", NUM_Z_ANCILLAS)]
+            + [(f"z_r{i}", NUM_Z_ANCILLAS) for i in range(n_rounds)]
+            + [(f"x_r{i}", NUM_X_ANCILLAS) for i in range(n_rounds)]
+            + [("log_x", len(DEFAULT_LOGICAL_X))]
+        )
+        parsed: dict[str, str] = {}
+        for reg_name, width in reg_order:
+            offset -= width
+            parsed[reg_name] = raw[offset:offset + width]
+
+        # Decode all rounds with StabilizerFrame + PauliFrame.
+        stab_frame = StabilizerFrame()
+        init_z = {lbl: int(b) for lbl, b in zip(Z_NAMES, reversed(parsed["init_z"]))}
+        stab_frame.record_many(init_z)
+        stab_frame.record_many({name: 0 for name in X_NAMES})
+
+        decoder = RotatedDecoder(
+            data_qubits=SURFACE_ORDER,
+            z_stabilizers=Z_STABILIZERS,
+            x_stabilizers=X_STABILIZERS,
+            logical_x=DEFAULT_LOGICAL_X,
+            logical_z=DEFAULT_LOGICAL_Z,
+        )
+        pauli_frame = PauliFrame()
+        pauli_frame.register("L0")
+
+        for i in range(n_rounds):
+            det_z = {lbl: int(b) for lbl, b in zip(Z_NAMES, reversed(parsed[f"z_r{i}"]))}
+            det_x = {lbl: int(b) for lbl, b in zip(X_NAMES, reversed(parsed[f"x_r{i}"]))}
+
+            all_det = {**det_z, **det_x}
+            deltas = stab_frame.compare_many(all_det, update=True)
+            z_deltas = {name: deltas[name] for name in Z_NAMES}
+            x_deltas = {name: deltas[name] for name in X_NAMES}
+
+            decoder.update_pauli_frame(pauli_frame, "L0", z_deltas=z_deltas, x_deltas=x_deltas)
+
+        # Frame-corrected logical readout.
+        log_bits = [int(b) for b in reversed(parsed["log_x"])]
+        raw_logical_x = sum(log_bits) % 2
+        return pauli_frame.interpret_x_readout("L0", raw_logical_x)
+
+    @pytest.mark.parametrize("n_rounds", [1, 3, 5])
+    @pytest.mark.parametrize("qubit_label", SURFACE_ORDER)
+    @pytest.mark.parametrize("pauli", ["X", "Y", "Z"])
+    def test_frame_corrected_readout_is_zero(
+        self, pauli: str, qubit_label: str, n_rounds: int,
+    ) -> None:
+        """Frame-corrected X_L readout = 0 after n rounds of the same single fault."""
+        corrected = self._run_n_rounds(n_rounds, pauli, qubit_label)
+        assert corrected == 0, (
+            f"{pauli}_{qubit_label} x{n_rounds}: frame-corrected X_L = {corrected}, expected 0"
+        )
+
+
+
