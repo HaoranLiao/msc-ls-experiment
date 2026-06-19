@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 
 def normalize_bit(bit: int | bool) -> int:
     """Return *bit* as an integer ``0`` or ``1``, raising on invalid input."""
@@ -60,3 +62,36 @@ def parse_qiskit_bitstring(
         label: qiskit_bit_value(flattened, position)
         for position, label in enumerate(labels)
     }
+
+
+def parse_qiskit_registers(
+    bitstring: str,
+    register_labels: Sequence[tuple[str, Sequence[str]]],
+) -> dict[str, dict[str, int]]:
+    """Parse a Qiskit counts key into named classical-register bit maps.
+
+    ``register_labels`` must be in circuit construction order.  Qiskit prints
+    multi-register count keys in reverse classical-register order; this helper
+    handles both the usual space-separated key and an already-flattened key.
+    """
+    parts = bitstring.split()
+    if len(parts) == len(register_labels):
+        return {
+            name: parse_qiskit_bitstring(chunk, labels)
+            for (name, labels), chunk in zip(reversed(register_labels), parts, strict=True)
+        }
+
+    flattened = _flatten_qiskit_bitstring(bitstring)
+    expected_width = sum(len(labels) for _, labels in register_labels)
+    if len(flattened) != expected_width:
+        raise ValueError(
+            f"bitstring {bitstring!r} has {len(flattened)} bits, "
+            f"but register labels describe {expected_width} bits."
+        )
+
+    parsed: dict[str, dict[str, int]] = {}
+    offset = len(flattened)
+    for name, labels in register_labels:
+        offset -= len(labels)
+        parsed[name] = parse_qiskit_bitstring(flattened[offset:offset + len(labels)], labels)
+    return parsed
