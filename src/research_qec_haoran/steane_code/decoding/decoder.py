@@ -25,7 +25,6 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     PATCH_Z_STABILIZERS,
 )
 
-
 # ---------------------------------------------------------------------------
 # Lookup tables
 # ---------------------------------------------------------------------------

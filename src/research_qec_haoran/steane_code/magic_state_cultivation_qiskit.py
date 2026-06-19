@@ -9,7 +9,7 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     append_patch_steane_state_injection_encoder,
 )
 from research_qec_haoran.utils.gates import apply_ty, apply_ty_dagger
-
+from research_qec_haoran.utils.normalize import qiskit_bit_value
 
 # =============================================================================
 # 11-site cultivation patch layout
@@ -319,7 +319,13 @@ def append_hadamard_axis_projection_round(
         circuit.barrier(label="Ty on data")
 
     # Steps 3--6: fold.
-    append_fold_network(circuit, q, add_barriers=add_barriers, skip_cx_1_4=skip_cx_1_4, skip_cx=skip_cx)
+    append_fold_network(
+        circuit,
+        q,
+        add_barriers=add_barriers,
+        skip_cx_1_4=skip_cx_1_4,
+        skip_cx=skip_cx,
+    )
 
     # Step 7: measure the folded observable on site 7.
     measure_in_x_basis(circuit, q[FOLDED_MEASUREMENT_SITE], c[0])
@@ -334,7 +340,13 @@ def append_hadamard_axis_projection_round(
         circuit.barrier(label="reset folded site")
 
     # Steps 8--12: unfold.
-    append_unfold_network(circuit, q, add_barriers=add_barriers, skip_cx_1_4=skip_cx_1_4, skip_cx=skip_cx)
+    append_unfold_network(
+        circuit,
+        q,
+        add_barriers=add_barriers,
+        skip_cx_1_4=skip_cx_1_4,
+        skip_cx=skip_cx,
+    )
 
     # Step 13: measure the four helper / M qubits.
     for bit_index, helper_site in enumerate(HELPER_SITES, start=1):
@@ -471,8 +483,6 @@ def postselect_success_counts(
             if set(bs) <= {"0"}:
                 accepted[bitstring] = count
         else:
-            # Qiskit convention: index 0 is rightmost char
-            n = len(bs)
-            if all(bs[n - 1 - i] == "0" for i in cult_bit_positions):
+            if all(qiskit_bit_value(bitstring, i) == 0 for i in cult_bit_positions):
                 accepted[bitstring] = count
     return accepted

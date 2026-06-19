@@ -8,8 +8,7 @@ qubit-index mapping.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import Hashable
+from collections.abc import Hashable, Mapping, Sequence
 
 from qiskit import QuantumCircuit
 

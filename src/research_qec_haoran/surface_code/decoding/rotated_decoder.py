@@ -6,13 +6,12 @@ from stabilizer definitions. It works for any distance.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Sequence
 
 import numpy as np
 
 from research_qec_haoran.utils.normalize import normalize_bit
-
 
 # ---------------------------------------------------------------------------
 # Data classes

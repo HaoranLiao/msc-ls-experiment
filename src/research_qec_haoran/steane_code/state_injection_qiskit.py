@@ -8,7 +8,6 @@ from qiskit.circuit import Qubit
 
 from research_qec_haoran.utils.gates import apply_ty
 
-
 InjectedStateName = Literal["0", "1", "+", "-", "i", "-i", "Y+", "Y-", "S", "T", "Tdg", "H"]
 
 # Steane [[7,1,3]] qubit layout (Fano plane in triangular form):
@@ -290,7 +289,8 @@ def append_logical_measurement(
     if destructive:
         if len(cb) < len(support):
             raise ValueError(
-                f"classical_bits must have at least {len(support)} entries for destructive measurement."
+                "classical_bits must have at least "
+                f"{len(support)} entries for destructive measurement."
             )
         if basis == "X":
             for abstract_q in support:
@@ -301,7 +301,9 @@ def append_logical_measurement(
         if ancilla_qubit is None:
             raise ValueError("ancilla_qubit is required for non-destructive measurement.")
         if len(cb) < 1:
-            raise ValueError("classical_bits must have at least 1 entry for non-destructive measurement.")
+            raise ValueError(
+                "classical_bits must have at least 1 entry for non-destructive measurement."
+            )
         if basis == "Z":
             for abstract_q in support:
                 circuit.cx(dq[abstract_q], ancilla_qubit)
@@ -554,7 +556,8 @@ def append_patch_logical_measurement(
     if destructive:
         if len(cb) < len(support):
             raise ValueError(
-                f"classical_bits must have at least {len(support)} entries for destructive measurement."
+                "classical_bits must have at least "
+                f"{len(support)} entries for destructive measurement."
             )
         if basis == "X":
             for site in support:
@@ -565,7 +568,9 @@ def append_patch_logical_measurement(
         if ancilla_qubit is None:
             raise ValueError("ancilla_qubit is required for non-destructive measurement.")
         if len(cb) < 1:
-            raise ValueError("classical_bits must have at least 1 entry for non-destructive measurement.")
+            raise ValueError(
+                "classical_bits must have at least 1 entry for non-destructive measurement."
+            )
         if basis == "Z":
             for site in support:
                 circuit.cx(pq[site], ancilla_qubit)
