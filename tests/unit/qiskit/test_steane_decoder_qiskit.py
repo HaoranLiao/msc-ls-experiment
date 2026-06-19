@@ -33,7 +33,7 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     append_patch_stabilizer_measurement,
     append_patch_steane_state_injection_encoder,
 )
-from research_qec_haoran.noise import append_patch_pauli_faults
+from research_qec_haoran.noise import append_pauli_faults
 
 TOLERANCE = 1e-10
 
@@ -200,7 +200,7 @@ def _build_one_round_syndrome_circuit(
         circuit, patch_qubits=list(patch),
         injected_state=injected_state, add_barriers=False,
     )
-    append_patch_pauli_faults(circuit, [fault], patch_qubits=list(patch))
+    append_pauli_faults(circuit, [fault], qubit_map=list(patch))
     append_patch_stabilizer_measurement(
         circuit, patch_qubits=list(patch),
         ancilla_qubits=list(syn_anc), classical_bits=list(syn_cl),
@@ -272,7 +272,7 @@ def _build_two_round_syndrome_circuit(
     )
 
     # Round 1.
-    append_patch_pauli_faults(circuit, [fault1], patch_qubits=list(patch))
+    append_pauli_faults(circuit, [fault1], qubit_map=list(patch))
     append_patch_stabilizer_measurement(
         circuit, patch_qubits=list(patch),
         ancilla_qubits=list(syn_anc), classical_bits=list(syn1_cl),
@@ -282,7 +282,7 @@ def _build_two_round_syndrome_circuit(
         circuit.reset(anc)
 
     # Round 2.
-    append_patch_pauli_faults(circuit, [fault2], patch_qubits=list(patch))
+    append_pauli_faults(circuit, [fault2], qubit_map=list(patch))
     append_patch_stabilizer_measurement(
         circuit, patch_qubits=list(patch),
         ancilla_qubits=list(syn_anc), classical_bits=list(syn2_cl),
