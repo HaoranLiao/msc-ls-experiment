@@ -19,6 +19,24 @@ the smaller patch:
 This is a minimal logical-transfer circuit for notebook and unit-test use.  It
 is not a full reproduction of the paper's repeated noisy rounds, decoder
 confidence logic, or code-expansion stage.
+
+High-level circuit order
+------------------------
+The default builder follows the complete distance-3 adaptation used in this
+repo:
+
+1. prepare the Steane/color-code input, optionally including H-axis cultivation
+2. initialize the rotated d=3 surface patch as a logical ``|+_L>`` candidate
+3. repeat the merged-boundary ``ZZ`` checks
+4. measure Steane-side LS verification checks
+5. demolish the Steane block in the ``X`` basis
+6. recover the top-edge ``X_ab`` surface stabilizer and reconstruct
+   ``X0145ab``
+7. run post-transfer rotated d=3 stabilizer rounds
+8. optionally append a final surface logical readout
+
+The parser mirrors this order.  It exposes raw register chunks as well as
+semantic dictionaries so notebook code and tests can inspect every stage.
 """
 
 from __future__ import annotations
@@ -29,6 +47,7 @@ from typing import Literal
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
 from research_qec_haoran.decoding.pauli_frame import PauliFrame
+from research_qec_haoran.decoding.stabilizer_frame import StabilizerFrame
 from research_qec_haoran.steane_code.magic_state_cultivation_qiskit import (
     append_hadamard_axis_projection_round,
 )
@@ -36,33 +55,78 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     InjectedStateName,
     append_patch_steane_state_injection_encoder,
 )
+from research_qec_haoran.surface_code.decoding.rotated_decoder import RotatedDecoder
 from research_qec_haoran.surface_code.rotated_d3_qiskit import (
     DEFAULT_LOGICAL_X,
     DEFAULT_LOGICAL_Z,
     SURFACE_ORDER,
+    X_STABILIZERS,
+    Z_STABILIZERS,
+    append_stabilizer_round,
+    append_z_stabilizer_measurements,
+    prepare_plus,
 )
 from research_qec_haoran.surface_code.rotated_d3_qiskit import (
-    prepare_plus,
-    append_z_stabilizer_measurements,
+    append_logical_measurement as append_surface_code_logical_measurement,
 )
+
+# ===========================================================================
+# Public type aliases
+# ===========================================================================
 
 SurfaceReadoutBasis = Literal["X", "Z"]
 SurfaceReadoutMode = Literal["data", "logical_pauli", "logical_pauli_indirect"]
 
+
+# ===========================================================================
+# Protocol labels and stabilizer/check definitions
+# ===========================================================================
+
+# The circuit uses one-qubit Qiskit registers so rendered wires match the paper
+# labels directly.  These labels are not the same as the repo's internal
+# 11-site Steane patch labels; the conversion is defined below.
 HIRANO_STEANE_DATA_ORDER: tuple[str, ...] = ("0", "1", "2", "3", "4", "5", "6")
 HIRANO_STEANE_GEOMETRIC_ORDER: tuple[str, ...] = ("6", "4", "0", "2", "1", "5", "3")
-# Under the repo's current Steane encoder ordering, the default weight-3
-# Steane logical representatives map to Hirano labels ``1, 5, 3``.
-HIRANO_STEANE_LOGICAL_X: tuple[str, ...] = ("1", "5", "3")
+
+# Paper Fig. 6 uses ``X146`` as the destructive color-code logical-X
+# measurement outcome for the transfer feedforward.
+HIRANO_STEANE_LOGICAL_X: tuple[str, ...] = ("1", "4", "6")
 HIRANO_STEANE_LOGICAL_Z: tuple[str, ...] = ("1", "5", "3")
+
 TOP_BOUNDARY: tuple[str, ...] = ("a", "b", "c")
 SURFACE_X_AB_LABELS: tuple[str, ...] = ("X_ab",)
 SURFACE_INIT_Z_LABELS: tuple[str, ...] = ("Z_abde", "Z_cf", "Z_dg", "Z_efhi")
+SURFACE_POST_Z_LABELS: tuple[str, ...] = tuple(Z_STABILIZERS)
+SURFACE_POST_X_LABELS: tuple[str, ...] = tuple(X_STABILIZERS)
+SURFACE_X_ANCILLA_LABELS: tuple[str, ...] = tuple(
+    name.lower() for name in SURFACE_POST_X_LABELS
+)
+
+# These are the Steane/color-code checks measured during the merged-code
+# interval in the distance-3 adaptation.  The paper's costly six-body
+# ``X0145ab`` is intentionally not measured here; it is reconstructed after
+# destructive Steane X readout and top-edge ``X_ab`` recovery.
+STEANE_LS_VERIFICATION_CHECKS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("Z0145", "Z", ("0", "1", "4", "5")),
+    ("Z0235", "Z", ("0", "2", "3", "5")),
+    ("X0235", "X", ("0", "2", "3", "5")),
+    ("Z0246", "Z", ("0", "2", "4", "6")),
+    ("X0246", "X", ("0", "2", "4", "6")),
+)
+STEANE_LS_VERIFICATION_LABELS: tuple[str, ...] = tuple(
+    name for name, _, _ in STEANE_LS_VERIFICATION_CHECKS
+)
+
+# Supports used after Steane demolition.  ``X0145`` is listed separately so it
+# can be combined with the recovered surface ``X_ab`` bit into ``X0145ab``.
 STEANE_X_RECONSTRUCTED_CHECKS: dict[str, tuple[str, ...]] = {
     "X0235": ("0", "2", "3", "5"),
     "X0246": ("0", "2", "4", "6"),
     "X0145": ("0", "1", "4", "5"),
 }
+
+# Local deterministic acceptance checks for the current d=3 adaptation.  These
+# names intentionally match the paper-style checks exposed to notebooks.
 LOCAL_STEANE_X_STABILIZER_CHECKS: dict[str, tuple[str, ...]] = {
     "X0246": ("0", "2", "4", "6"),
     "X0235": ("0", "2", "3", "5"),
@@ -70,6 +134,11 @@ LOCAL_STEANE_X_STABILIZER_CHECKS: dict[str, tuple[str, ...]] = {
 LOCAL_X_AB_CORRELATION_CHECKS: dict[str, tuple[str, ...]] = {
     "X0145ab": ("0", "1", "4", "5", "X_ab"),
 }
+
+
+# ===========================================================================
+# Label conversion between repo patch sites and paper/Hirano labels
+# ===========================================================================
 
 # Map the repo's 11-site cultivation patch labels onto Hirano's 7 color-code
 # data labels.
@@ -123,12 +192,28 @@ MERGED_BOUNDARY_CHECKS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]
 )
 
 
+# ===========================================================================
+# Register description data classes
+# ===========================================================================
+
 @dataclass(frozen=True)
 class HiranoLabeledQRegs:
-    """Paper-labeled qubit registers used by the transfer circuit."""
+    """Paper-labeled qubit registers used by the transfer circuit.
+
+    Every data qubit is placed in its own one-qubit register so Qiskit drawings
+    show labels such as ``0`` and ``a`` directly.  The dictionaries group those
+    one-qubit registers by protocol role:
+
+    - Steane data/helper registers hold the 11-site cultivation patch.
+    - Steane verification ancillas measure color-code checks during surgery.
+    - Surface data and ancillas hold the rotated d=3 target patch.
+    - Merge ancillas measure boundary ``ZZ`` checks.
+    - Logical-measurement ancillas are optional readout helpers.
+    """
 
     steane_data: dict[str, QuantumRegister]
     steane_helpers: dict[str, QuantumRegister]
+    steane_verification_ancillas: dict[str, QuantumRegister]
     surface_data: dict[str, QuantumRegister]
     surface_z_ancillas: dict[str, QuantumRegister]
     surface_x_ancillas: dict[str, QuantumRegister]
@@ -138,7 +223,12 @@ class HiranoLabeledQRegs:
 
 @dataclass(frozen=True)
 class ClassicalRegisterSpec:
-    """A human-readable description of one Qiskit classical register."""
+    """A human-readable description of one Qiskit classical register.
+
+    Qiskit count keys are ordered by classical register, but the raw bitstrings
+    do not retain semantic labels.  The parser rebuilds that semantic mapping
+    from these specs.
+    """
 
     name: str
     labels: tuple[str, ...]
@@ -146,10 +236,17 @@ class ClassicalRegisterSpec:
 
 def build_hirano_labeled_qregs(
     *,
+    include_steane_verification: bool = False,
     include_noisy_verification: bool = False,
+    include_surface_qec: bool = False,
     surface_logical_measurement_basis: SurfaceReadoutBasis | None = None,
 ) -> HiranoLabeledQRegs:
-    """Create one-qubit Qiskit registers with Hirano-style labels."""
+    """Create one-qubit Qiskit registers with Hirano-style labels.
+
+    Parameters choose which optional ancilla groups are allocated.  This keeps
+    compact diagnostic circuits small while the default full transfer circuit
+    gets the ancillas it needs for verification and post-transfer QEC.
+    """
     steane_data = {
         label: QuantumRegister(1, label)
         for label in HIRANO_STEANE_DATA_ORDER
@@ -158,6 +255,14 @@ def build_hirano_labeled_qregs(
         label: QuantumRegister(1, label)
         for label in STEANE_HELPER_PATCH_LABELS
     }
+    steane_verification_ancillas = (
+        {
+            f"steane_{label.lower()}": QuantumRegister(1, f"steane_{label.lower()}")
+            for label in STEANE_LS_VERIFICATION_LABELS
+        }
+        if include_steane_verification
+        else {}
+    )
     surface_data = {
         label: QuantumRegister(1, label)
         for label in SURFACE_ORDER
@@ -166,11 +271,19 @@ def build_hirano_labeled_qregs(
         label: QuantumRegister(1, label)
         for label in SURFACE_Z_ANCILLA_LABELS
     }
-    surface_x_ancillas = (
-        {"x_ab": QuantumRegister(1, "x_ab")}
-        if include_noisy_verification
-        else {}
-    )
+    # ``x_ab`` is used both by the paper-style final X-check reconstruction and
+    # by the full surface X-stabilizer schedule.  Build a set first so this
+    # shared ancilla is allocated once when both features are enabled.
+    surface_x_labels = set()
+    if include_noisy_verification:
+        surface_x_labels.add("x_ab")
+    if include_surface_qec:
+        surface_x_labels.update(SURFACE_X_ANCILLA_LABELS)
+    surface_x_ancillas = {
+        label: QuantumRegister(1, label)
+        for label in SURFACE_X_ANCILLA_LABELS
+        if label in surface_x_labels
+    }
     merge_ancillas = {
         f"zz_{check_name[1:].lower()}": QuantumRegister(1, f"zz_{check_name[1:].lower()}")
         for check_name, _, _ in MERGED_BOUNDARY_CHECKS
@@ -182,6 +295,7 @@ def build_hirano_labeled_qregs(
     return HiranoLabeledQRegs(
         steane_data=steane_data,
         steane_helpers=steane_helpers,
+        steane_verification_ancillas=steane_verification_ancillas,
         surface_data=surface_data,
         surface_z_ancillas=surface_z_ancillas,
         surface_x_ancillas=surface_x_ancillas,
@@ -190,8 +304,17 @@ def build_hirano_labeled_qregs(
     )
 
 
+# ===========================================================================
+# Qubit and classical-bit mapping helpers
+# ===========================================================================
+
 def _hirano_labeled_patch_qubits(registers: HiranoLabeledQRegs) -> list:
-    """Return the 11-site cultivation patch qubits in patch-label order."""
+    """Return the 11-site cultivation patch qubits in patch-label order.
+
+    Existing Steane injection/cultivation helpers operate on the repo's
+    11-site triangular patch indexing.  The transfer circuit exposes paper
+    labels externally, so this function is the adapter between those views.
+    """
     patch_qubits: list[object] = [None] * 11
     for site, label in GOOGLE_SITE_TO_HIRANO_LABEL.items():
         patch_qubits[site] = registers.steane_data[label][0]
@@ -201,11 +324,20 @@ def _hirano_labeled_patch_qubits(registers: HiranoLabeledQRegs) -> list:
 
 
 def _surface_data_qubits(registers: HiranoLabeledQRegs) -> list:
-    """Return the rotated-d3 surface data qubits in ``a..i`` order."""
+    """Return the rotated-d3 surface data qubits in ``a..i`` order.
+
+    The rotated surface-code helpers use ``SURFACE_ORDER`` as their positional
+    API.  The transfer circuit stores the same qubits by label in dictionaries.
+    """
     return [registers.surface_data[label][0] for label in SURFACE_ORDER]
 
 
 def _parse_register_chunk(chunk: str, labels: tuple[str, ...]) -> dict[str, int]:
+    """Map one Qiskit classical-register chunk back to semantic bit labels.
+
+    Qiskit prints each classical register with most-significant bit first, so
+    parsing by label requires reversing the chunk before zipping with labels.
+    """
     bits = chunk.replace(" ", "")
     return {
         label: int(bit)
@@ -214,10 +346,12 @@ def _parse_register_chunk(chunk: str, labels: tuple[str, ...]) -> dict[str, int]
 
 
 def _parity(bits: dict[str, int], labels: tuple[str, ...]) -> int:
+    """Return the mod-2 parity over a labeled bit dictionary."""
     return sum(bits[label] for label in labels) % 2
 
 
 def _merged_zz_labels(merged_rounds: int) -> tuple[str, ...]:
+    """Return labels for all repeated merged-boundary check outcomes."""
     return tuple(
         f"round{round_index + 1}_{check_name}"
         for round_index in range(merged_rounds)
@@ -225,19 +359,42 @@ def _merged_zz_labels(merged_rounds: int) -> tuple[str, ...]:
     )
 
 
+def _round_labels(rounds: int, labels: tuple[str, ...]) -> tuple[str, ...]:
+    """Prefix repeated-round labels with ``roundN_`` for flat registers."""
+    return tuple(
+        f"round{round_index + 1}_{label}"
+        for round_index in range(rounds)
+        for label in labels
+    )
+
+
 def _surface_logical_readout_label(basis: SurfaceReadoutBasis) -> str:
+    """Return the combined one-bit logical-readout label for indirect mode."""
     support = DEFAULT_LOGICAL_X if basis.upper() == "X" else DEFAULT_LOGICAL_Z
     return f"{basis.upper()}_{''.join(support)}"
 
+
+# ===========================================================================
+# Classical-register layout
+# ===========================================================================
 
 def _classical_register_specs(
     *,
     include_cultivation: bool,
     merged_rounds: int,
     noisy: bool,
+    include_steane_verification: bool,
+    include_surface_qec: bool,
+    surface_qec_rounds: int,
     surface_readout_basis: SurfaceReadoutBasis | None,
     surface_readout_mode: SurfaceReadoutMode,
 ) -> list[ClassicalRegisterSpec]:
+    """Return the classical-register layout for a circuit configuration.
+
+    Builder and parser both call this helper.  Keeping the register order in
+    one place prevents count-key parsing bugs when optional stages are enabled
+    or disabled.
+    """
     specs: list[ClassicalRegisterSpec] = []
     if include_cultivation:
         specs.append(
@@ -250,11 +407,26 @@ def _classical_register_specs(
         [
             ClassicalRegisterSpec("init_z", SURFACE_INIT_Z_LABELS),
             ClassicalRegisterSpec("ls_zz", _merged_zz_labels(merged_rounds)),
-            ClassicalRegisterSpec("steane_x", HIRANO_STEANE_DATA_ORDER),
         ]
     )
-    if noisy:
+    if include_steane_verification:
+        specs.append(ClassicalRegisterSpec("steane_verify", STEANE_LS_VERIFICATION_LABELS))
+    specs.append(ClassicalRegisterSpec("steane_x", HIRANO_STEANE_DATA_ORDER))
+    if noisy or include_steane_verification:
         specs.append(ClassicalRegisterSpec("surface_x_recovery", SURFACE_X_AB_LABELS))
+    if include_surface_qec:
+        specs.extend(
+            [
+                ClassicalRegisterSpec(
+                    "surface_post_z",
+                    _round_labels(surface_qec_rounds, SURFACE_POST_Z_LABELS),
+                ),
+                ClassicalRegisterSpec(
+                    "surface_post_x",
+                    _round_labels(surface_qec_rounds, SURFACE_POST_X_LABELS),
+                ),
+            ]
+        )
     if surface_readout_basis is not None:
         if surface_readout_mode == "data":
             specs.append(
@@ -290,6 +462,10 @@ def _classical_register_specs(
     return specs
 
 
+# ===========================================================================
+# Generic Pauli-parity measurement primitives
+# ===========================================================================
+
 def append_measure_z_parity(
     circuit: QuantumCircuit,
     *,
@@ -297,7 +473,13 @@ def append_measure_z_parity(
     ancilla,
     classical_bit,
 ) -> None:
-    """Measure the Z-basis parity of data qubits with a fresh ancilla."""
+    """Measure the Z-basis parity of data qubits with an ancilla.
+
+    The ancilla is reset internally because the same one-qubit register can be
+    reused across repeated check rounds.  Without the reset, repeated parity
+    measurements would accumulate the previous round's result.
+    """
+    circuit.reset(ancilla)
     for qubit in data_qubits:
         circuit.cx(qubit, ancilla)
     circuit.measure(ancilla, classical_bit)
@@ -310,13 +492,23 @@ def append_measure_x_parity(
     ancilla,
     classical_bit,
 ) -> None:
-    """Measure the X-basis parity of data qubits with a fresh ancilla."""
+    """Measure the X-basis parity of data qubits with an ancilla.
+
+    This is the usual X-check pattern: prepare/rotate the ancilla into the
+    X-basis interaction frame, fan out CNOTs from ancilla to data, rotate back,
+    and measure the ancilla in Z.  The initial reset makes repeated use safe.
+    """
+    circuit.reset(ancilla)
     circuit.h(ancilla)
     for qubit in data_qubits:
         circuit.cx(ancilla, qubit)
     circuit.h(ancilla)
     circuit.measure(ancilla, classical_bit)
 
+
+# ===========================================================================
+# Protocol circuit fragments
+# ===========================================================================
 
 def append_boundary_zz_checks(
     circuit: QuantumCircuit,
@@ -326,7 +518,13 @@ def append_boundary_zz_checks(
     merged_rounds: int = 1,
     add_barriers: bool = True,
 ) -> None:
-    """Append repeated merged-boundary ``ZZ`` checks for the d=3 adaptation."""
+    """Append repeated merged-boundary ``ZZ`` checks for the d=3 adaptation.
+
+    The paper's distance-5 target has three merged checks: ``Z1a``, ``Z35bc``,
+    and ``Zde``.  The current d=3 target has only the available top-boundary
+    checks ``Z1a`` and ``Z35bc``.  Repetition lets the parser detect unstable
+    merged-check histories in the same spirit as the paper's three rounds.
+    """
     expected_bits = merged_rounds * len(MERGED_BOUNDARY_CHECKS)
     if len(classical_bits) != expected_bits:
         raise ValueError(
@@ -363,7 +561,13 @@ def append_measure_steane_data_in_x_basis(
     classical_bits: list,
     add_barriers: bool = True,
 ) -> None:
-    """Demolish the Steane block by measuring all seven data qubits in ``X``."""
+    """Demolish the Steane block by measuring all seven data qubits in ``X``.
+
+    These destructive physical measurements serve two purposes:
+
+    - their ``X146`` parity is the logical-X transfer feedforward bit
+    - their stabilizer parities reconstruct final color-code X checks
+    """
     if len(classical_bits) != len(HIRANO_STEANE_DATA_ORDER):
         raise ValueError("classical_bits must contain seven Steane-data bits.")
 
@@ -376,6 +580,51 @@ def append_measure_steane_data_in_x_basis(
         circuit.barrier(label="measure Steane data in X")
 
 
+def append_steane_lattice_surgery_verification(
+    circuit: QuantumCircuit,
+    *,
+    registers: HiranoLabeledQRegs,
+    classical_bits: list,
+    add_barriers: bool = True,
+) -> None:
+    """Measure the d=3 color-code checks used for LS postselection.
+
+    This is the distance-3 specialization described around Fig. 6:
+    measure ``Z0145``, ``Z0235``, ``X0235``, ``Z0246``, and ``X0246`` during
+    the merged-code interval.  The skipped check ``X0145`` is recovered later
+    as ``X0145ab`` after measuring the surface top-edge ``X_ab`` check.
+    """
+    if len(classical_bits) != len(STEANE_LS_VERIFICATION_CHECKS):
+        raise ValueError(
+            f"classical_bits must contain {len(STEANE_LS_VERIFICATION_CHECKS)} bits."
+        )
+
+    for (check_name, basis, support), classical_bit in zip(
+        STEANE_LS_VERIFICATION_CHECKS, classical_bits, strict=True
+    ):
+        ancilla_name = f"steane_{check_name.lower()}"
+        if ancilla_name not in registers.steane_verification_ancillas:
+            raise ValueError(f"registers do not include {ancilla_name}.")
+        data_qubits = [registers.steane_data[label][0] for label in support]
+        if basis == "Z":
+            append_measure_z_parity(
+                circuit,
+                data_qubits=data_qubits,
+                ancilla=registers.steane_verification_ancillas[ancilla_name][0],
+                classical_bit=classical_bit,
+            )
+        else:
+            append_measure_x_parity(
+                circuit,
+                data_qubits=data_qubits,
+                ancilla=registers.steane_verification_ancillas[ancilla_name][0],
+                classical_bit=classical_bit,
+            )
+
+    if add_barriers:
+        circuit.barrier(label="Steane LS verification")
+
+
 def append_surface_logical_readout(
     circuit: QuantumCircuit,
     *,
@@ -384,7 +633,11 @@ def append_surface_logical_readout(
     basis: SurfaceReadoutBasis,
     add_barriers: bool = True,
 ) -> None:
-    """Measure all rotated-d3 data qubits in ``basis`` for logical readout."""
+    """Measure all rotated-d3 data qubits in ``basis`` for logical readout.
+
+    This is the broadest destructive readout mode.  The parser later computes
+    the logical parity from the default weight-3 surface-code representative.
+    """
     if len(classical_bits) != len(SURFACE_ORDER):
         raise ValueError("classical_bits must contain nine surface-data bits.")
 
@@ -409,17 +662,22 @@ def append_surface_x_ab_recovery_measurement(
     classical_bit,
     add_barriers: bool = True,
 ) -> None:
-    """Recover the top-boundary ``X_ab`` stabilizer used by paper postselection."""
+    """Recover the top-boundary ``X_ab`` stabilizer used by postselection.
+
+    After Steane demolition, ``X0145`` is not directly available as a
+    non-destructive check.  Combining the destructive Steane parity ``X0145``
+    with this recovered ``X_ab`` bit yields the paper-style ``X0145ab`` check.
+    """
     if "x_ab" not in registers.surface_x_ancillas:
         raise ValueError("registers do not include the x_ab recovery ancilla.")
-    append_measure_x_parity(
+    append_surface_code_logical_measurement(
         circuit,
-        data_qubits=[
-            registers.surface_data["a"][0],
-            registers.surface_data["b"][0],
-        ],
-        ancilla=registers.surface_x_ancillas["x_ab"][0],
-        classical_bit=classical_bit,
+        "X",
+        surface_qubits=_surface_data_qubits(registers),
+        support=("a", "b"),
+        ancilla_qubit=registers.surface_x_ancillas["x_ab"][0],
+        classical_bits=[classical_bit],
+        destructive=False,
     )
     if add_barriers:
         circuit.barrier(label="recover surface X_ab")
@@ -433,7 +691,12 @@ def append_surface_logical_pauli_measurement(
     basis: SurfaceReadoutBasis,
     add_barriers: bool = True,
 ) -> None:
-    """Measure the weight-3 rotated-d3 logical Pauli directly with an ancilla."""
+    """Measure the weight-3 rotated-d3 logical Pauli directly with an ancilla.
+
+    This non-destructive mode is useful for notebook diagnostics when the user
+    wants a single combined logical bit without demolishing the whole surface
+    patch.
+    """
     normalized_basis = basis.upper()
     if normalized_basis not in {"X", "Z"}:
         raise ValueError("basis must be 'X' or 'Z'.")
@@ -443,21 +706,15 @@ def append_surface_logical_pauli_measurement(
         raise ValueError(f"registers do not include the {ancilla_name} measurement ancilla.")
 
     support = DEFAULT_LOGICAL_X if normalized_basis == "X" else DEFAULT_LOGICAL_Z
-    data_qubits = [registers.surface_data[label][0] for label in support]
-    if normalized_basis == "X":
-        append_measure_x_parity(
-            circuit,
-            data_qubits=data_qubits,
-            ancilla=registers.logical_measurement_ancillas[ancilla_name][0],
-            classical_bit=classical_bit,
-        )
-    else:
-        append_measure_z_parity(
-            circuit,
-            data_qubits=data_qubits,
-            ancilla=registers.logical_measurement_ancillas[ancilla_name][0],
-            classical_bit=classical_bit,
-        )
+    append_surface_code_logical_measurement(
+        circuit,
+        normalized_basis,
+        surface_qubits=_surface_data_qubits(registers),
+        support=support,
+        ancilla_qubit=registers.logical_measurement_ancillas[ancilla_name][0],
+        classical_bits=[classical_bit],
+        destructive=False,
+    )
 
     if add_barriers:
         circuit.barrier(label=f"measure logical {normalized_basis}_{''.join(support)}")
@@ -490,11 +747,14 @@ def append_surface_logical_pauli_destructive(
             f"classical_bits must have {len(support)} entries for destructive measurement."
         )
 
-    for label, classical_bit in zip(support, classical_bits, strict=False):
-        qubit = registers.surface_data[label][0]
-        if normalized_basis == "X":
-            circuit.h(qubit)
-        circuit.measure(qubit, classical_bit)
+    append_surface_code_logical_measurement(
+        circuit,
+        normalized_basis,
+        surface_qubits=_surface_data_qubits(registers),
+        support=support,
+        classical_bits=classical_bits,
+        destructive=True,
+    )
 
     if add_barriers:
         circuit.barrier(label=f"destructive logical {normalized_basis}_{''.join(support)}")
@@ -504,8 +764,11 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     *,
     injected_state: InjectedStateName | tuple[complex, complex] = "H",
     include_cultivation: bool = True,
-    merged_rounds: int = 1,
+    merged_rounds: int = 3,
     noisy: bool = False,
+    include_steane_verification: bool = True,
+    include_surface_qec: bool = True,
+    surface_qec_rounds: int = 3,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     surface_readout_mode: SurfaceReadoutMode = "data",
     add_barriers: bool = True,
@@ -529,12 +792,20 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
         basis states.
     merged_rounds
         Number of repeated merged-boundary ``ZZ`` rounds.  The paper uses
-        repeated rounds for fault detection; the default here is one noiseless
-        round to keep the d=3 adaptation compact.
+        three repeated rounds for distance-3 fault detection.
     noisy
-        If ``True``, include the recovered ``X_ab`` stabilizer measurement and
-        parser-side reconstructed X-checks used for noisy postselection.  If
-        ``False``, omit those verification-only measurements.
+        Deprecated compatibility flag for explicitly including parser-side
+        reconstructed X-checks.  The complete d=3 path also recovers ``X_ab``
+        whenever ``include_steane_verification`` is ``True``.
+    include_steane_verification
+        If ``True``, measure the d=3 Steane/color-code checks used for
+        lattice-surgery postselection and recover ``X0145ab`` via ``X_ab``.
+    include_surface_qec
+        If ``True``, append post-transfer rotated-d3 stabilizer rounds.
+    surface_qec_rounds
+        Number of post-transfer rotated-d3 stabilizer rounds.  The first
+        X-stabilizer round establishes the reference because these outcomes
+        are not all deterministic immediately after surgery.
     surface_readout_basis
         Optional final surface readout basis.  If given, all nine surface data
         qubits are measured in that basis by default.
@@ -555,12 +826,21 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
             "surface_readout_mode must be 'data', 'logical_pauli', "
             "or 'logical_pauli_indirect'."
         )
+    if include_surface_qec and surface_qec_rounds < 1:
+        raise ValueError("surface_qec_rounds must be at least 1 when include_surface_qec=True.")
 
+    # Allocate registers first.  Optional ancilla/register groups are controlled
+    # by the same flags used later for appending protocol stages.
     qregs = build_hirano_labeled_qregs(
-        include_noisy_verification=noisy,
+        include_steane_verification=include_steane_verification,
+        include_noisy_verification=noisy or include_steane_verification,
+        include_surface_qec=include_surface_qec,
         surface_logical_measurement_basis=(
             surface_readout_basis
-            if surface_readout_basis is not None and surface_readout_mode == "logical_pauli_indirect"
+            if (
+                surface_readout_basis is not None
+                and surface_readout_mode == "logical_pauli_indirect"
+            )
             else None
         ),
     )
@@ -568,6 +848,9 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
         include_cultivation=include_cultivation,
         merged_rounds=merged_rounds,
         noisy=noisy,
+        include_steane_verification=include_steane_verification,
+        include_surface_qec=include_surface_qec,
+        surface_qec_rounds=surface_qec_rounds,
         surface_readout_basis=surface_readout_basis,
         surface_readout_mode=surface_readout_mode,
     )
@@ -579,6 +862,7 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     qubit_registers = (
         list(qregs.steane_data.values())
         + list(qregs.steane_helpers.values())
+        + list(qregs.steane_verification_ancillas.values())
         + list(qregs.surface_data.values())
         + list(qregs.surface_z_ancillas.values())
         + list(qregs.surface_x_ancillas.values())
@@ -590,6 +874,9 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     circuit = QuantumCircuit(*qubit_registers, *classical_registers)
     patch_qubits = _hirano_labeled_patch_qubits(qregs)
 
+    # Stage 1: prepare the input logical state on the Steane/color-code patch.
+    # The imported helper expects the repo's 11-site patch ordering, not the
+    # Hirano labels, so ``patch_qubits`` is the key adapter.
     append_patch_steane_state_injection_encoder(
         circuit,
         patch_qubits=patch_qubits,
@@ -604,6 +891,9 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
             add_barriers=add_barriers,
         )
 
+    # Stage 2: initialize a rotated d=3 surface patch.  Starting from physical
+    # |+> states and measuring Z checks prepares the logical |+_L> sector up to
+    # the recorded Z-stabilizer reference.
     surface_qubits = _surface_data_qubits(qregs)
     prepare_plus(
         circuit,
@@ -621,6 +911,8 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
         add_barriers=add_barriers,
     )
 
+    # Stage 3: perform the merged-boundary ZZ measurements that realize the
+    # logical Z_L Z_L teleportation measurement in this d=3 adaptation.
     append_boundary_zz_checks(
         circuit,
         registers=qregs,
@@ -628,6 +920,20 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
         merged_rounds=merged_rounds,
         add_barriers=add_barriers,
     )
+
+    # Stage 4: measure Steane-side checks that should be trivial in the
+    # noiseless accepted branch.  The skipped X0145 part is handled after
+    # demolition by combining it with recovered X_ab.
+    if include_steane_verification:
+        append_steane_lattice_surgery_verification(
+            circuit,
+            registers=qregs,
+            classical_bits=list(classical_registers_by_name["steane_verify"]),
+            add_barriers=add_barriers,
+        )
+
+    # Stage 5: demolish the Steane block.  These physical X measurements supply
+    # both the logical X feedforward and final Steane X-check parities.
     append_measure_steane_data_in_x_basis(
         circuit,
         registers=qregs,
@@ -635,7 +941,8 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
         add_barriers=add_barriers,
     )
 
-    if noisy:
+    # Stage 6: recover X_ab so the final mixed check X0145ab can be evaluated.
+    if noisy or include_steane_verification:
         append_surface_x_ab_recovery_measurement(
             circuit,
             registers=qregs,
@@ -643,6 +950,37 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
             add_barriers=add_barriers,
         )
 
+    # Stage 7: run surface-code stabilization after transfer.  The first
+    # post-transfer X-check round establishes a reference rather than a
+    # deterministic syndrome; see ``surface_qec_deltas`` for the matching
+    # parser-side convention.
+    if include_surface_qec:
+        post_z_bits = list(classical_registers_by_name["surface_post_z"])
+        post_x_bits = list(classical_registers_by_name["surface_post_x"])
+        for round_index in range(surface_qec_rounds):
+            z_start = round_index * len(SURFACE_POST_Z_LABELS)
+            x_start = round_index * len(SURFACE_POST_X_LABELS)
+            append_stabilizer_round(
+                circuit,
+                surface_qubits=surface_qubits,
+                z_ancillas=[
+                    qregs.surface_z_ancillas[label][0]
+                    for label in SURFACE_Z_ANCILLA_LABELS
+                ],
+                x_ancillas=[
+                    qregs.surface_x_ancillas[label][0]
+                    for label in SURFACE_X_ANCILLA_LABELS
+                ],
+                z_bits=post_z_bits[z_start:z_start + len(SURFACE_POST_Z_LABELS)],
+                x_bits=post_x_bits[x_start:x_start + len(SURFACE_POST_X_LABELS)],
+                round_label=f"post-transfer surface round {round_index + 1}",
+                prepare_z_ancillas=True,
+                prepare_x_ancillas=True,
+                add_barriers=add_barriers,
+            )
+
+    # Stage 8: optional final readout.  Tests use this to verify the logical
+    # transfer on basis states; notebooks use it for expectation estimates.
     if surface_readout_basis is not None:
         if surface_readout_mode == "data":
             append_surface_logical_readout(
@@ -672,12 +1010,19 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     return circuit
 
 
+# ===========================================================================
+# Count-key parser
+# ===========================================================================
+
 def parse_transfer_measurements(
     bitstring: str,
     *,
     include_cultivation: bool = True,
-    merged_rounds: int = 1,
+    merged_rounds: int = 3,
     noisy: bool = False,
+    include_steane_verification: bool = True,
+    include_surface_qec: bool = True,
+    surface_qec_rounds: int = 3,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     surface_readout_mode: SurfaceReadoutMode = "data",
 ) -> dict[str, object]:
@@ -701,6 +1046,12 @@ def parse_transfer_measurements(
     noisy
         Whether the circuit included the ``surface_x_recovery`` register used
         to reconstruct noisy-transfer X checks.
+    include_steane_verification
+        Whether the circuit included the Steane/color-code LS verification
+        register and recovered ``X_ab`` top-boundary check.
+    include_surface_qec
+        Whether the circuit included a post-transfer full surface-code
+        stabilizer round.
     surface_readout_basis
         If set, the circuit included a final surface readout register.
     surface_readout_mode
@@ -745,6 +1096,9 @@ def parse_transfer_measurements(
         include_cultivation=include_cultivation,
         merged_rounds=merged_rounds,
         noisy=noisy,
+        include_steane_verification=include_steane_verification,
+        include_surface_qec=include_surface_qec,
+        surface_qec_rounds=surface_qec_rounds,
         surface_readout_basis=surface_readout_basis,
         surface_readout_mode=surface_readout_mode,
     )
@@ -767,6 +1121,9 @@ def parse_transfer_measurements(
     def register_bits(name: str) -> dict[str, int]:
         return register_chunks[name]["bits"]
 
+    # Final readouts are parsed first because Qiskit prints classical registers
+    # in reverse order.  The register specs still define the authoritative
+    # semantic labels, so downstream code does not need to know bit positions.
     if surface_readout_basis is not None:
         if surface_readout_mode == "data":
             parsed["surface_readout"] = register_bits(f"surface_{surface_readout_basis.lower()}")
@@ -775,8 +1132,42 @@ def parse_transfer_measurements(
                 f"surface_logical_{surface_readout_basis.lower()}"
             )
 
+    # Surface QEC is recorded as flat classical registers but exposed as a list
+    # of per-round dictionaries.  That representation is easier to feed into
+    # StabilizerFrame and RotatedDecoder.
+    if include_surface_qec:
+        post_z_bits = register_bits("surface_post_z")
+        post_x_bits = register_bits("surface_post_x")
+        parsed["surface_post_z_rounds"] = [
+            {
+                label: post_z_bits[f"round{round_index + 1}_{label}"]
+                for label in SURFACE_POST_Z_LABELS
+            }
+            for round_index in range(surface_qec_rounds)
+        ]
+        parsed["surface_post_x_rounds"] = [
+            {
+                label: post_x_bits[f"round{round_index + 1}_{label}"]
+                for label in SURFACE_POST_X_LABELS
+            }
+            for round_index in range(surface_qec_rounds)
+        ]
+        parsed["surface_post_z"] = parsed["surface_post_z_rounds"][-1]
+        parsed["surface_post_x"] = parsed["surface_post_x_rounds"][-1]
+
+    # Surface X_ab may be present because the user explicitly asked for noisy
+    # diagnostics or because the complete Steane verification path needs it to
+    # reconstruct X0145ab.
+    if noisy or include_steane_verification:
+        parsed["surface_x_recovery"] = register_bits("surface_x_recovery")
+
     parsed["steane_x"] = register_bits("steane_x")
 
+    if include_steane_verification:
+        parsed["steane_verification"] = register_bits("steane_verify")
+
+    # Merged-boundary checks are likewise exposed as one dictionary per repeated
+    # round, even though they live in a flat classical register.
     merged_bits = register_bits("ls_zz")
     parsed["merged_zz_rounds"] = [
         {
@@ -790,22 +1181,42 @@ def parse_transfer_measurements(
 
     parsed["surface_init_z"] = register_bits("init_z")
 
+    # Derived fields are intentionally computed here so notebooks/tests can
+    # inspect a single parsed measurement object without reimplementing protocol
+    # rules in multiple places.
     if include_cultivation:
         parsed["cultivation"] = register_bits("cult")
 
-    if noisy:
-        parsed["surface_x_recovery"] = register_bits("surface_x_recovery")
+    if noisy or include_steane_verification:
         parsed["reconstructed_x_checks"] = reconstructed_x_checks(parsed)
         parsed["local_x_verification_checks"] = local_x_verification_checks(parsed)
         parsed["x_verification_succeeds"] = x_verification_succeeds(parsed)
+    if include_steane_verification:
+        parsed["steane_verification_succeeds"] = steane_verification_succeeds(parsed)
+    if include_surface_qec:
+        parsed["surface_qec_deltas"] = surface_qec_deltas(parsed)
+        recoveries = surface_qec_recoveries(parsed)
+        parsed["surface_qec_recoveries"] = recoveries
+        parsed["surface_qec_syndrome_is_trivial"] = all(
+            recovery.is_trivial for recovery in recoveries
+        )
 
     return parsed
 
 
+# ===========================================================================
+# Derived transfer outcomes and postselection predicates
+# ===========================================================================
+
 def merged_boundary_logical_zz_outcome(
     measurements: dict[str, object],
 ) -> int:
-    """Return the logical ``Z_L Z_L`` parity inferred from the merged checks."""
+    """Return the logical ``Z_L Z_L`` parity inferred from merged checks.
+
+    The d=3 adaptation infers the logical parity as the parity of all
+    merged-boundary checks in a round.  Repeated rounds must agree before this
+    value is considered valid.
+    """
     round_parities = [
         sum(round_bits.values()) % 2
         for round_bits in measurements["merged_zz_rounds"]
@@ -817,14 +1228,37 @@ def merged_boundary_logical_zz_outcome(
     return round_parities[0]
 
 
+def merged_boundary_checks_stable(measurements: dict[str, object]) -> bool:
+    """Return whether every repeated merged-boundary check is time-stable.
+
+    This is the measurement-error detection rule for the repeated boundary
+    checks.  It is separate from ``merged_boundary_logical_zz_outcome`` so code
+    can ask "would this shot be accepted?" without raising.
+    """
+    rounds = measurements["merged_zz_rounds"]
+    return all(
+        len({round_bits[check_name] for round_bits in rounds}) == 1
+        for check_name, _, _ in MERGED_BOUNDARY_CHECKS
+    )
+
+
 def steane_logical_x_outcome(measurements: dict[str, object]) -> int:
-    """Return the Steane logical-``X`` outcome from the chosen weight-3 support."""
+    """Return the Steane logical-``X`` outcome from paper support ``X146``.
+
+    This bit controls the logical-Z Pauli-frame update on the transferred
+    surface-code magic state.
+    """
     steane_x = measurements["steane_x"]
     return sum(steane_x[label] for label in HIRANO_STEANE_LOGICAL_X) % 2
 
 
 def reconstructed_x_checks(measurements: dict[str, object]) -> dict[str, int]:
-    """Reconstruct paper-style X checks from destructive and recovered X bits."""
+    """Reconstruct paper-style final X checks from demolition data.
+
+    ``X0235`` and ``X0246`` are direct Steane demolition parities.  ``X0145ab``
+    is reconstructed by XORing the Steane ``X0145`` demolition parity with the
+    recovered surface ``X_ab`` stabilizer outcome.
+    """
     steane_x = measurements["steane_x"]
     checks = {
         name: _parity(steane_x, support)
@@ -841,7 +1275,7 @@ def reconstructed_x_checks(measurements: dict[str, object]) -> dict[str, int]:
 
 
 def local_x_verification_checks(measurements: dict[str, object]) -> dict[str, int]:
-    """Return X checks that are deterministic for this repo's current labeling."""
+    """Return deterministic final X checks for this d=3 adaptation."""
     steane_x = measurements["steane_x"]
     checks = {
         name: _parity(steane_x, support)
@@ -862,25 +1296,169 @@ def local_x_verification_checks(measurements: dict[str, object]) -> dict[str, in
 
 
 def x_verification_succeeds(measurements: dict[str, object]) -> bool:
-    """Return whether all reconstructed X checks have trivial syndrome."""
+    """Return whether all reconstructed final X checks have trivial syndrome."""
     return all(bit == 0 for bit in local_x_verification_checks(measurements).values())
 
 
-def transfer_pauli_frame(measurements: dict[str, object]) -> PauliFrame:
-    """Build the target Pauli frame from the transfer measurement outcomes."""
+def steane_verification_succeeds(measurements: dict[str, object]) -> bool:
+    """Return whether non-destructive Steane LS checks are all trivial.
+
+    In the fault-detecting path, any nonzero color-code syndrome measured
+    during the merged-code interval rejects the transfer attempt.
+    """
+    verification = measurements.get("steane_verification")
+    if verification is None:
+        return True
+    return all(bit == 0 for bit in verification.values())
+
+
+# ===========================================================================
+# Post-transfer surface-code QEC interpretation
+# ===========================================================================
+
+def surface_qec_deltas(measurements: dict[str, object]) -> list[dict[str, dict[str, int]]]:
+    """Return change-detected post-transfer surface-code stabilizer deltas.
+
+    The first post-transfer X-stabilizer round is treated as a reference,
+    matching the paper's note that newly introduced X-stabilizer outcomes are
+    not all deterministic immediately after lattice surgery.
+
+    Z-stabilizer deltas compare against the initialization Z-check round
+    because the surface patch was prepared through those checks before the
+    merge.  X-stabilizer deltas compare against the first post-transfer X round
+    because the transferred state has not previously supplied a full X-check
+    reference.
+    """
+    init_z = measurements["surface_init_z"]
+    post_z_rounds = measurements["surface_post_z_rounds"]
+    post_x_rounds = measurements["surface_post_x_rounds"]
+
+    z_frame = StabilizerFrame()
+    z_frame.record_many(init_z)
+    x_frame = StabilizerFrame()
+    x_frame.record_many(post_x_rounds[0])
+
+    deltas: list[dict[str, dict[str, int]]] = []
+    for round_index, (post_z, post_x) in enumerate(zip(post_z_rounds, post_x_rounds, strict=True)):
+        # Z checks already have a preparation reference from ``surface_init_z``.
+        z_deltas = z_frame.compare_many(post_z, update=True)
+        if round_index == 0:
+            # The first X round establishes the post-transfer reference.  Treat
+            # its delta as zero rather than decoding it as a physical error.
+            x_deltas = {label: 0 for label in post_x}
+        else:
+            x_deltas = x_frame.compare_many(post_x, update=True)
+        deltas.append({"z": z_deltas, "x": x_deltas})
+    return deltas
+
+
+def surface_qec_recoveries(measurements: dict[str, object]):
+    """Decode all post-transfer rotated-d3 surface-code stabilizer deltas.
+
+    The returned recovery objects describe physical corrections inferred by the
+    rotated-surface matching decoder.  ``transfer_pauli_frame`` uses the same
+    decoder to update logical byproducts instead of applying gates.
+    """
+    deltas_by_round = surface_qec_deltas(measurements)
+    decoder = RotatedDecoder(
+        data_qubits=SURFACE_ORDER,
+        z_stabilizers=Z_STABILIZERS,
+        x_stabilizers=X_STABILIZERS,
+        logical_x=DEFAULT_LOGICAL_X,
+        logical_z=DEFAULT_LOGICAL_Z,
+    )
+    return [
+        decoder.decode(z_deltas=deltas["z"], x_deltas=deltas["x"])
+        for deltas in deltas_by_round
+    ]
+
+
+def surface_qec_recovery(measurements: dict[str, object]):
+    """Return the final decoded post-transfer surface-code recovery.
+
+    This is a convenience accessor for one-shot diagnostics.  Full frame
+    interpretation should generally use every recovery round.
+    """
+    return surface_qec_recoveries(measurements)[-1]
+
+
+def transfer_acceptance_succeeds(measurements: dict[str, object]) -> bool:
+    """Return whether the fault-detecting d=3 transfer checks accept.
+
+    This predicate covers the transfer-local rejection rules implemented in
+    this module: cultivation bits (if present), stable repeated merged checks,
+    Steane LS verification checks, and final reconstructed X checks.  Surface
+    QEC decoding is tracked separately because nontrivial surface syndromes can
+    be corrected in the Pauli frame rather than causing hard rejection.
+    """
+    return (
+        cultivation_succeeds(measurements)
+        and merged_boundary_checks_stable(measurements)
+        and steane_verification_succeeds(measurements)
+        and x_verification_succeeds(measurements)
+    )
+
+
+def transfer_pauli_frame(
+    measurements: dict[str, object],
+    *,
+    apply_surface_qec: bool = True,
+) -> PauliFrame:
+    """Build the target Pauli frame from transfer and surface-QEC outcomes.
+
+    The lattice-surgery teleportation contributes two logical byproducts:
+
+    - merged ``Z_L Z_L`` parity toggles a logical X byproduct
+    - Steane destructive ``X146`` parity toggles a logical Z byproduct
+
+    If post-transfer surface QEC data is present, decoded physical recoveries
+    are also folded into the same Pauli frame.
+    """
     frame = PauliFrame()
     frame.register("surface")
+
+    # Teleportation byproducts from the lattice-surgery measurement pattern.
     frame.update_x("surface", bool(merged_boundary_logical_zz_outcome(measurements)))
     frame.update_z("surface", bool(steane_logical_x_outcome(measurements)))
+
+    # Surface-code syndrome rounds are correction data, not hard rejection
+    # criteria.  Convert their decoded recoveries into logical frame updates.
+    if apply_surface_qec and "surface_post_z" in measurements:
+        deltas_by_round = surface_qec_deltas(measurements)
+        decoder = RotatedDecoder(
+            data_qubits=SURFACE_ORDER,
+            z_stabilizers=Z_STABILIZERS,
+            x_stabilizers=X_STABILIZERS,
+            logical_x=DEFAULT_LOGICAL_X,
+            logical_z=DEFAULT_LOGICAL_Z,
+        )
+        for deltas in deltas_by_round:
+            decoder.update_pauli_frame(
+                frame,
+                "surface",
+                z_deltas=deltas["z"],
+                x_deltas=deltas["x"],
+            )
     return frame
 
+
+# ===========================================================================
+# Surface logical readout interpretation
+# ===========================================================================
 
 def raw_surface_logical_readout(
     measurements: dict[str, object],
     *,
     basis: SurfaceReadoutBasis,
 ) -> int:
-    """Return the uncorrected surface logical readout from physical data bits."""
+    """Return the uncorrected surface logical readout from measurement bits.
+
+    Supports three readout styles:
+
+    - all-data destructive readout, where the logical bit is a support parity
+    - logical-Pauli destructive readout, where only support qubits are measured
+    - logical-Pauli indirect readout, where one combined ancilla bit is present
+    """
     if "surface_readout" not in measurements:
         if "surface_logical_readout" not in measurements:
             raise ValueError("measurements do not include a surface logical readout.")
@@ -902,7 +1480,12 @@ def corrected_surface_logical_readout(
     *,
     basis: SurfaceReadoutBasis,
 ) -> int:
-    """Return the surface logical readout corrected by the transfer Pauli frame."""
+    """Return the surface logical readout corrected by the transfer Pauli frame.
+
+    This is the endpoint used by the logical-transfer tests: build a frame from
+    all transfer/QEC data, compute the raw surface logical bit, and interpret it
+    through the frame.
+    """
     frame = transfer_pauli_frame(measurements)
     raw_bit = raw_surface_logical_readout(measurements, basis=basis)
     if basis.upper() == "X":
@@ -911,7 +1494,11 @@ def corrected_surface_logical_readout(
 
 
 def cultivation_succeeds(measurements: dict[str, object]) -> bool:
-    """Return whether the cultivation bits are all zero."""
+    """Return whether the optional cultivation postselection bits are all zero.
+
+    Transfer-only circuits omit the cultivation register; in that case the
+    predicate returns ``True`` so it composes naturally with transfer acceptance.
+    """
     cultivation = measurements.get("cultivation")
     if cultivation is None:
         return True
