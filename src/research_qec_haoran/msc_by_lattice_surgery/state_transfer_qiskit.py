@@ -42,7 +42,7 @@ from research_qec_haoran.surface_code.rotated_d3_qiskit import (
     SURFACE_ORDER,
 )
 from research_qec_haoran.surface_code.rotated_d3_qiskit import (
-    append_prepare_plus_state,
+    prepare_plus,
     append_z_stabilizer_measurements,
 )
 
@@ -609,7 +609,7 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
         )
 
     surface_qubits = _surface_data_qubits(qregs)
-    append_prepare_plus_state(
+    prepare_plus(
         circuit,
         qubits=surface_qubits,
         add_barriers=add_barriers,

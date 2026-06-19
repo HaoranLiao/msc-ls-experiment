@@ -70,6 +70,29 @@ LOGICAL_X: tuple[str, ...] = ("a", "d", "g")
 
 
 # ---------------------------------------------------------------------------
+# Stabilizer schedules and circuit constants
+# ---------------------------------------------------------------------------
+
+INIT_Z_LABELS: tuple[str, ...] = tuple(
+    f"init_{name.lower()}" for name in Z_STABILIZERS
+)
+
+Z_STABILIZER_SCHEDULE: dict[str, tuple[str, ...]] = {
+    "Z_abde": ("a", "b", "d", "e"),
+    "Z_cf": ("", "c", "", "f"),
+    "Z_dg": ("", "d", "", "g"),
+    "Z_efhi": ("e", "f", "h", "i"),
+}
+
+X_STABILIZER_SCHEDULE: dict[str, tuple[str, ...]] = {
+    "X_ab": ("", "a", "b", ""),
+    "X_bcef": ("b", "c", "e", "f"),
+    "X_degh": ("d", "e", "g", "h"),
+    "X_hi": ("h", "i", "", ""),
+}
+
+
+# ---------------------------------------------------------------------------
 # Label / qubit mapping
 # ---------------------------------------------------------------------------
 
@@ -161,64 +184,8 @@ def draw_patch(ax: Axes | None = None) -> tuple[plt.Figure, Axes]:
 
 
 # ---------------------------------------------------------------------------
-# Stabilizer schedules and circuit constants
-# ---------------------------------------------------------------------------
-
-INIT_Z_LABELS: tuple[str, ...] = tuple(
-    f"init_{name.lower()}" for name in Z_STABILIZERS
-)
-
-Z_STABILIZER_SCHEDULE: dict[str, tuple[str, ...]] = {
-    "Z_abde": ("a", "b", "d", "e"),
-    "Z_cf": ("", "c", "", "f"),
-    "Z_dg": ("", "d", "", "g"),
-    "Z_efhi": ("e", "f", "h", "i"),
-}
-
-X_STABILIZER_SCHEDULE: dict[str, tuple[str, ...]] = {
-    "X_ab": ("", "a", "b", ""),
-    "X_bcef": ("b", "c", "e", "f"),
-    "X_degh": ("d", "e", "g", "h"),
-    "X_hi": ("h", "i", "", ""),
-}
-
-
-# ---------------------------------------------------------------------------
 # Circuit-building primitives
 # ---------------------------------------------------------------------------
-
-
-def append_data_pauli(
-    circuit: QuantumCircuit,
-    surface_qubits: Sequence[object],
-    pauli: str,
-    qubit_label: str,
-) -> None:
-    """Append a physical Pauli gate on a named rotated-d3 data qubit."""
-    qubit = surface_qubits[SURFACE_INDEX[qubit_label]]
-    gate = pauli.upper()
-    if gate == "X":
-        circuit.x(qubit)
-    elif gate == "Y":
-        circuit.y(qubit)
-    elif gate == "Z":
-        circuit.z(qubit)
-    else:
-        raise ValueError(f"unsupported Pauli {pauli!r}")
-
-
-def _validate_round_width(
-    *,
-    ancillas: Sequence[object],
-    classical_bits: Sequence[object],
-    expected: int,
-    label: str,
-) -> None:
-    if len(ancillas) != expected:
-        raise ValueError(f"{label} ancillas must contain {expected} qubits.")
-    if len(classical_bits) != expected:
-        raise ValueError(f"{label} classical bits must contain {expected} bits.")
-
 
 def _append_parallel_stabilizer_measurements(
     circuit: QuantumCircuit,
@@ -235,15 +202,14 @@ def _append_parallel_stabilizer_measurements(
     ancilla_list = list(ancillas)
     classical_list = list(classical_bits)
     stabilizer_names = tuple(schedules)
-    _validate_round_width(
-        ancillas=ancilla_list,
-        classical_bits=classical_list,
-        expected=len(stabilizer_names),
-        label=f"{basis}-check",
-    )
+    n = len(stabilizer_names)
+    if len(ancilla_list) < n:
+        raise ValueError(f"{basis}-check requires at least {n} ancilla qubits, got {len(ancilla_list)}.")
+    if len(classical_list) < n:
+        raise ValueError(f"{basis}-check requires at least {n} classical bits, got {len(classical_list)}.")
 
     if prepare_ancillas:
-        append_prepare_zero_state(circuit, qubits=ancilla_list, add_barriers=False)
+        reset_to_zero(circuit, qubits=ancilla_list, add_barriers=False)
 
     if basis == "X":
         for ancilla in ancilla_list:
@@ -273,7 +239,7 @@ def _append_parallel_stabilizer_measurements(
         circuit.barrier(label=barrier_label or f"parallel {basis} stabilizer round")
 
 
-def append_prepare_zero_state(
+def reset_to_zero(
     circuit: QuantumCircuit,
     *,
     qubits: Sequence[object],
@@ -288,7 +254,7 @@ def append_prepare_zero_state(
         circuit.barrier(label=barrier_label or "prepare |0>")
 
 
-def append_prepare_plus_state(
+def prepare_plus(
     circuit: QuantumCircuit,
     *,
     qubits: Sequence[object],
