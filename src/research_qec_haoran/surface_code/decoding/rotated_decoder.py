@@ -21,21 +21,52 @@ from research_qec_haoran.utils.normalize import normalize_bit
 
 @dataclass(frozen=True)
 class RotatedRecovery:
-    """A decoded single-qubit recovery for a rotated surface-code patch."""
+    """Decoded recovery for a rotated surface-code patch.
 
-    qubit_label: str | None
-    pauli: str | None
+    Attributes
+    ----------
+    x_correction_sites : frozenset[str]
+        Data-qubit labels to apply X correction (detected by Z stabilizers).
+    z_correction_sites : frozenset[str]
+        Data-qubit labels to apply Z correction (detected by X stabilizers).
+    z_deltas : dict[str, int]
+        Change-detected Z-stabilizer syndrome used for decoding.
+    x_deltas : dict[str, int]
+        Change-detected X-stabilizer syndrome used for decoding.
+    """
+
+    x_correction_sites: frozenset[str]
+    z_correction_sites: frozenset[str]
     z_deltas: dict[str, int]
     x_deltas: dict[str, int]
 
     @property
     def is_trivial(self) -> bool:
-        return self.pauli is None or self.qubit_label is None
+        """True if no correction is needed."""
+        return not self.x_correction_sites and not self.z_correction_sites
 
     def label(self) -> str:
+        """Human-readable label for the correction (convenience for d=3)."""
         if self.is_trivial:
             return "I"
-        return f"{self.pauli}_{self.qubit_label}"
+        all_sites = self.x_correction_sites | self.z_correction_sites
+        if len(all_sites) == 1:
+            site = next(iter(all_sites))
+            has_x = site in self.x_correction_sites
+            has_z = site in self.z_correction_sites
+            if has_x and has_z:
+                return f"Y_{site}"
+            elif has_x:
+                return f"X_{site}"
+            else:
+                return f"Z_{site}"
+        # Multi-qubit correction: list all
+        parts = []
+        for site in sorted(self.x_correction_sites):
+            parts.append(f"X_{site}")
+        for site in sorted(self.z_correction_sites):
+            parts.append(f"Z_{site}")
+        return " ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +101,8 @@ class RotatedDecoder:
         self.z_stabilizer_names = list(z_stabilizers.keys())
         self.x_stabilizer_names = list(x_stabilizers.keys())
         self._qubit_index = {q: i for i, q in enumerate(self.data_qubits)}
+        self._logical_x_set = frozenset(logical_x)
+        self._logical_z_set = frozenset(logical_z)
         n = len(self.data_qubits)
 
         # Build X-error decoder (detects X errors via Z stabilizers)
@@ -77,27 +110,14 @@ class RotatedDecoder:
         for row, name in enumerate(self.z_stabilizer_names):
             for q in z_stabilizers[name]:
                 z_check[row, self._qubit_index[q]] = 1
-
-        logical_x_vec = np.zeros((1, n), dtype=np.uint8)
-        for q in logical_x:
-            logical_x_vec[0, self._qubit_index[q]] = 1
-
-        # Uniform weights (code-capacity model)
         self._x_decoder = pymatching.Matching(z_check)
-        self._x_logical = logical_x_vec[0]
 
         # Build Z-error decoder (detects Z errors via X stabilizers)
         x_check = np.zeros((len(self.x_stabilizer_names), n), dtype=np.uint8)
         for row, name in enumerate(self.x_stabilizer_names):
             for q in x_stabilizers[name]:
                 x_check[row, self._qubit_index[q]] = 1
-
-        logical_z_vec = np.zeros((1, n), dtype=np.uint8)
-        for q in logical_z:
-            logical_z_vec[0, self._qubit_index[q]] = 1
-
         self._z_decoder = pymatching.Matching(x_check)
-        self._z_logical = logical_z_vec[0]
 
     def decode(
         self,
@@ -105,7 +125,7 @@ class RotatedDecoder:
         z_deltas: Mapping[str, int | bool],
         x_deltas: Mapping[str, int | bool],
     ) -> RotatedRecovery:
-        """Decode a syndrome and return a physical recovery operator.
+        """Decode a syndrome and return a physical recovery.
 
         z_deltas: change-detected Z-stabilizer outcomes (flags X/Y errors)
         x_deltas: change-detected X-stabilizer outcomes (flags Z/Y errors)
@@ -122,33 +142,17 @@ class RotatedDecoder:
         x_correction = self._x_decoder.decode(z_syn)
         z_correction = self._z_decoder.decode(x_syn)
 
-        # Combine into a single Pauli label
-        combined = x_correction | z_correction  # not bitwise XOR; both are 0/1 arrays
-        # Identify qubit with non-trivial correction
-        x_locs = set(np.flatnonzero(x_correction))
-        z_locs = set(np.flatnonzero(z_correction))
-        all_locs = x_locs | z_locs
+        x_sites = frozenset(self.data_qubits[i] for i in np.flatnonzero(x_correction))
+        z_sites = frozenset(self.data_qubits[i] for i in np.flatnonzero(z_correction))
 
         z_dict = {name: int(z_syn[i]) for i, name in enumerate(self.z_stabilizer_names)}
         x_dict = {name: int(x_syn[i]) for i, name in enumerate(self.x_stabilizer_names)}
 
-        if not all_locs:
-            return RotatedRecovery(
-                qubit_label=None, pauli=None, z_deltas=z_dict, x_deltas=x_dict,
-            )
-
-        # Pick one representative qubit for the label (first in patch order)
-        rep_idx = min(all_locs)
-        qubit_label = self.data_qubits[rep_idx]
-        if rep_idx in x_locs and rep_idx in z_locs:
-            pauli = "Y"
-        elif rep_idx in x_locs:
-            pauli = "X"
-        else:
-            pauli = "Z"
-
         return RotatedRecovery(
-            qubit_label=qubit_label, pauli=pauli, z_deltas=z_dict, x_deltas=x_dict,
+            x_correction_sites=x_sites,
+            z_correction_sites=z_sites,
+            z_deltas=z_dict,
+            x_deltas=x_dict,
         )
 
     def update_pauli_frame(
@@ -160,10 +164,6 @@ class RotatedDecoder:
         x_deltas: Mapping[str, int | bool],
     ) -> RotatedRecovery:
         """Decode the syndrome, update the Pauli frame, and return the recovery.
-
-        Computes the MWPM correction, determines whether it has a logical-X or
-        logical-Z component (by overlap with the logical representatives), and
-        updates ``frame`` accordingly.
 
         Parameters
         ----------
@@ -179,23 +179,13 @@ class RotatedDecoder:
         Returns
         -------
         RotatedRecovery
-            The decoded physical recovery (same as calling ``decode``).
+            The decoded physical recovery.
         """
-        z_syn = np.array(
-            [normalize_bit(z_deltas[name]) for name in self.z_stabilizer_names],
-            dtype=np.uint8,
-        )
-        x_syn = np.array(
-            [normalize_bit(x_deltas[name]) for name in self.x_stabilizer_names],
-            dtype=np.uint8,
-        )
-
-        x_correction = self._x_decoder.decode(z_syn)
-        z_correction = self._z_decoder.decode(x_syn)
+        recovery = self.decode(z_deltas=z_deltas, x_deltas=x_deltas)
 
         # X correction anticommutes with Z_L → logical X flip
+        frame.update_x(label, len(recovery.x_correction_sites & self._logical_z_set) % 2 == 1)
         # Z correction anticommutes with X_L → logical Z flip
-        frame.update_x(label, bool(int(x_correction @ self._z_logical) % 2))
-        frame.update_z(label, bool(int(z_correction @ self._x_logical) % 2))
+        frame.update_z(label, len(recovery.z_correction_sites & self._logical_x_set) % 2 == 1)
 
-        return self.decode(z_deltas=z_deltas, x_deltas=x_deltas)
+        return recovery
