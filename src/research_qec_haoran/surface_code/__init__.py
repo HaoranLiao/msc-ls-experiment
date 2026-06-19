@@ -7,9 +7,9 @@ from research_qec_haoran.surface_code.decoding import (
     StabilizerFrame,
 )
 from research_qec_haoran.surface_code.rotated_d3_qiskit import (
+    DEFAULT_LOGICAL_X,
+    DEFAULT_LOGICAL_Z,
     INIT_Z_LABELS,
-    LOGICAL_X,
-    LOGICAL_Z,
     SURFACE_COORDS,
     SURFACE_ORDER,
     X_STABILIZER_CENTERS,
@@ -25,10 +25,10 @@ from research_qec_haoran.surface_code.rotated_d3_qiskit import (
 )
 
 __all__ = [
+    "DEFAULT_LOGICAL_X",
+    "DEFAULT_LOGICAL_Z",
     "PauliFrame",
     "INIT_Z_LABELS",
-    "LOGICAL_X",
-    "LOGICAL_Z",
     "RotatedDecoder",
     "RotatedRecovery",
     "SURFACE_COORDS",

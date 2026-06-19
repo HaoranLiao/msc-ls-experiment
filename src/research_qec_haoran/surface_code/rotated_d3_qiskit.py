@@ -65,8 +65,48 @@ Z_STABILIZER_CENTERS: dict[str, tuple[float, float]] = {
     "Z_efhi": (1.5, 1.5),
 }
 
-LOGICAL_Z: tuple[str, ...] = ("a", "b", "c")
-LOGICAL_X: tuple[str, ...] = ("a", "d", "g")
+DEFAULT_LOGICAL_Z: tuple[str, ...] = ("a", "b", "c")
+DEFAULT_LOGICAL_X: tuple[str, ...] = ("a", "d", "g")
+
+# All logical-Z representatives: DEFAULT_LOGICAL_Z × products of Z-stabilizers.
+LOGICAL_Z_REPRESENTATIVES: tuple[tuple[str, ...], ...] = (
+    ("a", "b", "c"),
+    ("a", "b", "f"),
+    ("a", "b", "d", "e", "g", "h", "i"),
+    ("a", "b", "d", "f", "g"),
+    ("a", "b", "e", "h", "i"),
+    ("c", "d", "e"),
+    ("c", "e", "g"),
+    ("c", "d", "f", "h", "i"),
+    ("c", "f", "g", "h", "i"),
+    ("d", "e", "f"),
+    ("d", "h", "i"),
+    ("e", "f", "g"),
+    ("g", "h", "i"),
+    ("a", "b", "c", "d", "g"),
+    ("a", "b", "c", "e", "f", "h", "i"),
+    ("a", "b", "c", "d", "e", "f", "g", "h", "i"),
+)
+
+# All logical-X representatives: DEFAULT_LOGICAL_X × products of X-stabilizers.
+LOGICAL_X_REPRESENTATIVES: tuple[tuple[str, ...], ...] = (
+    ("a", "d", "g"),
+    ("a", "e", "h"),
+    ("a", "e", "i"),
+    ("a", "d", "g", "h", "i"),
+    ("b", "d", "g"),
+    ("b", "e", "h"),
+    ("b", "e", "i"),
+    ("b", "d", "g", "h", "i"),
+    ("c", "d", "e", "f", "g"),
+    ("c", "f", "h"),
+    ("c", "f", "i"),
+    ("c", "d", "e", "f", "g", "h", "i"),
+    ("a", "b", "c", "d", "e", "f", "g"),
+    ("a", "b", "c", "f", "h"),
+    ("a", "b", "c", "f", "i"),
+    ("a", "b", "c", "d", "e", "f", "g", "h", "i"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +137,7 @@ X_STABILIZER_SCHEDULE: dict[str, tuple[str, ...]] = {
 # ---------------------------------------------------------------------------
 
 
-def _label2qubit(surface_qubits) -> dict[str, object]:
+def label2qubit(surface_qubits) -> dict[str, object]:
     """Map surface labels ``a..i`` to the supplied Qiskit qubits."""
     if len(surface_qubits) != 9:
         raise ValueError("surface_qubits must contain exactly 9 qubits.")
@@ -282,7 +322,7 @@ def append_z_stabilizer_measurements(
     """Append one parallel rotated-``d=3`` Z-check round."""
     _append_parallel_stabilizer_measurements(
         circuit,
-        label_to_qubit=_label2qubit(surface_qubits),
+        label_to_qubit=label2qubit(surface_qubits),
         ancillas=z_ancillas,
         classical_bits=classical_bits,
         schedules=Z_STABILIZER_SCHEDULE,
@@ -306,7 +346,7 @@ def append_x_stabilizer_measurements(
     """Append one parallel rotated-``d=3`` X-check round."""
     _append_parallel_stabilizer_measurements(
         circuit,
-        label_to_qubit=_label2qubit(surface_qubits),
+        label_to_qubit=label2qubit(surface_qubits),
         ancillas=x_ancillas,
         classical_bits=classical_bits,
         schedules=X_STABILIZER_SCHEDULE,
