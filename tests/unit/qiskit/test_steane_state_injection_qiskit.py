@@ -9,6 +9,7 @@ from qiskit import QuantumCircuit
 from qiskit.quantum_info import SparsePauliOp, Statevector
 from qiskit_aer import AerSimulator
 
+from research_qec_haoran.noise import append_pauli_faults
 from research_qec_haoran.steane_code.state_injection_qiskit import (
     LOGICAL_X_REPRESENTATIVES,
     LOGICAL_Z_REPRESENTATIVES,
@@ -24,11 +25,11 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     append_logical_measurement,
     append_patch_logical_measurement,
     append_patch_stabilizer_measurement,
-    append_stabilizer_measurement,
     append_patch_steane_state_injection_encoder,
+    append_stabilizer_measurement,
     build_steane_state_injection_encoder,
 )
-from research_qec_haoran.noise import append_pauli_faults
+from research_qec_haoran.utils.normalize import parse_qiskit_bitstring
 
 NUM_DATA_QUBITS = 7
 TOLERANCE = 1e-10
@@ -167,7 +168,8 @@ def test_logical_z_via_measurement_circuit(state: InjectedStateName) -> None:
     for rep in LOGICAL_Z_REPRESENTATIVES:
         measured_z = _measure_logical_expectation_non_destructive(state, "Z", support=rep)
         assert measured_z == pytest.approx(expected_z, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: ⟨Z_anc⟩ expected {expected_z:.4f}, got {measured_z:.4f}"
+            f"State {state!r}, support {rep}: "
+            f"⟨Z_anc⟩ expected {expected_z:.4f}, got {measured_z:.4f}"
         )
 
 
@@ -178,7 +180,8 @@ def test_logical_x_via_measurement_circuit(state: InjectedStateName) -> None:
     for rep in LOGICAL_X_REPRESENTATIVES:
         measured_x = _measure_logical_expectation_non_destructive(state, "X", support=rep)
         assert measured_x == pytest.approx(expected_x, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: ⟨Z_anc⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
+            f"State {state!r}, support {rep}: "
+            f"⟨Z_anc⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
         )
 
 
@@ -382,7 +385,8 @@ def test_patch_logical_z_via_measurement_circuit(state: InjectedStateName) -> No
     for rep in PATCH_LOGICAL_Z_REPRESENTATIVES:
         measured_z = _patch_measure_logical_expectation_non_destructive(state, "Z", support=rep)
         assert measured_z == pytest.approx(expected_z, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: ⟨Z_anc⟩ expected {expected_z:.4f}, got {measured_z:.4f}"
+            f"State {state!r}, support {rep}: "
+            f"⟨Z_anc⟩ expected {expected_z:.4f}, got {measured_z:.4f}"
         )
 
 
@@ -393,7 +397,8 @@ def test_patch_logical_x_via_measurement_circuit(state: InjectedStateName) -> No
     for rep in PATCH_LOGICAL_X_REPRESENTATIVES:
         measured_x = _patch_measure_logical_expectation_non_destructive(state, "X", support=rep)
         assert measured_x == pytest.approx(expected_x, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: ⟨Z_anc⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
+            f"State {state!r}, support {rep}: "
+            f"⟨Z_anc⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
         )
 
 
@@ -543,11 +548,12 @@ def _build_and_run_patch_syndrome(
 
     # Run 1 shot (noiseless, deterministic).
     sim = AerSimulator()
-    bitstring = next(iter(sim.run(circuit, shots=1).result().get_counts())).replace(" ", "")
-    bits = [int(b) for b in reversed(bitstring)]
+    bitstring = next(iter(sim.run(circuit, shots=1).result().get_counts()))
+    bit_labels = tuple(f"b{i}" for i in range(N_PATCH_ANCILLA))
+    bits = parse_qiskit_bitstring(bitstring, bit_labels)
     # bits[0..2] = X-stabilizer outcomes, bits[3..5] = Z-stabilizer outcomes.
-    x_syn = tuple(bits[0:3])
-    z_syn = tuple(bits[3:6])
+    x_syn = tuple(bits[f"b{i}"] for i in range(3))
+    z_syn = tuple(bits[f"b{i}"] for i in range(3, 6))
     return x_syn, z_syn
 
 
@@ -598,7 +604,11 @@ class TestPatchSyndromeExtraction:
 
     @pytest.mark.parametrize("state", ["0", "T", "H"])
     @pytest.mark.parametrize("faults", _TWO_SAME_FAULTS, ids=_TWO_SAME_IDS)
-    def test_two_qubit_same_pauli(self, state: InjectedStateName, faults: list[tuple[str, int]]) -> None:
+    def test_two_qubit_same_pauli(
+        self,
+        state: InjectedStateName,
+        faults: list[tuple[str, int]],
+    ) -> None:
         """Two same-Pauli faults: syndrome is XOR of individual syndromes."""
         expected_x, expected_z = _expected_patch_syndrome(faults)
         measured_x, measured_z = _build_and_run_patch_syndrome(faults, injected_state=state)
@@ -610,7 +620,11 @@ class TestPatchSyndromeExtraction:
 
     @pytest.mark.parametrize("state", ["0", "T", "H"])
     @pytest.mark.parametrize("faults", _TWO_MIXED_FAULTS, ids=_TWO_MIXED_IDS)
-    def test_two_qubit_mixed_pauli(self, state: InjectedStateName, faults: list[tuple[str, int]]) -> None:
+    def test_two_qubit_mixed_pauli(
+        self,
+        state: InjectedStateName,
+        faults: list[tuple[str, int]],
+    ) -> None:
         """Two different-Pauli faults: X and Z sectors detect independently."""
         expected_x, expected_z = _expected_patch_syndrome(faults)
         measured_x, measured_z = _build_and_run_patch_syndrome(faults, injected_state=state)
