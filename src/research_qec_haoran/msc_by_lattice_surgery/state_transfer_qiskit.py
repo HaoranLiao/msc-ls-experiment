@@ -37,8 +37,8 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     append_patch_steane_state_injection_encoder,
 )
 from research_qec_haoran.surface_code.rotated_d3_qiskit import (
-    LOGICAL_X,
-    LOGICAL_Z,
+    DEFAULT_LOGICAL_X,
+    DEFAULT_LOGICAL_Z,
     SURFACE_ORDER,
 )
 from research_qec_haoran.surface_code.rotated_d3_qiskit import (
@@ -51,9 +51,9 @@ SurfaceReadoutMode = Literal["data", "logical_pauli", "logical_pauli_indirect"]
 
 HIRANO_STEANE_DATA_ORDER: tuple[str, ...] = ("0", "1", "2", "3", "4", "5", "6")
 HIRANO_STEANE_GEOMETRIC_ORDER: tuple[str, ...] = ("6", "4", "0", "2", "1", "5", "3")
-# Under the repo's current Steane encoder ordering, the weight-3 logical-X
-# representative used in the transfer demonstrator is ``X016``.
-HIRANO_STEANE_LOGICAL_X: tuple[str, ...] = ("0", "1", "6")
+# Under the repo's current Steane encoder ordering, the default weight-3
+# Steane logical representatives map to Hirano labels ``1, 5, 3``.
+HIRANO_STEANE_LOGICAL_X: tuple[str, ...] = ("1", "5", "3")
 HIRANO_STEANE_LOGICAL_Z: tuple[str, ...] = ("1", "5", "3")
 TOP_BOUNDARY: tuple[str, ...] = ("a", "b", "c")
 SURFACE_X_AB_LABELS: tuple[str, ...] = ("X_ab",)
@@ -65,14 +65,10 @@ STEANE_X_RECONSTRUCTED_CHECKS: dict[str, tuple[str, ...]] = {
 }
 LOCAL_STEANE_X_STABILIZER_CHECKS: dict[str, tuple[str, ...]] = {
     "X0246": ("0", "2", "4", "6"),
-    "X0356": ("0", "3", "5", "6"),
-    "X2345": ("2", "3", "4", "5"),
+    "X0235": ("0", "2", "3", "5"),
 }
 LOCAL_X_AB_CORRELATION_CHECKS: dict[str, tuple[str, ...]] = {
-    "X0125ab": ("0", "1", "2", "5", "X_ab"),
-    "X0134ab": ("0", "1", "3", "4", "X_ab"),
-    "X1236ab": ("1", "2", "3", "6", "X_ab"),
-    "X1456ab": ("1", "4", "5", "6", "X_ab"),
+    "X0145ab": ("0", "1", "4", "5", "X_ab"),
 }
 
 # Map the repo's 11-site cultivation patch labels onto Hirano's 7 color-code
@@ -230,7 +226,7 @@ def _merged_zz_labels(merged_rounds: int) -> tuple[str, ...]:
 
 
 def _surface_logical_readout_label(basis: SurfaceReadoutBasis) -> str:
-    support = LOGICAL_X if basis.upper() == "X" else LOGICAL_Z
+    support = DEFAULT_LOGICAL_X if basis.upper() == "X" else DEFAULT_LOGICAL_Z
     return f"{basis.upper()}_{''.join(support)}"
 
 
@@ -269,9 +265,9 @@ def _classical_register_specs(
             )
         elif surface_readout_mode == "logical_pauli":
             support = (
-                LOGICAL_X
+                DEFAULT_LOGICAL_X
                 if surface_readout_basis.upper() == "X"
-                else LOGICAL_Z
+                else DEFAULT_LOGICAL_Z
             )
             specs.append(
                 ClassicalRegisterSpec(
@@ -446,7 +442,7 @@ def append_surface_logical_pauli_measurement(
     if ancilla_name not in registers.logical_measurement_ancillas:
         raise ValueError(f"registers do not include the {ancilla_name} measurement ancilla.")
 
-    support = LOGICAL_X if normalized_basis == "X" else LOGICAL_Z
+    support = DEFAULT_LOGICAL_X if normalized_basis == "X" else DEFAULT_LOGICAL_Z
     data_qubits = [registers.surface_data[label][0] for label in support]
     if normalized_basis == "X":
         append_measure_x_parity(
@@ -488,7 +484,7 @@ def append_surface_logical_pauli_destructive(
     if normalized_basis not in {"X", "Z"}:
         raise ValueError("basis must be 'X' or 'Z'.")
 
-    support = LOGICAL_X if normalized_basis == "X" else LOGICAL_Z
+    support = DEFAULT_LOGICAL_X if normalized_basis == "X" else DEFAULT_LOGICAL_Z
     if len(classical_bits) != len(support):
         raise ValueError(
             f"classical_bits must have {len(support)} entries for destructive measurement."
@@ -897,7 +893,7 @@ def raw_surface_logical_readout(
         # Destructive: parity of individual support-qubit bits.
         return sum(logical_dict.values()) % 2
 
-    support = LOGICAL_X if basis.upper() == "X" else LOGICAL_Z
+    support = DEFAULT_LOGICAL_X if basis.upper() == "X" else DEFAULT_LOGICAL_Z
     return sum(measurements["surface_readout"][label] for label in support) % 2
 
 
