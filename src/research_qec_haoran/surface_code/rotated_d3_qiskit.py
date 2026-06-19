@@ -390,3 +390,70 @@ def append_stabilizer_round(
         add_barriers=add_barriers,
     )
 
+
+def append_logical_measurement(
+    circuit: QuantumCircuit,
+    basis: str = "Z",
+    *,
+    surface_qubits: Sequence[object],
+    support: tuple[str, ...] | None = None,
+    ancilla_qubit=None,
+    classical_bits: Sequence[object],
+    destructive: bool = True,
+) -> None:
+    """Append a logical measurement on the rotated surface-code patch.
+
+    Parameters
+    ----------
+    circuit
+        Circuit being modified.
+    basis
+        Which logical to measure: ``"Z"`` for Z_L or ``"X"`` for X_L.
+    surface_qubits
+        Nine data qubits ordered according to ``SURFACE_ORDER``.
+    support
+        Data-qubit labels for the logical representative to measure. Defaults
+        to ``DEFAULT_LOGICAL_Z`` or ``DEFAULT_LOGICAL_X``.
+    ancilla_qubit
+        For non-destructive measurement, the ancilla qubit to use. Required
+        when ``destructive=False``.
+    classical_bits
+        Classical bits for measurement results. For destructive: one per
+        support qubit. For non-destructive: at least one bit.
+    destructive
+        If True (default), directly measure the data qubits in the
+        appropriate basis. If False, use an ancilla for indirect measurement.
+    """
+    if support is None:
+        support = DEFAULT_LOGICAL_Z if basis == "Z" else DEFAULT_LOGICAL_X
+
+    l2q = label2qubit(surface_qubits)
+    cb = list(classical_bits)
+
+    if destructive:
+        if len(cb) < len(support):
+            raise ValueError(
+                f"classical_bits must have at least {len(support)} entries for destructive measurement."
+            )
+        if basis == "X":
+            for label in support:
+                circuit.h(l2q[label])
+        for i, label in enumerate(support):
+            circuit.measure(l2q[label], cb[i])
+    else:
+        if ancilla_qubit is None:
+            raise ValueError("ancilla_qubit is required for non-destructive measurement.")
+        if len(cb) < 1:
+            raise ValueError("classical_bits must have at least 1 entry for non-destructive measurement.")
+        if basis == "Z":
+            for label in support:
+                circuit.cx(l2q[label], ancilla_qubit)
+            circuit.measure(ancilla_qubit, cb[0])
+        else:
+            circuit.h(ancilla_qubit)
+            for label in support:
+                circuit.cx(ancilla_qubit, l2q[label])
+            circuit.h(ancilla_qubit)
+            circuit.measure(ancilla_qubit, cb[0])
+
+
