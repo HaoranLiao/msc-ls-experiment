@@ -69,6 +69,7 @@ from research_qec_haoran.surface_code.rotated_d3_qiskit import (
 from research_qec_haoran.surface_code.rotated_d3_qiskit import (
     append_logical_measurement as append_surface_code_logical_measurement,
 )
+from research_qec_haoran.utils.normalize import parse_qiskit_bitstring
 
 # ===========================================================================
 # Public type aliases
@@ -338,11 +339,7 @@ def _parse_register_chunk(chunk: str, labels: tuple[str, ...]) -> dict[str, int]
     Qiskit prints each classical register with most-significant bit first, so
     parsing by label requires reversing the chunk before zipping with labels.
     """
-    bits = chunk.replace(" ", "")
-    return {
-        label: int(bit)
-        for label, bit in zip(labels, reversed(bits), strict=False)
-    }
+    return parse_qiskit_bitstring(chunk, labels)
 
 
 def _parity(bits: dict[str, int], labels: tuple[str, ...]) -> int:

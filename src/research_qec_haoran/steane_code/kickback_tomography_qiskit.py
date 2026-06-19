@@ -23,12 +23,14 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     append_patch_stabilizer_measurement,
     append_patch_steane_state_injection_encoder,
 )
+from research_qec_haoran.utils.normalize import qiskit_bit_value
 
 FinalStabilizerMode = Literal["both", "none"]
 
 KT_CULTIVATION_BITS_PER_ROUND = 5
 KT_STABILIZER_BITS_PER_CYCLE = 6
 KT_DEFAULT_QEC_CYCLE_INDICES: tuple[int, ...] = (0, 1, 2)
+_VALID_QEC_CYCLE_INDICES = frozenset(KT_DEFAULT_QEC_CYCLE_INDICES)
 
 
 # =============================================================================
@@ -162,11 +164,11 @@ def _cultivation_bits_from_positions(positions: Sequence[int]) -> KickbackCultiv
 
 def _normalise_qec_cycle_indices(qec_cycle_indices: Iterable[int]) -> tuple[int, ...]:
     indices = tuple(qec_cycle_indices)
-    if any(index not in {0, 1, 2} for index in indices):
+    if any(index not in _VALID_QEC_CYCLE_INDICES for index in indices):
         raise ValueError("qec_cycle_indices may only contain 0, 1, and 2.")
     if len(set(indices)) != len(indices):
         raise ValueError("qec_cycle_indices must not contain duplicates.")
-    return indices
+    return tuple(sorted(indices))
 
 
 def _final_stabilizer_bit_count(mode: FinalStabilizerMode) -> int:
@@ -357,17 +359,14 @@ def build_kickback_tomography_circuit(
 # =============================================================================
 
 
-def _flatten_counts_key(bitstring: str) -> str:
-    return bitstring.replace(" ", "")
-
-
 def bit_value(bitstring: str, position: int) -> int:
-    """Return a bit from a Qiskit counts key using Qiskit bit positions."""
+    """Return a bit from a Qiskit counts key using Qiskit bit positions.
 
-    bs = _flatten_counts_key(bitstring)
-    if position < 0 or position >= len(bs):
-        raise ValueError(f"bit position {position} is outside bitstring {bitstring!r}.")
-    return int(bs[len(bs) - 1 - position])
+    This compatibility wrapper preserves the KT module's public helper while
+    sharing the repo-wide implementation.
+    """
+
+    return qiskit_bit_value(bitstring, position)
 
 
 def detector_bits_are_zero(bitstring: str, positions: Sequence[int]) -> bool:

@@ -24,6 +24,22 @@ def normalize_pauli_char(pauli: str | None) -> str | None:
     return normalized
 
 
+def _flatten_qiskit_bitstring(bitstring: str) -> str:
+    return bitstring.replace(" ", "")
+
+
+def qiskit_bit_value(bitstring: str, position: int) -> int:
+    """Return a bit from a Qiskit counts key using Qiskit bit positions.
+
+    Qiskit count keys are printed most-significant bit first, so classical bit
+    position 0 is the rightmost bit after removing register-separating spaces.
+    """
+    bits = _flatten_qiskit_bitstring(bitstring)
+    if position < 0 or position >= len(bits):
+        raise ValueError(f"bit position {position} is outside bitstring {bitstring!r}.")
+    return int(bits[len(bits) - 1 - position])
+
+
 def parse_qiskit_bitstring(
     bitstring: str,
     labels: tuple[str, ...] | list[str],
@@ -34,5 +50,13 @@ def parse_qiskit_bitstring(
     significant bit first).  This reverses the string so that index 0
     corresponds to classical bit 0, then zips with *labels*.
     """
-    bits = [int(b) for b in bitstring.replace(" ", "")]
-    return {label: bit for label, bit in zip(reversed(labels), bits, strict=False)}
+    flattened = _flatten_qiskit_bitstring(bitstring)
+    if len(flattened) != len(labels):
+        raise ValueError(
+            f"bitstring {bitstring!r} has {len(flattened)} bits, "
+            f"but {len(labels)} labels were provided."
+        )
+    return {
+        label: qiskit_bit_value(flattened, position)
+        for position, label in enumerate(labels)
+    }

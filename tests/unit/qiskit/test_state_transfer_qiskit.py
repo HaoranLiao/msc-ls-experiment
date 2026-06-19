@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+import pytest
 from qiskit_aer import AerSimulator
 
 from research_qec_haoran.msc_by_lattice_surgery import (
@@ -189,6 +190,16 @@ class TestTransferMeasurementParsing:
         assert len(measurements["surface_post_x_rounds"]) == 3
         assert len(measurements["surface_qec_deltas"]) == 3
         assert measurements["surface_qec_syndrome_is_trivial"]
+
+    def test_parser_rejects_register_chunks_with_wrong_width(self) -> None:
+        with pytest.raises(ValueError, match="2 labels"):
+            parse_transfer_measurements(
+                "0000000 0 0000",
+                include_cultivation=False,
+                merged_rounds=1,
+                include_steane_verification=False,
+                include_surface_qec=False,
+            )
 
 
 # ===========================================================================

@@ -88,6 +88,25 @@ class TestKickbackTomographyCircuitConstruction:
         with pytest.raises(ValueError, match="0, 1, and 2"):
             build_kickback_tomography_experiment(qec_cycle_indices=(3,))
 
+    def test_duplicate_qec_cycle_indices_raise(self) -> None:
+        with pytest.raises(ValueError, match="duplicates"):
+            build_kickback_tomography_experiment(qec_cycle_indices=(0, 0))
+
+    def test_qec_cycle_registers_follow_protocol_order(self) -> None:
+        experiment = build_kickback_tomography_experiment(
+            include_preparation_cultivation=False,
+            qec_cycle_indices=(2, 0),
+            final_stabilizer_basis="none",
+            add_barriers=False,
+        )
+
+        assert [register.name for register in experiment.circuit.cregs] == [
+            "qec_0",
+            "qec_2",
+            "kt_measure",
+            "kt_check",
+        ]
+
 
 # =============================================================================
 # Test Set 2: Counts parsing and postselection semantics
