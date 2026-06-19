@@ -15,13 +15,14 @@ from research_qec_haoran.steane_code.magic_state_cultivation_qiskit import (
     postselect_success_counts,
 )
 from research_qec_haoran.steane_code.state_injection_qiskit import (
-    InjectedStateName,
     PATCH_DEFAULT_LOGICAL_X,
     PATCH_DEFAULT_LOGICAL_Z,
+    InjectedStateName,
     append_patch_logical_measurement,
     append_patch_stabilizer_measurement,
     append_patch_steane_state_injection_encoder,
 )
+from research_qec_haoran.utils.normalize import qiskit_bit_value
 
 # =============================================================================
 # Constants
@@ -29,6 +30,7 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
 
 NUM_SHOTS = 1000
 INV_SQRT2 = 1.0 / math.sqrt(2)
+NOISY_TEST_SEED = 20251218
 
 # States to test for cultivation — minimal representative subset.
 CULTIVATION_TEST_STATES: list[InjectedStateName] = [
@@ -141,10 +143,7 @@ def _postselect_and_compute_expectation(
 
     even_parity_count = 0
     for bitstring, count in accepted_counts.items():
-        bs = bitstring.replace(" ", "")
-        n = len(bs)
-        # Extract logical bits by position (Qiskit: index 0 = rightmost)
-        parity = sum(int(bs[n - 1 - i]) for i in logical_bit_positions) % 2
+        parity = sum(qiskit_bit_value(bitstring, i) for i in logical_bit_positions) % 2
         if parity == 0:
             even_parity_count += count
 
@@ -273,20 +272,16 @@ class TestStabilizerSyndromesAfterCultivation:
 
         # Check all accepted shots have all-zero stabilizer outcomes
         found_accepted = False
-        for bitstring, count in counts.items():
-            bs = bitstring.replace(" ", "")
-            # Layout: stab_creg (6 bits, MSB) | cult_creg (5 bits, LSB)
-            # Total bits = 11. Rightmost 5 = cult, next 6 = stab.
-            cult_bits = bs[-5:]
-            stab_bits = bs[:-5]
-
-            if set(cult_bits) != {"0"}:
+        for bitstring in counts:
+            # Layout in Qiskit bit positions: bits 0..4 are cultivation, and
+            # bits 5..10 are the final stabilizer measurement.
+            if any(qiskit_bit_value(bitstring, i) for i in range(5)):
                 continue  # rejected shot
 
             found_accepted = True
-            assert set(stab_bits) <= {"0"}, (
+            assert all(qiskit_bit_value(bitstring, i) == 0 for i in range(5, 11)), (
                 f"State {state!r}: accepted shot has non-trivial syndrome "
-                f"stab={stab_bits} (expected all zeros)"
+                f"in bitstring {bitstring!r} (expected all zeros)"
             )
 
         assert found_accepted, f"State {state!r}: no accepted shots in {n_shots} attempts"
@@ -404,7 +399,7 @@ class TestNoisyCultivationImprovesWithRounds:
     def test_postselected_fidelity_near_ideal(self, basis: str) -> None:
         """After noisy cultivation + postselection, ⟨Z_L⟩ and ⟨X_L⟩ ≈ 1/√2."""
         noise_model = _build_noisy_noise_model()
-        sim = AerSimulator(noise_model=noise_model)
+        sim = AerSimulator(noise_model=noise_model, seed_simulator=NOISY_TEST_SEED)
 
         for n_rounds in self.ROUNDS_TO_TEST:
             circuit = _build_multi_round_cultivation_circuit(
@@ -433,7 +428,7 @@ class TestNoisyCultivationImprovesWithRounds:
     ) -> None:
         """More cultivation rounds → better fidelity and higher discard rate."""
         noise_model = _build_noisy_noise_model()
-        sim = AerSimulator(noise_model=noise_model)
+        sim = AerSimulator(noise_model=noise_model, seed_simulator=NOISY_TEST_SEED)
 
         n_shots = 10000  # more shots to reduce statistical noise for trend test
         errors: list[float] = []
@@ -453,26 +448,29 @@ class TestNoisyCultivationImprovesWithRounds:
             errors.append(abs(expectation - INV_SQRT2))
             acceptance_rates.append(n_accepted / n_shots)
 
+        errors_by_round = list(zip(self.ROUNDS_TO_TEST, errors, strict=True))
+        rates_by_round = list(zip(self.ROUNDS_TO_TEST, acceptance_rates, strict=True))
+
         # Fidelity should improve (error decreases) with more rounds.
         # Allow small statistical slack — require error_last <= error_first + margin.
         assert errors[-1] <= errors[-2] + 0.03, (
             f"Basis {basis}: fidelity did not improve with more rounds. "
-            f"Errors by round: {list(zip(self.ROUNDS_TO_TEST, errors))}"
+            f"Errors by round: {errors_by_round}"
         )
-        print(f"Errors by round: {list(zip(self.ROUNDS_TO_TEST, errors))}")
+        print(f"Errors by round: {errors_by_round}")
 
         # Acceptance rate should decrease with more rounds (more chances to reject).
         assert acceptance_rates[-1] < acceptance_rates[-2] + 0.01, (
             f"Basis {basis}: acceptance rate did not decrease with more rounds. "
-            f"Rates by round: {list(zip(self.ROUNDS_TO_TEST, acceptance_rates))}"
+            f"Rates by round: {rates_by_round}"
         )
-        print(f"Rates by round: {list(zip(self.ROUNDS_TO_TEST, acceptance_rates))}")
+        print(f"Rates by round: {rates_by_round}")
 
     @pytest.mark.parametrize("basis", ["X"])
     def test_cultivation_improves_over_no_postselection(self, basis: str) -> None:
         """Postselected cultivation yields better fidelity than raw noisy encoder."""
         noise_model = _build_noisy_noise_model()
-        sim = AerSimulator(noise_model=noise_model)
+        sim = AerSimulator(noise_model=noise_model, seed_simulator=NOISY_TEST_SEED)
 
         # --- Raw noisy encoder (no cultivation, just encoder → measurement) ---
         qreg = QuantumRegister(11, "q")
@@ -491,8 +489,7 @@ class TestNoisyCultivationImprovesWithRounds:
         raw_even = 0
         raw_total = 0
         for bitstring, count in raw_counts.items():
-            bs = bitstring.replace(" ", "")
-            parity = sum(int(b) for b in bs) % 2
+            parity = sum(qiskit_bit_value(bitstring, i) for i in range(3)) % 2
             raw_total += count
             if parity == 0:
                 raw_even += count
