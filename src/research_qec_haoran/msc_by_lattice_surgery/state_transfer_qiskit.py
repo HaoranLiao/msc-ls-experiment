@@ -36,14 +36,14 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     InjectedStateName,
     append_patch_steane_state_injection_encoder,
 )
-from research_qec_haoran.surface_code.rotated_d3_layout_qiskit import (
-    ROTATED_D3_LOGICAL_X,
-    ROTATED_D3_LOGICAL_Z,
-    ROTATED_D3_SURFACE_ORDER,
+from research_qec_haoran.surface_code.rotated_d3_qiskit import (
+    LOGICAL_X,
+    LOGICAL_Z,
+    SURFACE_ORDER,
 )
 from research_qec_haoran.surface_code.rotated_d3_qiskit import (
     append_prepare_plus_state,
-    append_rotated_d3_z_stabilizer_measurements,
+    append_z_stabilizer_measurements,
 )
 
 SurfaceReadoutBasis = Literal["X", "Z"]
@@ -55,7 +55,7 @@ HIRANO_STEANE_GEOMETRIC_ORDER: tuple[str, ...] = ("6", "4", "0", "2", "1", "5", 
 # representative used in the transfer demonstrator is ``X016``.
 HIRANO_STEANE_LOGICAL_X: tuple[str, ...] = ("0", "1", "6")
 HIRANO_STEANE_LOGICAL_Z: tuple[str, ...] = ("1", "5", "3")
-ROTATED_D3_TOP_BOUNDARY: tuple[str, ...] = ("a", "b", "c")
+TOP_BOUNDARY: tuple[str, ...] = ("a", "b", "c")
 SURFACE_X_AB_LABELS: tuple[str, ...] = ("X_ab",)
 SURFACE_INIT_Z_LABELS: tuple[str, ...] = ("Z_abde", "Z_cf", "Z_dg", "Z_efhi")
 STEANE_X_RECONSTRUCTED_CHECKS: dict[str, tuple[str, ...]] = {
@@ -164,7 +164,7 @@ def build_hirano_labeled_qregs(
     }
     surface_data = {
         label: QuantumRegister(1, label)
-        for label in ROTATED_D3_SURFACE_ORDER
+        for label in SURFACE_ORDER
     }
     surface_z_ancillas = {
         label: QuantumRegister(1, label)
@@ -206,7 +206,7 @@ def _hirano_labeled_patch_qubits(registers: HiranoLabeledQRegs) -> list:
 
 def _surface_data_qubits(registers: HiranoLabeledQRegs) -> list:
     """Return the rotated-d3 surface data qubits in ``a..i`` order."""
-    return [registers.surface_data[label][0] for label in ROTATED_D3_SURFACE_ORDER]
+    return [registers.surface_data[label][0] for label in SURFACE_ORDER]
 
 
 def _parse_register_chunk(chunk: str, labels: tuple[str, ...]) -> dict[str, int]:
@@ -230,7 +230,7 @@ def _merged_zz_labels(merged_rounds: int) -> tuple[str, ...]:
 
 
 def _surface_logical_readout_label(basis: SurfaceReadoutBasis) -> str:
-    support = ROTATED_D3_LOGICAL_X if basis.upper() == "X" else ROTATED_D3_LOGICAL_Z
+    support = LOGICAL_X if basis.upper() == "X" else LOGICAL_Z
     return f"{basis.upper()}_{''.join(support)}"
 
 
@@ -264,14 +264,14 @@ def _classical_register_specs(
             specs.append(
                 ClassicalRegisterSpec(
                     f"surface_{surface_readout_basis.lower()}",
-                    ROTATED_D3_SURFACE_ORDER,
+                    SURFACE_ORDER,
                 )
             )
         elif surface_readout_mode == "logical_pauli":
             support = (
-                ROTATED_D3_LOGICAL_X
+                LOGICAL_X
                 if surface_readout_basis.upper() == "X"
-                else ROTATED_D3_LOGICAL_Z
+                else LOGICAL_Z
             )
             specs.append(
                 ClassicalRegisterSpec(
@@ -389,14 +389,14 @@ def append_surface_logical_readout(
     add_barriers: bool = True,
 ) -> None:
     """Measure all rotated-d3 data qubits in ``basis`` for logical readout."""
-    if len(classical_bits) != len(ROTATED_D3_SURFACE_ORDER):
+    if len(classical_bits) != len(SURFACE_ORDER):
         raise ValueError("classical_bits must contain nine surface-data bits.")
 
     normalized_basis = basis.upper()
     if normalized_basis not in {"X", "Z"}:
         raise ValueError("basis must be 'X' or 'Z'.")
 
-    for label, classical_bit in zip(ROTATED_D3_SURFACE_ORDER, classical_bits, strict=False):
+    for label, classical_bit in zip(SURFACE_ORDER, classical_bits, strict=False):
         qubit = registers.surface_data[label][0]
         if normalized_basis == "X":
             circuit.h(qubit)
@@ -446,7 +446,7 @@ def append_surface_logical_pauli_measurement(
     if ancilla_name not in registers.logical_measurement_ancillas:
         raise ValueError(f"registers do not include the {ancilla_name} measurement ancilla.")
 
-    support = ROTATED_D3_LOGICAL_X if normalized_basis == "X" else ROTATED_D3_LOGICAL_Z
+    support = LOGICAL_X if normalized_basis == "X" else LOGICAL_Z
     data_qubits = [registers.surface_data[label][0] for label in support]
     if normalized_basis == "X":
         append_measure_x_parity(
@@ -488,7 +488,7 @@ def append_surface_logical_pauli_destructive(
     if normalized_basis not in {"X", "Z"}:
         raise ValueError("basis must be 'X' or 'Z'.")
 
-    support = ROTATED_D3_LOGICAL_X if normalized_basis == "X" else ROTATED_D3_LOGICAL_Z
+    support = LOGICAL_X if normalized_basis == "X" else LOGICAL_Z
     if len(classical_bits) != len(support):
         raise ValueError(
             f"classical_bits must have {len(support)} entries for destructive measurement."
@@ -615,7 +615,7 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
         add_barriers=add_barriers,
         barrier_label="prepare rotated d3 |+> product state",
     )
-    append_rotated_d3_z_stabilizer_measurements(
+    append_z_stabilizer_measurements(
         circuit,
         surface_qubits=surface_qubits,
         z_ancillas=[qregs.surface_z_ancillas[label][0] for label in SURFACE_Z_ANCILLA_LABELS],
@@ -897,7 +897,7 @@ def raw_surface_logical_readout(
         # Destructive: parity of individual support-qubit bits.
         return sum(logical_dict.values()) % 2
 
-    support = ROTATED_D3_LOGICAL_X if basis.upper() == "X" else ROTATED_D3_LOGICAL_Z
+    support = LOGICAL_X if basis.upper() == "X" else LOGICAL_Z
     return sum(measurements["surface_readout"][label] for label in support) % 2
 
 
