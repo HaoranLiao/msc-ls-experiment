@@ -134,7 +134,7 @@ class RotatedDecoder:
 
         if not all_locs:
             return RotatedRecovery(
-                qubit_label=None, pauli=None, z_deltas=z_dict, x_deltas=x_dict
+                qubit_label=None, pauli=None, z_deltas=z_dict, x_deltas=x_dict,
             )
 
         # Pick one representative qubit for the label (first in patch order)
@@ -148,8 +148,54 @@ class RotatedDecoder:
             pauli = "Z"
 
         return RotatedRecovery(
-            qubit_label=qubit_label, pauli=pauli, z_deltas=z_dict, x_deltas=x_dict
+            qubit_label=qubit_label, pauli=pauli, z_deltas=z_dict, x_deltas=x_dict,
         )
 
+    def update_pauli_frame(
+        self,
+        frame,
+        label: str,
+        *,
+        z_deltas: Mapping[str, int | bool],
+        x_deltas: Mapping[str, int | bool],
+    ) -> RotatedRecovery:
+        """Decode the syndrome, update the Pauli frame, and return the recovery.
 
+        Computes the MWPM correction, determines whether it has a logical-X or
+        logical-Z component (by overlap with the logical representatives), and
+        updates ``frame`` accordingly.
 
+        Parameters
+        ----------
+        frame : PauliFrame
+            The Pauli frame to update.
+        label
+            Logical-qubit label in the frame (e.g. ``"L0"``).
+        z_deltas
+            Change-detected Z-stabilizer outcomes.
+        x_deltas
+            Change-detected X-stabilizer outcomes.
+
+        Returns
+        -------
+        RotatedRecovery
+            The decoded physical recovery (same as calling ``decode``).
+        """
+        z_syn = np.array(
+            [normalize_bit(z_deltas[name]) for name in self.z_stabilizer_names],
+            dtype=np.uint8,
+        )
+        x_syn = np.array(
+            [normalize_bit(x_deltas[name]) for name in self.x_stabilizer_names],
+            dtype=np.uint8,
+        )
+
+        x_correction = self._x_decoder.decode(z_syn)
+        z_correction = self._z_decoder.decode(x_syn)
+
+        # X correction anticommutes with Z_L → logical X flip
+        # Z correction anticommutes with X_L → logical Z flip
+        frame.update_x(label, bool(int(x_correction @ self._z_logical) % 2))
+        frame.update_z(label, bool(int(z_correction @ self._x_logical) % 2))
+
+        return self.decode(z_deltas=z_deltas, x_deltas=x_deltas)

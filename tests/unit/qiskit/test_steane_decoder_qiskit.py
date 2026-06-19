@@ -19,7 +19,6 @@ from qiskit_aer import AerSimulator
 from research_qec_haoran.decoding import (
     PauliFrame,
     SteaneDecoder,
-    SteaneRecovery,
     StabilizerFrame,
 )
 from research_qec_haoran.steane_code.state_injection_qiskit import (
@@ -131,8 +130,9 @@ def _decode_one_syndrome(
     x_raw: tuple[int, ...],
     z_raw: tuple[int, ...],
     stab_frame: StabilizerFrame,
-) -> SteaneRecovery:
-    """Advance the stabilizer frame and decode the change-detected syndrome."""
+    pauli_frame: PauliFrame,
+) -> None:
+    """Advance the stabilizer frame, decode, and update the Pauli frame."""
     x_meas = {label: x_raw[i] for i, label in enumerate(_X_STAB_LABELS)}
     z_meas = {label: z_raw[i] for i, label in enumerate(_Z_STAB_LABELS)}
 
@@ -142,7 +142,9 @@ def _decode_one_syndrome(
     x_syn = tuple(x_deltas[l] for l in _X_STAB_LABELS)
     z_syn = tuple(z_deltas[l] for l in _Z_STAB_LABELS)
 
-    return SteaneDecoder().decode(z_syndrome=z_syn, x_syndrome=x_syn)
+    SteaneDecoder().update_pauli_frame(
+        pauli_frame, "L0", z_syndrome=z_syn, x_syndrome=x_syn,
+    )
 
 
 def _corrected_logical_expectations(
@@ -230,14 +232,11 @@ class TestOneRoundDecodeCorrect:
 
         x_raw, z_raw = _parse_syndrome_bits(bitstring)
 
-        # 2. Decode → Pauli frame.
+        # 2. Decode and update Pauli frame (frame is updated internally by the decoder).
         stab_frame = _init_stab_frame()
-        recovery = _decode_one_syndrome(x_raw, z_raw, stab_frame)
-
         pauli_frame = PauliFrame()
         pauli_frame.register("L0")
-        pauli_frame.update_x("L0", flip=recovery.flips_logical_z)
-        pauli_frame.update_z("L0", flip=recovery.flips_logical_x)
+        _decode_one_syndrome(x_raw, z_raw, stab_frame, pauli_frame)
 
         # 3. Check frame-corrected logical expectations on the post-measurement
         #    statevector. The logical operators are I on ancilla qubits, so the
@@ -333,14 +332,10 @@ class TestTwoRoundDecodeCorrect:
         pauli_frame.register("L0")
 
         x1_raw, z1_raw = _parse_syndrome_bits(syn1_str)
-        recovery1 = _decode_one_syndrome(x1_raw, z1_raw, stab_frame)
-        pauli_frame.update_x("L0", flip=recovery1.flips_logical_z)
-        pauli_frame.update_z("L0", flip=recovery1.flips_logical_x)
+        _decode_one_syndrome(x1_raw, z1_raw, stab_frame, pauli_frame)
 
         x2_raw, z2_raw = _parse_syndrome_bits(syn2_str)
-        recovery2 = _decode_one_syndrome(x2_raw, z2_raw, stab_frame)
-        pauli_frame.update_x("L0", flip=recovery2.flips_logical_z)
-        pauli_frame.update_z("L0", flip=recovery2.flips_logical_x)
+        _decode_one_syndrome(x2_raw, z2_raw, stab_frame, pauli_frame)
 
         # 3. Check frame-corrected logical expectations on the post-measurement
         #    statevector directly from the syndrome circuit.

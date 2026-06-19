@@ -75,18 +75,10 @@ class SteaneRecovery:
         Patch site to apply X correction (detected by Z stabilizers), or None.
     z_correction_site : int | None
         Patch site to apply Z correction (detected by X stabilizers), or None.
-    flips_logical_z : bool
-        Whether the X correction anticommutes with the tracked logical Z
-        (i.e., X correction site is in the default logical Z support).
-    flips_logical_x : bool
-        Whether the Z correction anticommutes with the tracked logical X
-        (i.e., Z correction site is in the default logical X support).
     """
 
     x_correction_site: int | None
     z_correction_site: int | None
-    flips_logical_z: bool
-    flips_logical_x: bool
 
     @property
     def is_trivial(self) -> bool:
@@ -141,19 +133,55 @@ class SteaneDecoder:
         Returns
         -------
         SteaneRecovery
-            The decoded correction and its logical effect.
+            The decoded correction.
         """
         x_site = _Z_SYNDROME_TABLE.get(z_syndrome)
         z_site = _X_SYNDROME_TABLE.get(x_syndrome)
 
-        flips_z = x_site is not None and x_site in self._logical_z_set
-        flips_x = z_site is not None and z_site in self._logical_x_set
-
         return SteaneRecovery(
             x_correction_site=x_site,
             z_correction_site=z_site,
-            flips_logical_z=flips_z,
-            flips_logical_x=flips_x,
         )
+
+    def update_pauli_frame(
+        self,
+        frame,
+        label: str,
+        *,
+        z_syndrome: tuple[int, int, int],
+        x_syndrome: tuple[int, int, int],
+    ) -> SteaneRecovery:
+        """Decode the syndrome, update the Pauli frame, and return the recovery.
+
+        An X correction on a site in the logical-Z support anticommutes with
+        Z_L, producing a logical X flip. A Z correction on a site in the
+        logical-X support anticommutes with X_L, producing a logical Z flip.
+
+        Parameters
+        ----------
+        frame : PauliFrame
+            The Pauli frame to update.
+        label
+            Logical-qubit label in the frame (e.g. ``"L0"``).
+        z_syndrome
+            3-bit Z-stabilizer change-detected outcomes.
+        x_syndrome
+            3-bit X-stabilizer change-detected outcomes.
+
+        Returns
+        -------
+        SteaneRecovery
+            The decoded correction.
+        """
+        recovery = self.decode(z_syndrome=z_syndrome, x_syndrome=x_syndrome)
+
+        # X correction anticommutes with Z_L → logical X flip
+        if recovery.x_correction_site is not None:
+            frame.update_x(label, recovery.x_correction_site in self._logical_z_set)
+        # Z correction anticommutes with X_L → logical Z flip
+        if recovery.z_correction_site is not None:
+            frame.update_z(label, recovery.z_correction_site in self._logical_x_set)
+
+        return recovery
 
 
