@@ -18,9 +18,10 @@ from qiskit_aer import AerSimulator
 
 from research_qec_haoran.decoding import (
     PauliFrame,
-    SteaneDecoder,
     StabilizerFrame,
+    SteaneDecoder,
 )
+from research_qec_haoran.noise import append_pauli_faults
 from research_qec_haoran.steane_code.state_injection_qiskit import (
     NUM_PATCH_QUBITS,
     PATCH_DATA_SITES,
@@ -32,7 +33,7 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     append_patch_stabilizer_measurement,
     append_patch_steane_state_injection_encoder,
 )
-from research_qec_haoran.noise import append_pauli_faults
+from research_qec_haoran.utils.normalize import parse_qiskit_bitstring
 
 TOLERANCE = 1e-10
 
@@ -42,6 +43,7 @@ _X_STAB_LABELS = tuple(
 _Z_STAB_LABELS = tuple(
     f"Z_{''.join(str(s) for s in support)}" for support in PATCH_Z_STABILIZERS
 )
+_SYNDROME_BIT_LABELS = ("x0", "x1", "x2", "z0", "z1", "z2")
 
 # (⟨Z_L⟩, ⟨X_L⟩) for each injected state.
 _inv_sqrt2 = 1.0 / math.sqrt(2)
@@ -122,8 +124,11 @@ def _init_stab_frame() -> StabilizerFrame:
 
 def _parse_syndrome_bits(syn_str: str) -> tuple[tuple[int, ...], tuple[int, ...]]:
     """Parse a 6-char syndrome chunk into (x_raw, z_raw) tuples."""
-    bits = [int(b) for b in reversed(syn_str)]
-    return tuple(bits[0:3]), tuple(bits[3:6])
+    bits = parse_qiskit_bitstring(syn_str, _SYNDROME_BIT_LABELS)
+    return (
+        tuple(bits[label] for label in _SYNDROME_BIT_LABELS[:3]),
+        tuple(bits[label] for label in _SYNDROME_BIT_LABELS[3:]),
+    )
 
 
 def _decode_one_syndrome(
@@ -139,8 +144,8 @@ def _decode_one_syndrome(
     x_deltas = stab_frame.advance(x_meas)
     z_deltas = stab_frame.advance(z_meas)
 
-    x_syn = tuple(x_deltas[l] for l in _X_STAB_LABELS)
-    z_syn = tuple(z_deltas[l] for l in _Z_STAB_LABELS)
+    x_syn = tuple(x_deltas[label] for label in _X_STAB_LABELS)
+    z_syn = tuple(z_deltas[label] for label in _Z_STAB_LABELS)
 
     SteaneDecoder().update_pauli_frame(
         pauli_frame, "L0", z_syndrome=z_syn, x_syndrome=x_syn,
