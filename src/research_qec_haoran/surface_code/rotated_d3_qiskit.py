@@ -14,7 +14,6 @@ from matplotlib.axes import Axes
 from matplotlib.patches import Rectangle
 from qiskit import QuantumCircuit
 
-
 # ---------------------------------------------------------------------------
 # Patch geometry
 # ---------------------------------------------------------------------------
@@ -244,9 +243,13 @@ def _append_parallel_stabilizer_measurements(
     stabilizer_names = tuple(schedules)
     n = len(stabilizer_names)
     if len(ancilla_list) < n:
-        raise ValueError(f"{basis}-check requires at least {n} ancilla qubits, got {len(ancilla_list)}.")
+        raise ValueError(
+            f"{basis}-check requires at least {n} ancilla qubits, got {len(ancilla_list)}."
+        )
     if len(classical_list) < n:
-        raise ValueError(f"{basis}-check requires at least {n} classical bits, got {len(classical_list)}.")
+        raise ValueError(
+            f"{basis}-check requires at least {n} classical bits, got {len(classical_list)}."
+        )
 
     if prepare_ancillas:
         reset_to_zero(circuit, qubits=ancilla_list, add_barriers=False)
@@ -433,7 +436,8 @@ def append_logical_measurement(
     if destructive:
         if len(cb) < len(support):
             raise ValueError(
-                f"classical_bits must have at least {len(support)} entries for destructive measurement."
+                "classical_bits must have at least "
+                f"{len(support)} entries for destructive measurement."
             )
         if basis == "X":
             for label in support:
@@ -444,7 +448,9 @@ def append_logical_measurement(
         if ancilla_qubit is None:
             raise ValueError("ancilla_qubit is required for non-destructive measurement.")
         if len(cb) < 1:
-            raise ValueError("classical_bits must have at least 1 entry for non-destructive measurement.")
+            raise ValueError(
+                "classical_bits must have at least 1 entry for non-destructive measurement."
+            )
         if basis == "Z":
             for label in support:
                 circuit.cx(l2q[label], ancilla_qubit)
@@ -455,5 +461,4 @@ def append_logical_measurement(
                 circuit.cx(ancilla_qubit, l2q[label])
             circuit.h(ancilla_qubit)
             circuit.measure(ancilla_qubit, cb[0])
-
 
