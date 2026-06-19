@@ -27,14 +27,14 @@ from research_qec_haoran.surface_code.rotated_d3_qiskit import (
     X_STABILIZERS,
     Z_STABILIZER_CENTERS,
     Z_STABILIZERS,
-    label2qubit,
     append_logical_measurement,
     append_stabilizer_round,
     append_x_stabilizer_measurements,
     append_z_stabilizer_measurements,
+    label2qubit,
     prepare_plus,
-    reset_to_zero,
 )
+from research_qec_haoran.utils.normalize import parse_qiskit_registers
 
 # ===========================================================================
 # Shared constants
@@ -154,7 +154,7 @@ class TestPatchGeometry:
             assert label in SURFACE_ORDER
 
     def test_logical_z_representatives_recovered_from_stabilizer_products(self) -> None:
-        """Multiplying all combinations of Z-stabilizers onto DEFAULT_LOGICAL_Z recovers LOGICAL_Z_REPRESENTATIVES."""
+        """Stabilizer products recover all logical-Z representatives."""
         from itertools import combinations
         z_stab_supports = [frozenset(s) for s in Z_STABILIZERS.values()]
         default = frozenset(DEFAULT_LOGICAL_Z)
@@ -169,7 +169,7 @@ class TestPatchGeometry:
         assert generated == expected
 
     def test_logical_x_representatives_recovered_from_stabilizer_products(self) -> None:
-        """Multiplying all combinations of X-stabilizers onto DEFAULT_LOGICAL_X recovers LOGICAL_X_REPRESENTATIVES."""
+        """Stabilizer products recover all logical-X representatives."""
         from itertools import combinations
         x_stab_supports = [frozenset(s) for s in X_STABILIZERS.values()]
         default = frozenset(DEFAULT_LOGICAL_X)
@@ -290,7 +290,10 @@ class TestLogicalZeroPreparation:
         assert self._measure_logical_nondestructive("Z", support) == pytest.approx(1.0, abs=1e-10)
 
     @pytest.mark.parametrize("support", LOGICAL_X_REPRESENTATIVES)
-    def test_nondestructive_x_measurement_expectation_is_zero(self, support: tuple[str, ...]) -> None:
+    def test_nondestructive_x_measurement_expectation_is_zero(
+        self,
+        support: tuple[str, ...],
+    ) -> None:
         """Non-destructive X_L on |0_L⟩: ancilla Z expectation = 0."""
         assert self._measure_logical_nondestructive("X", support) == pytest.approx(0.0, abs=1e-10)
 
@@ -429,7 +432,10 @@ class TestLogicalPlusPreparation:
         assert self._measure_logical_nondestructive("X", support) == pytest.approx(1.0, abs=1e-10)
 
     @pytest.mark.parametrize("support", LOGICAL_Z_REPRESENTATIVES)
-    def test_nondestructive_z_measurement_expectation_is_zero(self, support: tuple[str, ...]) -> None:
+    def test_nondestructive_z_measurement_expectation_is_zero(
+        self,
+        support: tuple[str, ...],
+    ) -> None:
         """Non-destructive Z_L on |+_L⟩: ancilla Z expectation = 0."""
         assert self._measure_logical_nondestructive("Z", support) == pytest.approx(0.0, abs=1e-10)
 
@@ -510,13 +516,15 @@ class TestSingleFaultDecoding:
         )
 
         # Step 4: Run and parse.
-        raw = next(iter(sim.run(qc, shots=1).result().get_counts())).replace(" ", "")
-        offset = len(raw)
-        parsed = {}
-        for reg_name, labels in [("init_z", Z_NAMES), ("det_z", Z_NAMES), ("det_x", X_NAMES)]:
-            offset -= len(labels)
-            chunk = raw[offset:offset + len(labels)]
-            parsed[reg_name] = {lbl: int(b) for lbl, b in zip(labels, reversed(chunk))}
+        raw = next(iter(sim.run(qc, shots=1).result().get_counts()))
+        parsed = parse_qiskit_registers(
+            raw,
+            (
+                ("init_z", Z_NAMES),
+                ("det_z", Z_NAMES),
+                ("det_x", X_NAMES),
+            ),
+        )
 
         # Step 5: Compute change-detected syndrome via StabilizerFrame.
         frame = StabilizerFrame()
@@ -550,7 +558,11 @@ class TestSingleFaultDecoding:
 
     @pytest.mark.parametrize("qubit_label", SURFACE_ORDER)
     @pytest.mark.parametrize("pauli", ["X", "Y", "Z"])
-    def test_decoded_recovery_is_nontrivial_and_consistent(self, pauli: str, qubit_label: str) -> None:
+    def test_decoded_recovery_is_nontrivial_and_consistent(
+        self,
+        pauli: str,
+        qubit_label: str,
+    ) -> None:
         """
         Decoded recovery is non-trivial and its syndrome matches the fault.
 
@@ -626,23 +638,21 @@ class TestSingleFaultDecoding:
         )
 
         # Step 5: Run and parse all registers.
-        raw = next(iter(sim.run(qc, shots=1).result().get_counts())).replace(" ", "")
-        offset = len(raw)
-        parsed = {}
-        for reg_name, width in [
-            ("init_z", NUM_Z_ANCILLAS),
-            ("det_z", NUM_Z_ANCILLAS),
-            ("det_x", NUM_X_ANCILLAS),
-            ("log_x", len(DEFAULT_LOGICAL_X)),
-        ]:
-            offset -= width
-            chunk = raw[offset:offset + width]
-            parsed[reg_name] = chunk
+        raw = next(iter(sim.run(qc, shots=1).result().get_counts()))
+        parsed = parse_qiskit_registers(
+            raw,
+            (
+                ("init_z", Z_NAMES),
+                ("det_z", Z_NAMES),
+                ("det_x", X_NAMES),
+                ("log_x", DEFAULT_LOGICAL_X),
+            ),
+        )
 
         # Parse syndrome registers.
-        init_z = {lbl: int(b) for lbl, b in zip(Z_NAMES, reversed(parsed["init_z"]))}
-        det_z = {lbl: int(b) for lbl, b in zip(Z_NAMES, reversed(parsed["det_z"]))}
-        det_x = {lbl: int(b) for lbl, b in zip(X_NAMES, reversed(parsed["det_x"]))}
+        init_z = parsed["init_z"]
+        det_z = parsed["det_z"]
+        det_x = parsed["det_x"]
 
         # Step 6: Compute change-detected syndrome.
         stab_frame = StabilizerFrame()
@@ -668,8 +678,7 @@ class TestSingleFaultDecoding:
         )
 
         # Step 9: Compute raw logical X readout (parity of destructive measurement).
-        log_bits = [int(b) for b in reversed(parsed["log_x"])]
-        raw_logical_x = sum(log_bits) % 2
+        raw_logical_x = sum(parsed["log_x"].values()) % 2
 
         # Step 10: Apply Pauli frame to get corrected readout.
         corrected = pauli_frame.interpret_x_readout("L0", raw_logical_x)
@@ -733,25 +742,20 @@ class TestMultiRoundFaultDecoding:
         )
 
         # Run.
-        raw = next(iter(sim.run(qc, shots=1).result().get_counts())).replace(" ", "")
+        raw = next(iter(sim.run(qc, shots=1).result().get_counts()))
 
         # Parse all registers (right-to-left in Qiskit bitstring order).
-        offset = len(raw)
         reg_order = (
-            [("init_z", NUM_Z_ANCILLAS)]
-            + [(f"z_r{i}", NUM_Z_ANCILLAS) for i in range(n_rounds)]
-            + [(f"x_r{i}", NUM_X_ANCILLAS) for i in range(n_rounds)]
-            + [("log_x", len(DEFAULT_LOGICAL_X))]
+            [("init_z", Z_NAMES)]
+            + [(f"z_r{i}", Z_NAMES) for i in range(n_rounds)]
+            + [(f"x_r{i}", X_NAMES) for i in range(n_rounds)]
+            + [("log_x", DEFAULT_LOGICAL_X)]
         )
-        parsed: dict[str, str] = {}
-        for reg_name, width in reg_order:
-            offset -= width
-            parsed[reg_name] = raw[offset:offset + width]
+        parsed = parse_qiskit_registers(raw, reg_order)
 
         # Decode all rounds with StabilizerFrame + PauliFrame.
         stab_frame = StabilizerFrame()
-        init_z = {lbl: int(b) for lbl, b in zip(Z_NAMES, reversed(parsed["init_z"]))}
-        stab_frame.record_many(init_z)
+        stab_frame.record_many(parsed["init_z"])
         stab_frame.record_many({name: 0 for name in X_NAMES})
 
         decoder = RotatedDecoder(
@@ -765,10 +769,7 @@ class TestMultiRoundFaultDecoding:
         pauli_frame.register("L0")
 
         for i in range(n_rounds):
-            det_z = {lbl: int(b) for lbl, b in zip(Z_NAMES, reversed(parsed[f"z_r{i}"]))}
-            det_x = {lbl: int(b) for lbl, b in zip(X_NAMES, reversed(parsed[f"x_r{i}"]))}
-
-            all_det = {**det_z, **det_x}
+            all_det = {**parsed[f"z_r{i}"], **parsed[f"x_r{i}"]}
             deltas = stab_frame.compare_many(all_det, update=True)
             z_deltas = {name: deltas[name] for name in Z_NAMES}
             x_deltas = {name: deltas[name] for name in X_NAMES}
@@ -776,8 +777,7 @@ class TestMultiRoundFaultDecoding:
             decoder.update_pauli_frame(pauli_frame, "L0", z_deltas=z_deltas, x_deltas=x_deltas)
 
         # Frame-corrected logical readout.
-        log_bits = [int(b) for b in reversed(parsed["log_x"])]
-        raw_logical_x = sum(log_bits) % 2
+        raw_logical_x = sum(parsed["log_x"].values()) % 2
         return pauli_frame.interpret_x_readout("L0", raw_logical_x)
 
     @pytest.mark.parametrize("n_rounds", [1, 3, 5])
@@ -791,6 +791,4 @@ class TestMultiRoundFaultDecoding:
         assert corrected == 0, (
             f"{pauli}_{qubit_label} x{n_rounds}: frame-corrected X_L = {corrected}, expected 0"
         )
-
-
 
