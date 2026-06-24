@@ -147,28 +147,28 @@ class TestKickbackTomographyCountsParsing:
 
         good_success = bitstring_with()
         good_error = bitstring_with(measure, measure_site_check, check, check_site_check)
-        rejected_mismatch = bitstring_with(measure, measure_site_check)
+        disagreement_error = bitstring_with(measure, measure_site_check)
         rejected_detector = bitstring_with(helper)
 
         counts = {
             good_success: 7,
             good_error: 3,
-            rejected_mismatch: 5,
+            disagreement_error: 5,
             rejected_detector: 11,
         }
 
         accepted = postselect_kickback_tomography_counts(counts, layout)
         summary = summarize_kickback_tomography_counts(counts, layout)
 
-        assert accepted == {good_success: 7, good_error: 3}
+        assert accepted == {good_success: 7, good_error: 3, disagreement_error: 5}
         assert summary == KickbackTomographySummary(
             total_shots=26,
-            accepted_shots=10,
-            rejected_shots=16,
+            accepted_shots=15,
+            rejected_shots=11,
             logical_success_shots=7,
-            logical_error_shots=3,
+            logical_error_shots=8,
         )
-        assert summary.logical_error_probability == pytest.approx(0.3)
+        assert summary.logical_error_probability == pytest.approx(8 / 15)
 
 
 # =============================================================================

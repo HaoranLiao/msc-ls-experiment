@@ -379,9 +379,14 @@ def kickback_tomography_shot_is_accepted(
     bitstring: str,
     layout: KickbackTomographyBitLayout,
     *,
-    require_check_agreement: bool = True,
+    require_check_agreement: bool = False,
 ) -> bool:
-    """Return whether one KT shot passes all postselection checks."""
+    """Return whether one KT shot passes detector postselection.
+
+    The two KT roots are not required to agree by default.  A disagreement is
+    kept and counted as a logical-error event by
+    :func:`summarize_kickback_tomography_counts`.
+    """
 
     if not detector_bits_are_zero(bitstring, layout.detector_positions):
         return False
@@ -412,9 +417,9 @@ def postselect_kickback_tomography_counts(
     counts: dict[str, int],
     layout: KickbackTomographyBitLayout,
     *,
-    require_check_agreement: bool = True,
+    require_check_agreement: bool = False,
 ) -> dict[str, int]:
-    """Filter counts to shots accepted by KT postselection."""
+    """Filter counts to shots accepted by KT detector postselection."""
 
     return {
         bitstring: count
@@ -431,13 +436,15 @@ def summarize_kickback_tomography_counts(
     counts: dict[str, int],
     layout: KickbackTomographyBitLayout,
     *,
-    require_check_agreement: bool = True,
+    require_check_agreement: bool = False,
 ) -> KickbackTomographySummary:
     """Summarize KT retainment and logical error from Qiskit counts.
 
-    The KT logical outcome is the folded-observable bit of the tomography
-    measurement round. Outcome 0 is the desired +1 Hadamard-axis result; outcome
-    1 is counted as logical error after all detectors pass.
+    A no-error KT shot has both tomography roots equal to 0 after all detectors
+    pass. If the measurement and check roots disagree, the shot is not discarded;
+    it is counted as a logical-error shot, matching KT's role as a noisy
+    metrology circuit whose reported error includes undetected logical faults
+    and measurement faults.
     """
 
     total_shots = sum(counts.values())
@@ -454,7 +461,8 @@ def summarize_kickback_tomography_counts(
 
         accepted_shots += count
         measurement = bit_value(bitstring, layout.tomography_measurement.folded_observable)
-        if measurement:
+        check = bit_value(bitstring, layout.tomography_check.folded_observable)
+        if measurement or check:
             logical_error_shots += count
 
     return KickbackTomographySummary(
