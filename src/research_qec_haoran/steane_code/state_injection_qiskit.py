@@ -6,9 +6,10 @@ from typing import Literal
 from qiskit import QuantumCircuit
 from qiskit.circuit import Qubit
 
-from research_qec_haoran.utils.gates import apply_ty
+from research_qec_haoran.utils.circuit import apply_ty
 
 InjectedStateName = Literal["0", "1", "+", "-", "i", "-i", "Y+", "Y-", "S", "T", "Tdg", "H"]
+PatchCrumbleGateName = Literal["h", "cz"]
 
 # Steane [[7,1,3]] qubit layout (Fano plane in triangular form):
 #
@@ -406,6 +407,65 @@ PATCH_LOGICAL_Z_REPRESENTATIVES: tuple[tuple[int, ...], ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Rosenfeld/Crumble encoder schedule mapped to this 11-site patch
+# ---------------------------------------------------------------------------
+
+# Original Crumble site 5 maps to patch site 4, the center data site.  In the
+# Hirano-labeled view used by lattice surgery, this is color-code label "0".
+PATCH_CRUMBLE_INJECTION_SITE: int = 4
+
+# Crumble URL gate schedule mapped into repo patch labels.  The URL's initial
+# H[injection] and I[injection] on original site 5 (patch site 4) are replaced
+# by whatever physical state we want to inject into the logical state; this
+# preparation is not part of the encoder layers below.
+PATCH_CRUMBLE_ENCODER_LAYERS: tuple[tuple[PatchCrumbleGateName, tuple], ...] = (
+    ("h", (8, 3, 6, 1, 0, 2, 5)),
+    ("cz", ((3, 1), (6, 4), (0, 2))),
+    ("h", (6, 9, 0)),
+    ("cz", ((6, 9),)),
+    ("h", (9, 4, 7)),
+    ("cz", ((3, 6), (9, 7), (1, 4))),
+    ("h", (6, 7)),
+    ("cz", ((6, 9), (4, 7))),
+    ("h", (7,)),
+    ("cz", ((8, 6), (7, 5))),
+    ("h", (6, 9, 1, 7, 10)),
+    ("cz", ((3, 6), (9, 7))),
+    ("cz", ((6, 4), (1, 0), (7, 10))),
+    ("h", (1, 10, 5)),
+    ("cz", ((3, 1), (6, 9), (4, 7), (2, 5))),
+    ("h", (3, 6, 9, 7, 2, 5)),
+    ("cz", ((8, 6), (1, 4), (7, 10), (0, 2))),
+    ("h", (6, 1, 4, 7, 2)),
+)
+
+
+def _append_patch_crumble_encoder_layers(
+    circuit: QuantumCircuit,
+    *,
+    patch_qubits: Sequence,
+    add_barriers: bool,
+) -> None:
+    """Append the Crumble CZ/H encoder layers to the circuit.
+
+    These layers do not include preparation of the arbitrary physical state on
+    the injection site; that must be done separately before calling this helper.
+    """
+    for gate_name, operands in PATCH_CRUMBLE_ENCODER_LAYERS:
+        if gate_name == "h":
+            for site in operands:
+                circuit.h(patch_qubits[site])
+        elif gate_name == "cz":
+            for site_a, site_b in operands:
+                circuit.cz(patch_qubits[site_a], patch_qubits[site_b])
+        else:  # pragma: no cover - defensive if the static schedule is edited.
+            raise ValueError(f"Unsupported Crumble injection gate: {gate_name!r}")
+
+        if add_barriers:
+            circuit.barrier()
+
+
+# ---------------------------------------------------------------------------
 # Encoder on the 11-site patch
 # ---------------------------------------------------------------------------
 
@@ -446,6 +506,74 @@ def append_patch_steane_state_injection_encoder(
     circuit.compose(encoder, qubits=data_qubits, inplace=True)
     if add_barriers:
         circuit.barrier(label="state injection")
+
+
+def append_patch_steane_state_injection_encoder_crumble_sequences(
+    circuit: QuantumCircuit,
+    *,
+    patch_qubits: Sequence,
+    injected_state: InjectedStateName = "H",
+    helper_classical_bits: Sequence | None = None,
+    add_barriers: bool = True,
+) -> QuantumCircuit:
+    """Append the Crumble nearest-neighbor Steane encoder on the 11-site patch.
+
+    This replays Rosenfeld et al.'s Crumble state-injection schedule after
+    mapping every site into this repo's 11-site patch labels.  Unlike
+    ``append_patch_steane_state_injection_encoder``, this schedule uses all four
+    helper sites for nearest-neighbor routing.
+
+    After the encoder layers the four helper sites should be in |0⟩.  When
+    ``helper_classical_bits`` is provided the helpers are measured into those
+    bits so the caller can postselect on all-zero outcomes.
+
+    Parameters
+    ----------
+    circuit
+        Circuit being modified.
+    patch_qubits
+        Eleven Qiskit qubits indexed by the 11-site patch labels.
+    injected_state
+        The physical one-qubit state to inject on patch site 4, the center data
+        site corresponding to Hirano label ``0``.
+    helper_classical_bits
+        Four classical bits for the helper-site measurements.  When ``None``
+        (default) the helper sites are not measured.
+    add_barriers
+        Whether to keep Crumble tick-layer barriers.
+
+    Returns
+    -------
+    QuantumCircuit
+        The same circuit object, after appending the encoder.
+    """
+    if len(patch_qubits) < 11:
+        raise ValueError("patch_qubits must contain at least 11 qubits.")
+    if helper_classical_bits is not None and len(helper_classical_bits) < len(PATCH_HELPER_SITES):
+        raise ValueError(
+            f"helper_classical_bits must contain at least {len(PATCH_HELPER_SITES)} bits."
+        )
+
+    q = list(patch_qubits)
+
+    prepare_physical_state(circuit, q[PATCH_CRUMBLE_INJECTION_SITE], injected_state)
+    if add_barriers:
+        circuit.barrier(label="crumble injection input")
+
+    _append_patch_crumble_encoder_layers(
+        circuit,
+        patch_qubits=q,
+        add_barriers=add_barriers,
+    )
+    if add_barriers:
+        circuit.barrier(label="crumble state injection")
+
+    if helper_classical_bits is not None:
+        hcb = list(helper_classical_bits)
+        for i, site in enumerate(PATCH_HELPER_SITES):
+            circuit.measure(q[site], hcb[i])
+
+    return circuit
 
 
 # ---------------------------------------------------------------------------
