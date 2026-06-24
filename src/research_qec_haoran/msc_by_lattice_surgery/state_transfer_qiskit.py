@@ -37,6 +37,42 @@ repo:
 
 The parser mirrors this order.  It exposes raw register chunks as well as
 semantic dictionaries so notebook code and tests can inspect every stage.
+
+Layout conventions
+------------------
+The public transfer circuit uses Hirano-style labels in its Qiskit registers.
+The Steane/color-code part is drawn in the same orientation as Fig. 6:
+
+        6
+     4     2
+        0
+     1  5  3
+
+The repo's 11-site Steane cultivation patch has the same data-qubit shape but
+also includes four helper sites.  Square brackets show the Hirano data label
+stored at each patch site:
+
+             0[6]
+
+        1[h1]   2[h2]
+
+    3[4]   4[0]   5[2]
+
+        6[h6]   7[h7]
+
+    8[1]   9[5]   10[3]
+
+The rotated distance-3 surface patch is the top-left 3-by-3 portion of the
+paper's distance-5 target:
+
+    a  b  c
+    d  e  f
+    g  h  i
+
+During the merged-boundary interval, the Steane bottom edge ``1,5,3`` sits
+above the surface top edge ``a,b,c``.  This distance-3 adaptation keeps the
+merged checks ``Z1a`` and ``Z35bc``; the paper's extra ``Zde`` check belongs to
+the distance-5 target and is not present here.
 """
 
 from __future__ import annotations
@@ -142,7 +178,18 @@ LOCAL_X_AB_CORRELATION_CHECKS: dict[str, tuple[str, ...]] = {
 # ===========================================================================
 
 # Map the repo's 11-site cultivation patch labels onto Hirano's 7 color-code
-# data labels.
+# data labels.  The data rows match the paper's orientation:
+#
+#     Hirano data labels:             Repo patch sites:
+#
+#             6                              0
+#          4     2                        3     5
+#             0                              4
+#          1  5  3                        8  9  10
+#
+# The full 11-site patch additionally has helper sites 1, 2, 6, and 7 between
+# those rows.  These helpers are kept in separate one-qubit registers named
+# h1, h2, h6, and h7.
 
 # Taken from magic_state_cultivation_qiskit.py:
 # The physical sites are labeled as
