@@ -8,7 +8,7 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     InjectedStateName,
     append_patch_steane_state_injection_encoder,
 )
-from research_qec_haoran.utils.gates import apply_ty, apply_ty_dagger
+from research_qec_haoran.utils.circuit import apply_ty, apply_ty_dagger
 from research_qec_haoran.utils.normalize import qiskit_bit_value
 
 # =============================================================================
