@@ -15,10 +15,7 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     LOGICAL_Z_REPRESENTATIVES,
     NUM_PATCH_QUBITS,
     PATCH_CRUMBLE_ENCODER_LAYERS,
-    PATCH_CRUMBLE_INJECTION_SITE,
     PATCH_DATA_SITES,
-    PATCH_DEFAULT_LOGICAL_X,
-    PATCH_DEFAULT_LOGICAL_Z,
     PATCH_HELPER_SITES,
     PATCH_LOGICAL_X_REPRESENTATIVES,
     PATCH_LOGICAL_Z_REPRESENTATIVES,
@@ -35,8 +32,8 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     append_stabilizer_measurement,
     build_steane_state_injection_encoder,
 )
-from research_qec_haoran.utils.normalize import parse_qiskit_bitstring
 from research_qec_haoran.utils.circuit import ibm_backend_available, two_qubit_depth
+from research_qec_haoran.utils.normalize import parse_qiskit_bitstring
 
 NUM_DATA_QUBITS = 7
 TOLERANCE = 1e-10
@@ -357,7 +354,9 @@ def test_patch_logical_z_expectation(state: InjectedStateName, encoder: str) -> 
     """Verify ⟨Z_L⟩ on 11-site patch for all mapped representatives."""
     expected_z, _ = _expected_logical_expectation_values(state)
     for rep in PATCH_LOGICAL_Z_REPRESENTATIVES:
-        measured_z = _patch_measure_logical_expectation_destructive(state, "Z", support=rep, encoder=encoder)
+        measured_z = _patch_measure_logical_expectation_destructive(
+            state, "Z", support=rep, encoder=encoder,
+        )
         assert measured_z == pytest.approx(expected_z, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: ⟨Z_L⟩ expected {expected_z:.4f}, got {measured_z:.4f}"
         )
@@ -369,7 +368,9 @@ def test_patch_logical_x_expectation(state: InjectedStateName, encoder: str) -> 
     """Verify ⟨X_L⟩ on 11-site patch for all mapped representatives."""
     _, expected_x = _expected_logical_expectation_values(state)
     for rep in PATCH_LOGICAL_X_REPRESENTATIVES:
-        measured_x = _patch_measure_logical_expectation_destructive(state, "X", support=rep, encoder=encoder)
+        measured_x = _patch_measure_logical_expectation_destructive(
+            state, "X", support=rep, encoder=encoder,
+        )
         assert measured_x == pytest.approx(expected_x, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: ⟨X_L⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
         )
@@ -419,7 +420,9 @@ def test_patch_logical_z_via_measurement_circuit(state: InjectedStateName, encod
     """Verify ⟨Z_anc⟩ after non-destructive Z_L on patch for all representatives."""
     expected_z, _ = _expected_logical_expectation_values(state)
     for rep in PATCH_LOGICAL_Z_REPRESENTATIVES:
-        measured_z = _patch_measure_logical_expectation_non_destructive(state, "Z", support=rep, encoder=encoder)
+        measured_z = _patch_measure_logical_expectation_non_destructive(
+            state, "Z", support=rep, encoder=encoder,
+        )
         assert measured_z == pytest.approx(expected_z, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: "
             f"⟨Z_anc⟩ expected {expected_z:.4f}, got {measured_z:.4f}"
@@ -432,7 +435,9 @@ def test_patch_logical_x_via_measurement_circuit(state: InjectedStateName, encod
     """Verify ⟨Z_anc⟩ after non-destructive X_L on patch for all representatives."""
     _, expected_x = _expected_logical_expectation_values(state)
     for rep in PATCH_LOGICAL_X_REPRESENTATIVES:
-        measured_x = _patch_measure_logical_expectation_non_destructive(state, "X", support=rep, encoder=encoder)
+        measured_x = _patch_measure_logical_expectation_non_destructive(
+            state, "X", support=rep, encoder=encoder,
+        )
         assert measured_x == pytest.approx(expected_x, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: "
             f"⟨Z_anc⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
@@ -633,10 +638,17 @@ class TestPatchSyndromeExtraction:
     @pytest.mark.parametrize("encoder", _PATCH_ENCODERS)
     @pytest.mark.parametrize("state", ["0", "T", "H"])
     @pytest.mark.parametrize("faults", _SINGLE_FAULTS, ids=_SINGLE_IDS)
-    def test_single_fault(self, state: InjectedStateName, faults: list[tuple[str, int]], encoder: str) -> None:
+    def test_single_fault(
+        self,
+        state: InjectedStateName,
+        faults: list[tuple[str, int]],
+        encoder: str,
+    ) -> None:
         """Single-qubit fault produces the correct unique syndrome."""
         expected_x, expected_z = _expected_patch_syndrome(faults)
-        measured_x, measured_z = _build_and_run_patch_syndrome(faults, injected_state=state, encoder=encoder)
+        measured_x, measured_z = _build_and_run_patch_syndrome(
+            faults, injected_state=state, encoder=encoder,
+        )
         pauli, site = faults[0]
         assert (measured_x, measured_z) == (expected_x, expected_z), (
             f"State {state!r}, {pauli}@{site}: "
@@ -654,7 +666,9 @@ class TestPatchSyndromeExtraction:
     ) -> None:
         """Two same-Pauli faults: syndrome is XOR of individual syndromes."""
         expected_x, expected_z = _expected_patch_syndrome(faults)
-        measured_x, measured_z = _build_and_run_patch_syndrome(faults, injected_state=state, encoder=encoder)
+        measured_x, measured_z = _build_and_run_patch_syndrome(
+            faults, injected_state=state, encoder=encoder,
+        )
         p, s1, s2 = faults[0][0], faults[0][1], faults[1][1]
         assert (measured_x, measured_z) == (expected_x, expected_z), (
             f"State {state!r}, {p}{p}@{s1},{s2}: "
@@ -672,7 +686,9 @@ class TestPatchSyndromeExtraction:
     ) -> None:
         """Two different-Pauli faults: X and Z sectors detect independently."""
         expected_x, expected_z = _expected_patch_syndrome(faults)
-        measured_x, measured_z = _build_and_run_patch_syndrome(faults, injected_state=state, encoder=encoder)
+        measured_x, measured_z = _build_and_run_patch_syndrome(
+            faults, injected_state=state, encoder=encoder,
+        )
         p1, s1 = faults[0]
         p2, s2 = faults[1]
         assert (measured_x, measured_z) == (expected_x, expected_z), (
