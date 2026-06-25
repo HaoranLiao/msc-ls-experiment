@@ -154,6 +154,21 @@ STEANE_LS_VERIFICATION_LABELS: tuple[str, ...] = tuple(
     name for name, _, _ in STEANE_LS_VERIFICATION_CHECKS
 )
 
+# Map each verification check to the patch helper site used as its ancilla.
+# The helpers sit at the geometric center of the corresponding Steane face:
+#   Z0145 (Hirano 0,1,4,5 = patch 4,8,3,9) → h6 (patch site 6)
+#   Z0235 (Hirano 0,2,3,5 = patch 4,5,10,9) → h7 (patch site 7)
+#   X0235 (same support) → h7
+#   Z0246 (Hirano 0,2,4,6 = patch 4,5,3,0) → h2 (patch site 2)
+#   X0246 (same support) → h2
+STEANE_LS_VERIFICATION_ANCILLA_HELPER: dict[str, str] = {
+    "Z0145": "h6",
+    "Z0235": "h7",
+    "X0235": "h7",
+    "Z0246": "h2",
+    "X0246": "h2",
+}
+
 # Supports used after Steane demolition.  ``X0145`` is listed separately so it
 # can be combined with the recovered surface ``X_ab`` bit into ``X0145ab``.
 STEANE_X_RECONSTRUCTED_CHECKS: dict[str, tuple[str, ...]] = {
@@ -253,7 +268,8 @@ class HiranoLabeledQRegs:
     one-qubit registers by protocol role:
 
     - Steane data/helper registers hold the 11-site cultivation patch.
-    - Steane verification ancillas measure color-code checks during surgery.
+      The helper sites (h1, h2, h6, h7) also serve as ancillas for Steane
+      stabilizer measurements and LS verification checks.
     - Surface data and ancillas hold the rotated d=3 target patch.
     - Merge ancillas measure boundary ``ZZ`` checks.
     - Logical-measurement ancillas are optional readout helpers.
@@ -261,7 +277,6 @@ class HiranoLabeledQRegs:
 
     steane_data: dict[str, QuantumRegister]
     steane_helpers: dict[str, QuantumRegister]
-    steane_verification_ancillas: dict[str, QuantumRegister]
     surface_data: dict[str, QuantumRegister]
     surface_z_ancillas: dict[str, QuantumRegister]
     surface_x_ancillas: dict[str, QuantumRegister]
@@ -284,7 +299,6 @@ class ClassicalRegisterSpec:
 
 def build_hirano_labeled_qregs(
     *,
-    include_steane_verification: bool = False,
     include_noisy_verification: bool = False,
     include_surface_qec: bool = False,
     surface_logical_measurement_basis: SurfaceReadoutBasis | None = None,
@@ -303,14 +317,6 @@ def build_hirano_labeled_qregs(
         label: QuantumRegister(1, label)
         for label in STEANE_HELPER_PATCH_LABELS
     }
-    steane_verification_ancillas = (
-        {
-            f"steane_{label.lower()}": QuantumRegister(1, f"steane_{label.lower()}")
-            for label in STEANE_LS_VERIFICATION_LABELS
-        }
-        if include_steane_verification
-        else {}
-    )
     surface_data = {
         label: QuantumRegister(1, label)
         for label in SURFACE_ORDER
@@ -343,7 +349,6 @@ def build_hirano_labeled_qregs(
     return HiranoLabeledQRegs(
         steane_data=steane_data,
         steane_helpers=steane_helpers,
-        steane_verification_ancillas=steane_verification_ancillas,
         surface_data=surface_data,
         surface_z_ancillas=surface_z_ancillas,
         surface_x_ancillas=surface_x_ancillas,
@@ -637,6 +642,9 @@ def append_steane_lattice_surgery_verification(
     measure ``Z0145``, ``Z0235``, ``X0235``, ``Z0246``, and ``X0246`` during
     the merged-code interval.  The skipped check ``X0145`` is recovered later
     as ``X0145ab`` after measuring the surface top-edge ``X_ab`` check.
+
+    Uses the patch helper sites (h2, h6, h7) as ancillas — the same helpers
+    used by the Crumble encoder and cultivation round.
     """
     if len(classical_bits) != len(STEANE_LS_VERIFICATION_CHECKS):
         raise ValueError(
@@ -646,22 +654,21 @@ def append_steane_lattice_surgery_verification(
     for (check_name, basis, support), classical_bit in zip(
         STEANE_LS_VERIFICATION_CHECKS, classical_bits, strict=True
     ):
-        ancilla_name = f"steane_{check_name.lower()}"
-        if ancilla_name not in registers.steane_verification_ancillas:
-            raise ValueError(f"registers do not include {ancilla_name}.")
+        helper_label = STEANE_LS_VERIFICATION_ANCILLA_HELPER[check_name]
+        ancilla = registers.steane_helpers[helper_label][0]
         data_qubits = [registers.steane_data[label][0] for label in support]
         if basis == "Z":
             append_measure_z_parity(
                 circuit,
                 data_qubits=data_qubits,
-                ancilla=registers.steane_verification_ancillas[ancilla_name][0],
+                ancilla=ancilla,
                 classical_bit=classical_bit,
             )
         else:
             append_measure_x_parity(
                 circuit,
                 data_qubits=data_qubits,
-                ancilla=registers.steane_verification_ancillas[ancilla_name][0],
+                ancilla=ancilla,
                 classical_bit=classical_bit,
             )
 
@@ -876,7 +883,6 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     # Allocate registers first.  Optional ancilla/register groups are controlled
     # by the same flags used later for appending protocol stages.
     qregs = build_hirano_labeled_qregs(
-        include_steane_verification=include_steane_verification,
         include_noisy_verification=noisy or include_steane_verification,
         include_surface_qec=include_surface_qec,
         surface_logical_measurement_basis=(
@@ -906,7 +912,6 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     qubit_registers = (
         list(qregs.steane_data.values())
         + list(qregs.steane_helpers.values())
-        + list(qregs.steane_verification_ancillas.values())
         + list(qregs.surface_data.values())
         + list(qregs.surface_z_ancillas.values())
         + list(qregs.surface_x_ancillas.values())
