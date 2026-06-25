@@ -298,7 +298,7 @@ def test_steane_code_is_css_self_dual() -> None:
 
 N_PATCH_ANCILLA = 6
 
-_PATCH_ENCODERS = ["abstract", "crumble"]
+PATCH_ENCODERS = ["abstract", "crumble"]
 
 
 def _apply_patch_encoder(
@@ -348,7 +348,7 @@ def _patch_measure_logical_expectation_destructive(
     return result.data()["ev"].real
 
 
-@pytest.mark.parametrize("encoder", _PATCH_ENCODERS)
+@pytest.mark.parametrize("encoder", PATCH_ENCODERS)
 @pytest.mark.parametrize("state", ALL_STATES)
 def test_patch_logical_z_expectation(state: InjectedStateName, encoder: str) -> None:
     """Verify ⟨Z_L⟩ on 11-site patch for all mapped representatives."""
@@ -362,7 +362,7 @@ def test_patch_logical_z_expectation(state: InjectedStateName, encoder: str) -> 
         )
 
 
-@pytest.mark.parametrize("encoder", _PATCH_ENCODERS)
+@pytest.mark.parametrize("encoder", PATCH_ENCODERS)
 @pytest.mark.parametrize("state", ALL_STATES)
 def test_patch_logical_x_expectation(state: InjectedStateName, encoder: str) -> None:
     """Verify ⟨X_L⟩ on 11-site patch for all mapped representatives."""
@@ -414,7 +414,7 @@ def _patch_measure_logical_expectation_non_destructive(
     return sv.expectation_value(SparsePauliOp("Z"), [anc_qubit]).real
 
 
-@pytest.mark.parametrize("encoder", _PATCH_ENCODERS)
+@pytest.mark.parametrize("encoder", PATCH_ENCODERS)
 @pytest.mark.parametrize("state", ALL_STATES)
 def test_patch_logical_z_via_measurement_circuit(state: InjectedStateName, encoder: str) -> None:
     """Verify ⟨Z_anc⟩ after non-destructive Z_L on patch for all representatives."""
@@ -429,7 +429,7 @@ def test_patch_logical_z_via_measurement_circuit(state: InjectedStateName, encod
         )
 
 
-@pytest.mark.parametrize("encoder", _PATCH_ENCODERS)
+@pytest.mark.parametrize("encoder", PATCH_ENCODERS)
 @pytest.mark.parametrize("state", ALL_STATES)
 def test_patch_logical_x_via_measurement_circuit(state: InjectedStateName, encoder: str) -> None:
     """Verify ⟨Z_anc⟩ after non-destructive X_L on patch for all representatives."""
@@ -508,11 +508,11 @@ def test_patch_steane_code_is_css_self_dual() -> None:
 # ------------------------------------
 
 
-@pytest.mark.parametrize("encoder", _PATCH_ENCODERS)
+@pytest.mark.parametrize("encoder", PATCH_ENCODERS)
 @pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_all_stabilizers_plus_one(state: InjectedStateName, encoder: str) -> None:
-    """Verify all 6 syndrome ancillas give ⟨Z⟩ = +1 on the 11-site patch."""
-    circuit = QuantumCircuit(NUM_PATCH_QUBITS + N_PATCH_ANCILLA, N_PATCH_ANCILLA)
+def test_patch_all_stabilizers_via_ancilla_measurement(state: InjectedStateName, encoder: str) -> None:
+    """Verify all 6 syndrome bits are 0 (eigenvalue +1) via measurement circuit."""
+    circuit = QuantumCircuit(NUM_PATCH_QUBITS, N_PATCH_ANCILLA)
     _apply_patch_encoder(
         circuit, encoder, patch_qubits=list(range(NUM_PATCH_QUBITS)),
         injected_state=state, add_barriers=False,
@@ -521,23 +521,49 @@ def test_patch_all_stabilizers_plus_one(state: InjectedStateName, encoder: str) 
     append_patch_stabilizer_measurement(
         circuit,
         patch_qubits=list(range(NUM_PATCH_QUBITS)),
-        ancilla_qubits=list(range(NUM_PATCH_QUBITS, NUM_PATCH_QUBITS + N_PATCH_ANCILLA)),
         classical_bits=list(range(N_PATCH_ANCILLA)),
         add_barriers=False,
     )
 
-    circuit.remove_final_measurements(inplace=True)
-
-    sv = Statevector(circuit)
+    sim = AerSimulator()
+    counts = sim.run(circuit, shots=1).result().get_counts()
+    bitstring = next(iter(counts))
     for idx in range(N_PATCH_ANCILLA):
-        anc = NUM_PATCH_QUBITS + idx
-        ev = sv.expectation_value(SparsePauliOp("Z"), [anc]).real
-
+        bit_val = int(bitstring[-(idx + 1)])
         stab_type = "X" if idx < 3 else "Z"
         stab_idx = idx if idx < 3 else idx - 3
-        assert ev == pytest.approx(1.0, abs=TOLERANCE), (
+        assert bit_val == 0, (
             f"State {state!r}: {stab_type}-stabilizer {stab_idx} "
-            f"⟨Z_anc⟩ expected 1.0, got {ev:.6f}"
+            f"expected 0, got {bit_val}"
+        )
+
+
+@pytest.mark.parametrize("encoder", PATCH_ENCODERS)
+@pytest.mark.parametrize("state", ALL_STATES)
+def test_patch_stabilizer_expectation_values(state: InjectedStateName, encoder: str) -> None:
+    """Verify ⟨S⟩ = +1 for all 6 stabilizer operators directly via Statevector."""
+    circuit = QuantumCircuit(NUM_PATCH_QUBITS)
+    _apply_patch_encoder(
+        circuit, encoder, patch_qubits=list(range(NUM_PATCH_QUBITS)),
+        injected_state=state, add_barriers=False,
+    )
+
+    sv = Statevector(circuit)
+
+    for i, support in enumerate(PATCH_X_STABILIZERS):
+        label = _logical_pauli_label(support, "X", NUM_PATCH_QUBITS)
+        ev = sv.expectation_value(SparsePauliOp(label)).real
+        assert ev == pytest.approx(1.0, abs=TOLERANCE), (
+            f"State {state!r}: X-stabilizer {i} (support {support}) "
+            f"⟨X_S⟩ expected 1.0, got {ev:.6f}"
+        )
+
+    for i, support in enumerate(PATCH_Z_STABILIZERS):
+        label = _logical_pauli_label(support, "Z", NUM_PATCH_QUBITS)
+        ev = sv.expectation_value(SparsePauliOp(label)).real
+        assert ev == pytest.approx(1.0, abs=TOLERANCE), (
+            f"State {state!r}: Z-stabilizer {i} (support {support}) "
+            f"⟨Z_S⟩ expected 1.0, got {ev:.6f}"
         )
 
 # ---------------------------------------------------------
@@ -571,7 +597,7 @@ def _build_and_run_patch_syndrome(
     encoder: str = "abstract",
 ) -> tuple[tuple[int, ...], tuple[int, ...]]:
     """Inject faults after state injection, measure stabilizers, return (x_syn, z_syn)."""
-    circuit = QuantumCircuit(NUM_PATCH_QUBITS + N_PATCH_ANCILLA, N_PATCH_ANCILLA)
+    circuit = QuantumCircuit(NUM_PATCH_QUBITS, N_PATCH_ANCILLA)
 
     _apply_patch_encoder(
         circuit, encoder, patch_qubits=list(range(NUM_PATCH_QUBITS)),
@@ -585,7 +611,6 @@ def _build_and_run_patch_syndrome(
     append_patch_stabilizer_measurement(
         circuit,
         patch_qubits=list(range(NUM_PATCH_QUBITS)),
-        ancilla_qubits=list(range(NUM_PATCH_QUBITS, NUM_PATCH_QUBITS + N_PATCH_ANCILLA)),
         classical_bits=list(range(N_PATCH_ANCILLA)),
         add_barriers=False,
     )
@@ -626,7 +651,7 @@ for _p1, _p2 in [("X", "Z"), ("X", "Y"), ("Z", "Y")]:
 class TestPatchSyndromeExtraction:
     """Verify stabilizer measurement outputs match expected syndromes for injected faults."""
 
-    @pytest.mark.parametrize("encoder", _PATCH_ENCODERS)
+    @pytest.mark.parametrize("encoder", PATCH_ENCODERS)
     @pytest.mark.parametrize("state", ["0", "T", "H"])
     def test_no_fault_trivial(self, state: InjectedStateName, encoder: str) -> None:
         """No faults → all syndrome bits zero for any encoded state."""
@@ -635,7 +660,7 @@ class TestPatchSyndromeExtraction:
             f"State {state!r}: expected trivial syndrome, got X={x_syn}, Z={z_syn}"
         )
 
-    @pytest.mark.parametrize("encoder", _PATCH_ENCODERS)
+    @pytest.mark.parametrize("encoder", PATCH_ENCODERS)
     @pytest.mark.parametrize("state", ["0", "T", "H"])
     @pytest.mark.parametrize("faults", _SINGLE_FAULTS, ids=_SINGLE_IDS)
     def test_single_fault(
@@ -655,7 +680,7 @@ class TestPatchSyndromeExtraction:
             f"got X={measured_x} Z={measured_z}, expected X={expected_x} Z={expected_z}"
         )
 
-    @pytest.mark.parametrize("encoder", _PATCH_ENCODERS)
+    @pytest.mark.parametrize("encoder", PATCH_ENCODERS)
     @pytest.mark.parametrize("state", ["0", "T", "H"])
     @pytest.mark.parametrize("faults", _TWO_SAME_FAULTS, ids=_TWO_SAME_IDS)
     def test_two_qubit_same_pauli(
@@ -675,7 +700,7 @@ class TestPatchSyndromeExtraction:
             f"got X={measured_x} Z={measured_z}, expected X={expected_x} Z={expected_z}"
         )
 
-    @pytest.mark.parametrize("encoder", _PATCH_ENCODERS)
+    @pytest.mark.parametrize("encoder", PATCH_ENCODERS)
     @pytest.mark.parametrize("state", ["0", "T", "H"])
     @pytest.mark.parametrize("faults", _TWO_MIXED_FAULTS, ids=_TWO_MIXED_IDS)
     def test_two_qubit_mixed_pauli(

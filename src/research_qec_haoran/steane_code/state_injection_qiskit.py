@@ -580,18 +580,26 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
 # Stabilizer measurement on the 11-site patch
 # ---------------------------------------------------------------------------
 
+# Map from stabilizer index to the helper site used as its ancilla.
+# Each helper sits at the geometric center of the corresponding face:
+#   Stabilizer 0 (0, 3, 4, 5)  → helper site 2
+#   Stabilizer 1 (3, 4, 8, 9)  → helper site 6
+#   Stabilizer 2 (4, 5, 9, 10) → helper site 7
+PATCH_STABILIZER_ANCILLA_SITES: tuple[int, ...] = (2, 6, 7)
+
+
 def append_patch_stabilizer_measurement(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
-    ancilla_qubits: Sequence,
     classical_bits: Sequence,
     add_barriers: bool = True,
 ) -> None:
     """Append non-destructive stabilizer measurements on the 11-site patch.
 
-    Uses 6 ancilla qubits (one per stabilizer) to measure all stabilizers
-    without disturbing the encoded state on the patch data sites.
+    Uses the patch helper sites (2, 6, 7) as ancillas to measure all 6
+    stabilizers (3 X-type, 3 Z-type) without disturbing the encoded state.
+    The helper sites are reset before each measurement round.
 
     Parameters
     ----------
@@ -599,8 +607,6 @@ def append_patch_stabilizer_measurement(
         Circuit being modified.
     patch_qubits
         Eleven qubits indexed by the 11-site patch labels.
-    ancilla_qubits
-        Six ancilla qubits: indices 0–2 for X-stabilizers, 3–5 for Z-stabilizers.
     classical_bits
         Six classical bits: bits 0–2 hold X-stabilizer outcomes,
         bits 3–5 hold Z-stabilizer outcomes.
@@ -609,31 +615,37 @@ def append_patch_stabilizer_measurement(
     """
     if len(patch_qubits) < 11:
         raise ValueError("patch_qubits must contain at least 11 qubits.")
-    if len(ancilla_qubits) < 6:
-        raise ValueError("ancilla_qubits must contain at least 6 qubits.")
     if len(classical_bits) < 6:
         raise ValueError("classical_bits must contain at least 6 bits.")
 
     pq = list(patch_qubits)
-    aq = list(ancilla_qubits)
     cb = list(classical_bits)
+    anc_sites = PATCH_STABILIZER_ANCILLA_SITES
+
+    # Reset helper sites to |0⟩ before X-stabilizer round.
+    for site in anc_sites:
+        circuit.reset(pq[site])
 
     # X-stabilizer measurement: ancilla in |+⟩, CX(anc→data), H, measure.
     for i, support in enumerate(PATCH_X_STABILIZERS):
-        circuit.h(aq[i])
+        circuit.h(pq[anc_sites[i]])
         for site in support:
-            circuit.cx(aq[i], pq[site])
-        circuit.h(aq[i])
-        circuit.measure(aq[i], cb[i])
+            circuit.cx(pq[anc_sites[i]], pq[site])
+        circuit.h(pq[anc_sites[i]])
+        circuit.measure(pq[anc_sites[i]], cb[i])
 
     if add_barriers:
         circuit.barrier()
 
+    # Reset helper sites to |0⟩ before Z-stabilizer round.
+    for site in anc_sites:
+        circuit.reset(pq[site])
+
     # Z-stabilizer measurement: ancilla in |0⟩, CX(data→anc), measure.
     for i, support in enumerate(PATCH_Z_STABILIZERS):
         for site in support:
-            circuit.cx(pq[site], aq[3 + i])
-        circuit.measure(aq[3 + i], cb[3 + i])
+            circuit.cx(pq[site], pq[anc_sites[i]])
+        circuit.measure(pq[anc_sites[i]], cb[3 + i])
 
 
 # ---------------------------------------------------------------------------
