@@ -3,7 +3,7 @@
 from research_qec_haoran.surface_code.decoding import (
     PauliFrame,
     RotatedDecoder,
-    RotatedRecovery,
+    RotatedDetectedErrors,
     StabilizerFrame,
 )
 from research_qec_haoran.surface_code.rotated_d3_qiskit import (
@@ -30,7 +30,7 @@ __all__ = [
     "PauliFrame",
     "INIT_Z_LABELS",
     "RotatedDecoder",
-    "RotatedRecovery",
+    "RotatedDetectedErrors",
     "SURFACE_COORDS",
     "SURFACE_ORDER",
     "X_STABILIZER_CENTERS",

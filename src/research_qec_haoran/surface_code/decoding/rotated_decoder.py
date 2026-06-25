@@ -19,51 +19,50 @@ from research_qec_haoran.utils.normalize import normalize_bit
 
 
 @dataclass(frozen=True)
-class RotatedRecovery:
+class RotatedDetectedErrors:
     """Decoded recovery for a rotated surface-code patch.
 
     Attributes
     ----------
-    x_correction_sites : frozenset[str]
-        Data-qubit labels to apply X correction (detected by Z stabilizers).
-    z_correction_sites : frozenset[str]
-        Data-qubit labels to apply Z correction (detected by X stabilizers).
+    x_error_sites : frozenset[str]
+        Data-qubit labels where X errors were identified (by Z stabilizers).
+    z_error_sites : frozenset[str]
+        Data-qubit labels where Z errors were identified (by X stabilizers).
     z_deltas : dict[str, int]
         Change-detected Z-stabilizer syndrome used for decoding.
     x_deltas : dict[str, int]
         Change-detected X-stabilizer syndrome used for decoding.
     """
 
-    x_correction_sites: frozenset[str]
-    z_correction_sites: frozenset[str]
+    x_error_sites: frozenset[str]
+    z_error_sites: frozenset[str]
     z_deltas: dict[str, int]
     x_deltas: dict[str, int]
 
     @property
     def is_trivial(self) -> bool:
         """True if no correction is needed."""
-        return not self.x_correction_sites and not self.z_correction_sites
+        return not self.x_error_sites and not self.z_error_sites
 
     def label(self) -> str:
         """Human-readable label for the correction (convenience for d=3)."""
         if self.is_trivial:
             return "I"
-        all_sites = self.x_correction_sites | self.z_correction_sites
+        all_sites = self.x_error_sites | self.z_error_sites
         if len(all_sites) == 1:
             site = next(iter(all_sites))
-            has_x = site in self.x_correction_sites
-            has_z = site in self.z_correction_sites
+            has_x = site in self.x_error_sites
+            has_z = site in self.z_error_sites
             if has_x and has_z:
                 return f"Y_{site}"
             elif has_x:
                 return f"X_{site}"
             else:
                 return f"Z_{site}"
-        # Multi-qubit correction: list all
         parts = []
-        for site in sorted(self.x_correction_sites):
+        for site in sorted(self.x_error_sites):
             parts.append(f"X_{site}")
-        for site in sorted(self.z_correction_sites):
+        for site in sorted(self.z_error_sites):
             parts.append(f"Z_{site}")
         return " ".join(parts)
 
@@ -123,7 +122,7 @@ class RotatedDecoder:
         *,
         z_deltas: Mapping[str, int | bool],
         x_deltas: Mapping[str, int | bool],
-    ) -> RotatedRecovery:
+    ) -> RotatedDetectedErrors:
         """Decode a syndrome and return a physical recovery.
 
         z_deltas: change-detected Z-stabilizer outcomes (flags X/Y errors)
@@ -147,12 +146,33 @@ class RotatedDecoder:
         z_dict = {name: int(z_syn[i]) for i, name in enumerate(self.z_stabilizer_names)}
         x_dict = {name: int(x_syn[i]) for i, name in enumerate(self.x_stabilizer_names)}
 
-        return RotatedRecovery(
-            x_correction_sites=x_sites,
-            z_correction_sites=z_sites,
+        return RotatedDetectedErrors(
+            x_error_sites=x_sites,
+            z_error_sites=z_sites,
             z_deltas=z_dict,
             x_deltas=x_dict,
         )
+
+    # -- Frame update --
+
+    def apply_recovery(self, frame, label: str, recovery: RotatedDetectedErrors) -> None:
+        """Apply a decoded recovery to a PauliFrame.
+
+        An X correction on a site in the logical-Z support anticommutes with
+        Z_L, producing a logical X flip. A Z correction on a site in the
+        logical-X support anticommutes with X_L, producing a logical Z flip.
+
+        Parameters
+        ----------
+        frame : PauliFrame
+            The Pauli frame to update.
+        label
+            Logical-qubit label in the frame (e.g. ``"L0"``).
+        recovery
+            The decoded correction to apply.
+        """
+        frame.update_x(label, len(recovery.x_error_sites & self._logical_z_set) % 2 == 1)
+        frame.update_z(label, len(recovery.z_error_sites & self._logical_x_set) % 2 == 1)
 
     def update_pauli_frame(
         self,
@@ -161,30 +181,11 @@ class RotatedDecoder:
         *,
         z_deltas: Mapping[str, int | bool],
         x_deltas: Mapping[str, int | bool],
-    ) -> RotatedRecovery:
+    ) -> RotatedDetectedErrors:
         """Decode the syndrome, update the Pauli frame, and return the recovery.
 
-        Parameters
-        ----------
-        frame : PauliFrame
-            The Pauli frame to update.
-        label
-            Logical-qubit label in the frame (e.g. ``"L0"``).
-        z_deltas
-            Change-detected Z-stabilizer outcomes.
-        x_deltas
-            Change-detected X-stabilizer outcomes.
-
-        Returns
-        -------
-        RotatedRecovery
-            The decoded physical recovery.
+        Convenience method that calls :meth:`decode` then :meth:`apply_recovery`.
         """
         recovery = self.decode(z_deltas=z_deltas, x_deltas=x_deltas)
-
-        # X correction anticommutes with Z_L → logical X flip
-        frame.update_x(label, len(recovery.x_correction_sites & self._logical_z_set) % 2 == 1)
-        # Z correction anticommutes with X_L → logical Z flip
-        frame.update_z(label, len(recovery.z_correction_sites & self._logical_x_set) % 2 == 1)
-
+        self.apply_recovery(frame, label, recovery)
         return recovery
