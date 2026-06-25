@@ -21,7 +21,7 @@ from research_qec_haoran.steane_code.magic_state_cultivation_qiskit import (
 from research_qec_haoran.steane_code.state_injection_qiskit import (
     InjectedStateName,
     append_patch_stabilizer_measurement,
-    append_patch_steane_state_injection_encoder,
+    append_patch_steane_state_injection_encoder_crumble_sequences,
 )
 from research_qec_haoran.utils.normalize import qiskit_bit_value
 
@@ -207,8 +207,7 @@ def build_kickback_tomography_experiment(
     qec_indices = _normalise_qec_cycle_indices(qec_cycle_indices)
 
     patch = QuantumRegister(11, "patch")
-    stab_anc = QuantumRegister(KT_STABILIZER_BITS_PER_CYCLE, "stab_anc")
-    circuit = QuantumCircuit(patch, stab_anc)
+    circuit = QuantumCircuit(patch)
     alloc = _ClassicalAllocator(circuit)
 
     qec_registers: dict[int, tuple[ClassicalRegister, tuple[int, ...]]] = {}
@@ -236,7 +235,7 @@ def build_kickback_tomography_experiment(
     if final_bit_count:
         final_creg, final_positions = alloc.add_register(final_bit_count, "final_stab")
 
-    append_patch_steane_state_injection_encoder(
+    append_patch_steane_state_injection_encoder_crumble_sequences(
         circuit,
         patch_qubits=list(patch),
         injected_state=injected_state,
@@ -256,11 +255,9 @@ def build_kickback_tomography_experiment(
 
     if 0 in qec_registers:
         qec_creg, _ = qec_registers[0]
-        circuit.reset(list(stab_anc))
         append_patch_stabilizer_measurement(
             circuit,
             patch_qubits=list(patch),
-            ancilla_qubits=list(stab_anc),
             classical_bits=list(qec_creg),
             add_barriers=add_barriers,
         )
@@ -276,11 +273,9 @@ def build_kickback_tomography_experiment(
 
     if 1 in qec_registers:
         qec_creg, _ = qec_registers[1]
-        circuit.reset(list(stab_anc))
         append_patch_stabilizer_measurement(
             circuit,
             patch_qubits=list(patch),
-            ancilla_qubits=list(stab_anc),
             classical_bits=list(qec_creg),
             add_barriers=add_barriers,
         )
@@ -296,21 +291,17 @@ def build_kickback_tomography_experiment(
 
     if 2 in qec_registers:
         qec_creg, _ = qec_registers[2]
-        circuit.reset(list(stab_anc))
         append_patch_stabilizer_measurement(
             circuit,
             patch_qubits=list(patch),
-            ancilla_qubits=list(stab_anc),
             classical_bits=list(qec_creg),
             add_barriers=add_barriers,
         )
 
     if final_creg is not None:
-        circuit.reset(list(stab_anc))
         append_patch_stabilizer_measurement(
             circuit,
             patch_qubits=list(patch),
-            ancilla_qubits=list(stab_anc),
             classical_bits=list(final_creg),
             add_barriers=add_barriers,
         )
