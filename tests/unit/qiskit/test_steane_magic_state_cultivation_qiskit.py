@@ -20,7 +20,7 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     InjectedStateName,
     append_patch_logical_measurement,
     append_patch_stabilizer_measurement,
-    append_patch_steane_state_injection_encoder,
+    append_patch_steane_state_injection_encoder_crumble_sequences,
 )
 from research_qec_haoran.utils.normalize import qiskit_bit_value
 
@@ -82,7 +82,7 @@ def _build_cultivation_with_logical_measurement(
     circuit = QuantumCircuit(qreg, creg)
 
     # Encode
-    append_patch_steane_state_injection_encoder(
+    append_patch_steane_state_injection_encoder_crumble_sequences(
         circuit, patch_qubits=list(qreg), injected_state=state, add_barriers=False,
     )
 
@@ -237,13 +237,12 @@ class TestStabilizerSyndromesAfterCultivation:
         n_stab_ancilla = 6
 
         qreg = QuantumRegister(11, "patch")
-        anc_reg = QuantumRegister(n_stab_ancilla, "stab_anc")
         cult_creg = ClassicalRegister(5, "cult")
         stab_creg = ClassicalRegister(n_stab_ancilla, "stab")
-        circuit = QuantumCircuit(qreg, anc_reg, cult_creg, stab_creg)
+        circuit = QuantumCircuit(qreg, cult_creg, stab_creg)
 
         # Encode
-        append_patch_steane_state_injection_encoder(
+        append_patch_steane_state_injection_encoder_crumble_sequences(
             circuit, patch_qubits=list(qreg), injected_state=state, add_barriers=False,
         )
 
@@ -259,7 +258,6 @@ class TestStabilizerSyndromesAfterCultivation:
         append_patch_stabilizer_measurement(
             circuit,
             patch_qubits=list(qreg),
-            ancilla_qubits=list(anc_reg),
             classical_bits=list(stab_creg),
             add_barriers=False,
         )
@@ -329,7 +327,7 @@ def _build_multi_round_cultivation_circuit(
     circuit = QuantumCircuit(qreg, creg)
 
     # Encode
-    append_patch_steane_state_injection_encoder(
+    append_patch_steane_state_injection_encoder_crumble_sequences(
         circuit, patch_qubits=list(qreg), injected_state=injected_state, add_barriers=False,
     )
 
@@ -476,7 +474,7 @@ class TestNoisyCultivationImprovesWithRounds:
         qreg = QuantumRegister(11, "q")
         creg = ClassicalRegister(3, "c")
         raw_circuit = QuantumCircuit(qreg, creg)
-        append_patch_steane_state_injection_encoder(
+        append_patch_steane_state_injection_encoder_crumble_sequences(
             raw_circuit, patch_qubits=list(qreg), injected_state="H", add_barriers=False,
         )
         support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
