@@ -55,7 +55,7 @@ class TestKickbackTomographyCircuitConstruction:
         circuit = experiment.circuit
         layout = experiment.layout
 
-        assert circuit.num_qubits == 17
+        assert circuit.num_qubits == 11
         assert circuit.num_clbits == (
             3 * KT_CULTIVATION_BITS_PER_ROUND
             + 3 * KT_STABILIZER_BITS_PER_CYCLE
