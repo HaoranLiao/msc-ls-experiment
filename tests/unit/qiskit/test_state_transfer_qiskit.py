@@ -115,9 +115,9 @@ class TestTransferCircuitLayout:
             "zz_1a",
             "zz_35bc",
         }
-        assert circuit.cregs[2].name == "ls_zz"
+        assert circuit.cregs[3].name == "ls_zz"
         # Three rounds, two merged-boundary checks per round.
-        assert circuit.cregs[2].size == 6
+        assert circuit.cregs[3].size == 6
 
     def test_paper_style_final_x_checks_and_logical_x_are_declared(self) -> None:
         assert HIRANO_STEANE_LOGICAL_X == ("1", "4", "6")
@@ -148,6 +148,7 @@ class TestTransferMeasurementParsing:
         )
 
         assert set(measurements["registers"]) == {
+            "enc_helpers",
             "init_z",
             "ls_zz",
             "steane_verify",
@@ -192,9 +193,9 @@ class TestTransferMeasurementParsing:
         assert measurements["surface_qec_syndrome_is_trivial"]
 
     def test_parser_rejects_register_chunks_with_wrong_width(self) -> None:
-        with pytest.raises(ValueError, match="2 labels"):
+        with pytest.raises(ValueError, match="labels"):
             parse_transfer_measurements(
-                "0000000 0 0000",
+                "0000 0000000 0 0000",
                 include_cultivation=False,
                 merged_rounds=1,
                 include_steane_verification=False,

@@ -445,6 +445,12 @@ def _classical_register_specs(
     or disabled.
     """
     specs: list[ClassicalRegisterSpec] = []
+    specs.append(
+        ClassicalRegisterSpec(
+            "enc_helpers",
+            ("enc_h1", "enc_h2", "enc_h6", "enc_h7"),
+        )
+    )
     if include_cultivation:
         specs.append(
             ClassicalRegisterSpec(
@@ -930,6 +936,7 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
+        helper_classical_bits=list(classical_registers_by_name["enc_helpers"]),
     )
 
     if include_cultivation:
@@ -1233,6 +1240,8 @@ def parse_transfer_measurements(
     # Derived fields are intentionally computed here so notebooks/tests can
     # inspect a single parsed measurement object without reimplementing protocol
     # rules in multiple places.
+    parsed["enc_helpers"] = register_bits("enc_helpers")
+
     if include_cultivation:
         parsed["cultivation"] = register_bits("cult")
 
@@ -1435,13 +1444,15 @@ def transfer_acceptance_succeeds(measurements: dict[str, object]) -> bool:
     """Return whether the fault-detecting d=3 transfer checks accept.
 
     This predicate covers the transfer-local rejection rules implemented in
-    this module: cultivation bits (if present), stable repeated merged checks,
-    Steane LS verification checks, and final reconstructed X checks.  Surface
-    QEC decoding is tracked separately because nontrivial surface syndromes can
-    be corrected in the Pauli frame rather than causing hard rejection.
+    this module: encoder helper checks, cultivation bits (if present), stable
+    repeated merged checks, Steane LS verification checks, and final
+    reconstructed X checks.  Surface QEC decoding is tracked separately because
+    nontrivial surface syndromes can be corrected in the Pauli frame rather than
+    causing hard rejection.
     """
     return (
-        cultivation_succeeds(measurements)
+        encoder_helpers_succeed(measurements)
+        and cultivation_succeeds(measurements)
         and merged_boundary_checks_stable(measurements)
         and steane_verification_succeeds(measurements)
         and x_verification_succeeds(measurements)
@@ -1552,3 +1563,17 @@ def cultivation_succeeds(measurements: dict[str, object]) -> bool:
     if cultivation is None:
         return True
     return sum(cultivation.values()) == 0
+
+
+def encoder_helpers_succeed(measurements: dict[str, object]) -> bool:
+    """Return whether the encoder helper postselection bits are all zero.
+
+    After the Crumble encoder, the four helper sites (h1, h2, h6, h7) must be
+    in |0⟩.  Any nonzero outcome flags a fault during encoding.
+    """
+    enc_helpers = measurements.get("enc_helpers")
+    if enc_helpers is None:
+        return True
+    return sum(enc_helpers.values()) == 0
+
+
