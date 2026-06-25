@@ -31,7 +31,7 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     PATCH_Z_STABILIZERS,
     InjectedStateName,
     append_patch_stabilizer_measurement,
-    append_patch_steane_state_injection_encoder,
+    append_patch_steane_state_injection_encoder_crumble_sequences,
 )
 from research_qec_haoran.utils.normalize import parse_qiskit_bitstring
 
@@ -199,18 +199,17 @@ def _build_one_round_syndrome_circuit(
 ) -> QuantumCircuit:
     """Build: injection → fault → stabilizer measurement (syndrome only)."""
     patch = QuantumRegister(NUM_PATCH_QUBITS, "patch")
-    syn_anc = QuantumRegister(6, "syn_anc")
     syn_cl = ClassicalRegister(6, "syn")
-    circuit = QuantumCircuit(patch, syn_anc, syn_cl)
+    circuit = QuantumCircuit(patch, syn_cl)
 
-    append_patch_steane_state_injection_encoder(
+    append_patch_steane_state_injection_encoder_crumble_sequences(
         circuit, patch_qubits=list(patch),
         injected_state=injected_state, add_barriers=False,
     )
     append_pauli_faults(circuit, [fault], qubit_map=list(patch))
     append_patch_stabilizer_measurement(
         circuit, patch_qubits=list(patch),
-        ancilla_qubits=list(syn_anc), classical_bits=list(syn_cl),
+        classical_bits=list(syn_cl),
         add_barriers=False,
     )
     return circuit
@@ -265,12 +264,11 @@ def _build_two_round_syndrome_circuit(
 ) -> QuantumCircuit:
     """Build: injection → fault1 → syn1 → fault2 → syn2 (syndrome only)."""
     patch = QuantumRegister(NUM_PATCH_QUBITS, "patch")
-    syn_anc = QuantumRegister(6, "syn_anc")
     syn1_cl = ClassicalRegister(6, "syn1")
     syn2_cl = ClassicalRegister(6, "syn2")
-    circuit = QuantumCircuit(patch, syn_anc, syn1_cl, syn2_cl)
+    circuit = QuantumCircuit(patch, syn1_cl, syn2_cl)
 
-    append_patch_steane_state_injection_encoder(
+    append_patch_steane_state_injection_encoder_crumble_sequences(
         circuit, patch_qubits=list(patch),
         injected_state=injected_state, add_barriers=False,
     )
@@ -279,17 +277,15 @@ def _build_two_round_syndrome_circuit(
     append_pauli_faults(circuit, [fault1], qubit_map=list(patch))
     append_patch_stabilizer_measurement(
         circuit, patch_qubits=list(patch),
-        ancilla_qubits=list(syn_anc), classical_bits=list(syn1_cl),
+        classical_bits=list(syn1_cl),
         add_barriers=False,
     )
-    for anc in syn_anc:
-        circuit.reset(anc)
 
     # Round 2.
     append_pauli_faults(circuit, [fault2], qubit_map=list(patch))
     append_patch_stabilizer_measurement(
         circuit, patch_qubits=list(patch),
-        ancilla_qubits=list(syn_anc), classical_bits=list(syn2_cl),
+        classical_bits=list(syn2_cl),
         add_barriers=False,
     )
 
