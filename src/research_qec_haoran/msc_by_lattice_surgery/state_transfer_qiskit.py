@@ -89,7 +89,7 @@ from research_qec_haoran.steane_code.magic_state_cultivation_qiskit import (
 )
 from research_qec_haoran.steane_code.state_injection_qiskit import (
     InjectedStateName,
-    append_patch_steane_state_injection_encoder,
+    append_patch_steane_state_injection_encoder_crumble_sequences,
 )
 from research_qec_haoran.surface_code.decoding.rotated_decoder import RotatedDecoder
 from research_qec_haoran.surface_code.rotated_d3_qiskit import (
@@ -921,7 +921,7 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     # Stage 1: prepare the input logical state on the Steane/color-code patch.
     # The imported helper expects the repo's 11-site patch ordering, not the
     # Hirano labels, so ``patch_qubits`` is the key adapter.
-    append_patch_steane_state_injection_encoder(
+    append_patch_steane_state_injection_encoder_crumble_sequences(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
