@@ -370,6 +370,7 @@ def append_hadamard_axis_projection_round(
 def build_steane_injection_with_h_cultivation(
     injected_state: InjectedStateName = "H",
     *,
+    n_rounds: int = 1,
     add_barriers: bool = True,
     skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
@@ -404,6 +405,9 @@ def build_steane_injection_with_h_cultivation(
         Must be one of the values accepted by ``InjectedStateName``
         (e.g. "0", "+", "T", "H").  Defaults to ``"H"`` for H-state
         cultivation.
+    n_rounds
+        Number of cultivation rounds to apply.  Each round appends a
+        separate 5-bit classical register (``cult_0``, ``cult_1``, …).
     add_barriers
         Whether to insert barriers between conceptual stages.
     skip_cx_1_4
@@ -415,29 +419,36 @@ def build_steane_injection_with_h_cultivation(
     Returns
     -------
     QuantumCircuit
-        An 11-qubit Qiskit circuit with 5 classical measurement bits.
+        An 11-qubit Qiskit circuit with ``4 + 5 * n_rounds`` classical bits:
+        4 encoder-helper checks + 5 cultivation bits per round.
     """
+    if n_rounds < 1:
+        raise ValueError("n_rounds must be at least 1.")
+
     qreg = QuantumRegister(11, "q")
-    creg = ClassicalRegister(5, "c")
-    circuit = QuantumCircuit(qreg, creg)
+    enc_creg = ClassicalRegister(4, "enc")
+    cult_cregs = [ClassicalRegister(5, f"cult_{r}") for r in range(n_rounds)]
+    circuit = QuantumCircuit(qreg, enc_creg, *cult_cregs)
 
     append_patch_steane_state_injection_encoder_crumble_sequences(
         circuit,
         patch_qubits=list(qreg),  # type: ignore[arg-type]
         injected_state=injected_state,
+        helper_classical_bits=list(enc_creg),  # type: ignore[arg-type]
         add_barriers=False,
     )
     if add_barriers:
         circuit.barrier(label="state injection")
 
-    append_hadamard_axis_projection_round(
-        circuit,
-        patch_qubits=list(qreg),  # type: ignore[arg-type]
-        classical_bits=list(creg),  # type: ignore[arg-type]
-        add_barriers=add_barriers,
-        skip_cx_1_4=skip_cx_1_4,
-        skip_cx=skip_cx,
-    )
+    for r in range(n_rounds):
+        append_hadamard_axis_projection_round(
+            circuit,
+            patch_qubits=list(qreg),  # type: ignore[arg-type]
+            classical_bits=list(cult_cregs[r]),  # type: ignore[arg-type]
+            add_barriers=add_barriers,
+            skip_cx_1_4=skip_cx_1_4,
+            skip_cx=skip_cx,
+        )
 
     return circuit
 
