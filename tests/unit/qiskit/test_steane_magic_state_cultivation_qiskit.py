@@ -10,7 +10,7 @@ from qiskit_aer import AerSimulator
 from qiskit_aer.noise import NoiseModel, depolarizing_error
 
 from research_qec_haoran.steane_code.magic_state_cultivation_qiskit import (
-    build_steane_injection_with_h_cultivation,
+    append_steane_injection_with_h_cultivation,
     postselect_success_counts,
 )
 from research_qec_haoran.steane_code.state_injection_qiskit import (
@@ -66,13 +66,39 @@ def _expected_acceptance_probability(state: InjectedStateName) -> float:
 # =============================================================================
 
 
+def _make_cultivation_circuit(
+    injected_state: InjectedStateName = "H",
+    n_rounds: int = 1,
+    add_barriers: bool = False,
+    skip_cx_1_4: bool = False,
+    skip_cx: tuple[int, int] | None = None,
+) -> QuantumCircuit:
+    """Create registers and append injection + cultivation rounds."""
+    qreg = QuantumRegister(11, "q")
+    enc_creg = ClassicalRegister(4, "enc")
+    cult_cregs = [ClassicalRegister(5, f"cult_{r}") for r in range(n_rounds)]
+    circuit = QuantumCircuit(qreg, enc_creg, *cult_cregs)
+
+    append_steane_injection_with_h_cultivation(
+        circuit,
+        patch_qubits=list(qreg),
+        injected_state=injected_state,
+        encoder_classical_bits=list(enc_creg),
+        cultivation_classical_bits=[list(c) for c in cult_cregs],
+        add_barriers=add_barriers,
+        skip_cx_1_4=skip_cx_1_4,
+        skip_cx=skip_cx,
+    )
+    return circuit
+
+
 def _build_cultivation_with_logical_measurement(
     state: InjectedStateName,
     basis: str,
 ) -> QuantumCircuit:
     """Build: encoder → cultivation round → destructive logical measurement.
 
-    Uses :func:`build_steane_injection_with_h_cultivation` for the encoder and
+    Uses :func:`_make_cultivation_circuit` for the encoder and
     cultivation stages, then appends a destructive logical measurement.
 
     Returns a circuit with 11 qubits and 12 classical bits:
@@ -80,9 +106,7 @@ def _build_cultivation_with_logical_measurement(
       - bits 4–8: cultivation outcomes (must be zero)
       - bits 9–11: destructive logical measurement on 3-qubit support
     """
-    circuit = build_steane_injection_with_h_cultivation(
-        injected_state=state, add_barriers=False,
-    )
+    circuit = _make_cultivation_circuit(injected_state=state)
 
     # Append destructive logical measurement (3 classical bits)
     support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
@@ -194,9 +218,7 @@ class TestPostselectedLogicalExpectation:
     def test_success_rate(self, state: InjectedStateName) -> None:
         """Acceptance rate matches |⟨H|ψ⟩|² for each injected state."""
         # Use the cultivation-only circuit (no logical measurement needed)
-        circuit = build_steane_injection_with_h_cultivation(
-            injected_state=state, add_barriers=False,
-        )
+        circuit = _make_cultivation_circuit(injected_state=state)
         sim = AerSimulator()
         counts = sim.run(circuit, shots=NUM_SHOTS).result().get_counts()
 
@@ -229,9 +251,7 @@ class TestStabilizerSyndromesAfterCultivation:
     @pytest.mark.parametrize("state", ["H", "0", "+", "T"])
     def test_all_stabilizers_trivial(self, state: InjectedStateName) -> None:
         """All 6 stabilizer measurements yield 0 (eigenvalue +1) after cultivation."""
-        circuit = build_steane_injection_with_h_cultivation(
-            injected_state=state, add_barriers=False,
-        )
+        circuit = _make_cultivation_circuit(injected_state=state)
 
         # Append stabilizer measurement
         n_stab = 6
@@ -300,11 +320,11 @@ def _build_multi_round_cultivation_circuit(
 ) -> QuantumCircuit:
     """Build: encoder → n_rounds cultivation → destructive logical measurement.
 
-    Uses :func:`build_steane_injection_with_h_cultivation` for the encoder and
+    Uses :func:`_make_cultivation_circuit` for the encoder and
     cultivation stages, then appends a destructive logical measurement.
     """
-    circuit = build_steane_injection_with_h_cultivation(
-        injected_state=injected_state, n_rounds=n_rounds, add_barriers=False,
+    circuit = _make_cultivation_circuit(
+        injected_state=injected_state, n_rounds=n_rounds,
     )
 
     # Destructive logical measurement

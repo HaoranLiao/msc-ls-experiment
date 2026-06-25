@@ -367,74 +367,51 @@ def append_hadamard_axis_projection_round(
 # 3. Full circuit builder
 # =============================================================================
 
-def build_steane_injection_with_h_cultivation(
-    injected_state: InjectedStateName = "H",
+def append_steane_injection_with_h_cultivation(
+    circuit: QuantumCircuit,
     *,
-    n_rounds: int = 1,
+    patch_qubits: Sequence,
+    injected_state: InjectedStateName = "H",
+    encoder_classical_bits: Sequence,
+    cultivation_classical_bits: Sequence[Sequence],
     add_barriers: bool = True,
     skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
-) -> QuantumCircuit:
-    """Build the full 11-site Steane injection + H_L projection circuit.
-
-    See SITE_LAYOUT_DOC for the full 11-site layout diagram.
-        DATA_SITES = (0, 3, 4, 5, 8, 9, 10)
-        HELPER_SITES = (1, 2, 6, 7)
-
-    The encoder prepares |H_L⟩ directly on the seven data sites:
-    - Site 0 receives the physical |H⟩ state.
-    - Sites 5, 9, 10 are prepared in |+⟩.
-    - Sites 3, 4, 8 remain in |0⟩.
-
-    The projection round measures the logical Hadamard-axis observable via
-        H_L = T_y^dagger X_L T_y,  with  T_y = RY(pi/4).
-
-    The fold schedule is
-        step 3: CX 2->0, (1->4), 6->3, 7->10
-        step 4: CX 6->8, 4->2, 7->5
-        step 5: CX 4->6, 7->9
-        step 6: CX 7->4
-    followed by X-basis measurement of site 7, reset of site 7, exact inverse
-    unfolding, X-basis measurement of helper sites 1, 2, 6, 7, and
-    finally T_y^dagger on all data sites.
+) -> None:
+    """Append Steane injection + H_L cultivation rounds to an existing circuit.
 
     Parameters
     ----------
+    circuit
+        Circuit being modified.
+    patch_qubits
+        Eleven qubits indexed by the 11-site patch labels.
     injected_state
-        Name of the single-qubit state injected on site 0 before encoding.
-        Must be one of the values accepted by ``InjectedStateName``
-        (e.g. "0", "+", "T", "H").  Defaults to ``"H"`` for H-state
-        cultivation.
-    n_rounds
-        Number of cultivation rounds to apply.  Each round appends a
-        separate 5-bit classical register (``cult_0``, ``cult_1``, …).
+        Physical state injected on the center data site before encoding.
+    encoder_classical_bits
+        Four classical bits for encoder helper postselection.
+    cultivation_classical_bits
+        Sequence of 5-bit sequences, one per cultivation round.
     add_barriers
-        Whether to insert barriers between conceptual stages.
+        Whether to insert barriers between stages.
     skip_cx_1_4
         If True, omit the CX 1->4 gate from the fold/unfold network.
     skip_cx
         If given, omit the specified (control, target) CX gate.
-        Takes precedence over skip_cx_1_4.
-
-    Returns
-    -------
-    QuantumCircuit
-        An 11-qubit Qiskit circuit with ``4 + 5 * n_rounds`` classical bits:
-        4 encoder-helper checks + 5 cultivation bits per round.
     """
+    if len(patch_qubits) < 11:
+        raise ValueError("patch_qubits must contain at least 11 qubits.")
+    if len(encoder_classical_bits) < 4:
+        raise ValueError("encoder_classical_bits must contain at least 4 bits.")
+    n_rounds = len(cultivation_classical_bits)
     if n_rounds < 1:
-        raise ValueError("n_rounds must be at least 1.")
-
-    qreg = QuantumRegister(11, "q")
-    enc_creg = ClassicalRegister(4, "enc")
-    cult_cregs = [ClassicalRegister(5, f"cult_{r}") for r in range(n_rounds)]
-    circuit = QuantumCircuit(qreg, enc_creg, *cult_cregs)
+        raise ValueError("cultivation_classical_bits must contain at least one round.")
 
     append_patch_steane_state_injection_encoder_crumble_sequences(
         circuit,
-        patch_qubits=list(qreg),  # type: ignore[arg-type]
+        patch_qubits=patch_qubits,
         injected_state=injected_state,
-        helper_classical_bits=list(enc_creg),  # type: ignore[arg-type]
+        helper_classical_bits=encoder_classical_bits,
         add_barriers=False,
     )
     if add_barriers:
@@ -443,14 +420,13 @@ def build_steane_injection_with_h_cultivation(
     for r in range(n_rounds):
         append_hadamard_axis_projection_round(
             circuit,
-            patch_qubits=list(qreg),  # type: ignore[arg-type]
-            classical_bits=list(cult_cregs[r]),  # type: ignore[arg-type]
+            patch_qubits=patch_qubits,
+            classical_bits=cultivation_classical_bits[r],
             add_barriers=add_barriers,
             skip_cx_1_4=skip_cx_1_4,
             skip_cx=skip_cx,
         )
 
-    return circuit
 
 
 # =============================================================================
