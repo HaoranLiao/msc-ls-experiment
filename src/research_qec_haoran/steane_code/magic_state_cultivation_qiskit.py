@@ -6,7 +6,7 @@ from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
 from research_qec_haoran.steane_code.state_injection_qiskit import (
     InjectedStateName,
-    append_patch_steane_state_injection_encoder,
+    append_patch_steane_state_injection_encoder_crumble_sequences,
 )
 from research_qec_haoran.utils.circuit import apply_ty, apply_ty_dagger
 from research_qec_haoran.utils.normalize import qiskit_bit_value
@@ -421,7 +421,7 @@ def build_steane_injection_with_h_cultivation(
     creg = ClassicalRegister(5, "c")
     circuit = QuantumCircuit(qreg, creg)
 
-    append_patch_steane_state_injection_encoder(
+    append_patch_steane_state_injection_encoder_crumble_sequences(
         circuit,
         patch_qubits=list(qreg),  # type: ignore[arg-type]
         injected_state=injected_state,
