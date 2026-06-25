@@ -8,9 +8,9 @@ independent 3-bit lookups:
 - X-stabilizer syndrome (3 bits) → identifies the qubit with a Z error.
 
 This module provides the lookup tables and a decoder class that returns a
-:class:`SteaneDetectedErrors` indicating the correction and its logical effect
-(i.e., whether the physical correction anticommutes with the tracked logical
-operators).
+:class:`SteaneDetectedErrors` identifying the error sites and their logical
+effect (i.e., whether a virtual correction anticommutes with the tracked
+logical operators).
 """
 
 from __future__ import annotations
@@ -136,11 +136,11 @@ class SteaneDecoder:
 
     # -- Frame update --
 
-    def apply_recovery(self, frame, label: str, recovery: SteaneDetectedError) -> None:
-        """Apply a decoded recovery to a PauliFrame.
+    def apply_recovery(self, frame, label: str, detected_errors: SteaneDetectedError) -> None:
+        """Update a PauliFrame based on detected errors.
 
-        An X correction on a site in the logical-Z support anticommutes with
-        Z_L, producing a logical X flip. A Z correction on a site in the
+        An X error on a site in the logical-Z support anticommutes with
+        Z_L, producing a logical X flip. A Z error on a site in the
         logical-X support anticommutes with X_L, producing a logical Z flip.
 
         Parameters
@@ -149,13 +149,13 @@ class SteaneDecoder:
             The Pauli frame to update.
         label
             Logical-qubit label in the frame (e.g. ``"L0"``).
-        recovery
-            The decoded correction to apply.
+        detected_errors
+            The decoded error sites to apply.
         """
-        if recovery.x_error_site is not None:
-            frame.update_x(label, recovery.x_error_site in self._logical_z_set)
-        if recovery.z_error_site is not None:
-            frame.update_z(label, recovery.z_error_site in self._logical_x_set)
+        if detected_errors.x_error_site is not None:
+            frame.update_x(label, detected_errors.x_error_site in self._logical_z_set)
+        if detected_errors.z_error_site is not None:
+            frame.update_z(label, detected_errors.z_error_site in self._logical_x_set)
 
     # -- Convenience pipeline --
 
@@ -198,6 +198,6 @@ class SteaneDecoder:
         x_syn = tuple(x_deltas[lab] for lab in X_STABILIZER_LABELS)
         z_syn = tuple(z_deltas[lab] for lab in Z_STABILIZER_LABELS)
 
-        recovery = self.decode(z_syndrome=z_syn, x_syndrome=x_syn)
-        self.apply_recovery(frame, label, recovery)
-        return recovery
+        detected_errors = self.decode(z_syndrome=z_syn, x_syndrome=x_syn)
+        self.apply_recovery(frame, label, detected_errors)
+        return detected_errors
