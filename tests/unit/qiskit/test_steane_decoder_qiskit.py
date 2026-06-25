@@ -21,14 +21,17 @@ from research_qec_haoran.decoding import (
     StabilizerFrame,
     SteaneDecoder,
 )
+from research_qec_haoran.steane_code.decoding.decoder import (
+    SYNDROME_BIT_LABELS,
+    X_STABILIZER_LABELS,
+    Z_STABILIZER_LABELS,
+)
 from research_qec_haoran.noise import append_pauli_faults
 from research_qec_haoran.steane_code.state_injection_qiskit import (
     NUM_PATCH_QUBITS,
     PATCH_DATA_SITES,
     PATCH_DEFAULT_LOGICAL_X,
     PATCH_DEFAULT_LOGICAL_Z,
-    PATCH_X_STABILIZERS,
-    PATCH_Z_STABILIZERS,
     InjectedStateName,
     append_patch_stabilizer_measurement,
     append_patch_steane_state_injection_encoder_crumble_sequences,
@@ -37,13 +40,7 @@ from research_qec_haoran.utils.normalize import parse_qiskit_bitstring
 
 TOLERANCE = 1e-10
 
-_X_STAB_LABELS = tuple(
-    f"X_{''.join(str(s) for s in support)}" for support in PATCH_X_STABILIZERS
-)
-_Z_STAB_LABELS = tuple(
-    f"Z_{''.join(str(s) for s in support)}" for support in PATCH_Z_STABILIZERS
-)
-_SYNDROME_BIT_LABELS = ("x0", "x1", "x2", "z0", "z1", "z2")
+_SYNDROME_BIT_LABELS = SYNDROME_BIT_LABELS
 
 # (⟨Z_L⟩, ⟨X_L⟩) for each injected state.
 _inv_sqrt2 = 1.0 / math.sqrt(2)
@@ -115,9 +112,9 @@ _PATCH_QUBIT_INDICES = list(range(NUM_PATCH_QUBITS))
 def _init_stab_frame() -> StabilizerFrame:
     """Return a StabilizerFrame initialized to all +1."""
     frame = StabilizerFrame()
-    for label in _X_STAB_LABELS:
+    for label in X_STABILIZER_LABELS:
         frame.register(label, 0)
-    for label in _Z_STAB_LABELS:
+    for label in Z_STABILIZER_LABELS:
         frame.register(label, 0)
     return frame
 
@@ -131,45 +128,20 @@ def _parse_syndrome_bits(syn_str: str) -> tuple[tuple[int, ...], tuple[int, ...]
     )
 
 
-def _decode_one_syndrome(
-    x_raw: tuple[int, ...],
-    z_raw: tuple[int, ...],
-    stab_frame: StabilizerFrame,
-    pauli_frame: PauliFrame,
-) -> None:
-    """Advance the stabilizer frame, decode, and update the Pauli frame."""
-    x_meas = {label: x_raw[i] for i, label in enumerate(_X_STAB_LABELS)}
-    z_meas = {label: z_raw[i] for i, label in enumerate(_Z_STAB_LABELS)}
-
-    x_deltas = stab_frame.advance(x_meas)
-    z_deltas = stab_frame.advance(z_meas)
-
-    x_syn = tuple(x_deltas[label] for label in _X_STAB_LABELS)
-    z_syn = tuple(z_deltas[label] for label in _Z_STAB_LABELS)
-
-    SteaneDecoder().update_pauli_frame(
-        pauli_frame, "L0", z_syndrome=z_syn, x_syndrome=x_syn,
-    )
+_decoder = SteaneDecoder()
 
 
 def _corrected_logical_expectations(
     sv: Statevector,
     pauli_frame: PauliFrame,
 ) -> tuple[float, float]:
-    """Return frame-corrected (⟨Z_L⟩, ⟨X_L⟩) from the post-measurement statevector.
-
-    Expectation values are computed on the 11 patch qubits only; any extra
-    qubits (syndrome ancillas, measured and disentangled) are ignored.
-    """
+    """Return frame-corrected (⟨Z_L⟩, ⟨X_L⟩) from the post-measurement statevector."""
     raw_z = sv.expectation_value(_Z_L, _PATCH_QUBIT_INDICES).real
     raw_x = sv.expectation_value(_X_L, _PATCH_QUBIT_INDICES).real
-
-    x_byproduct = pauli_frame.interpret_z_readout("L0", 0)
-    z_byproduct = pauli_frame.interpret_x_readout("L0", 0)
-
-    corrected_z = (-1) ** x_byproduct * raw_z
-    corrected_x = (-1) ** z_byproduct * raw_x
-    return corrected_z, corrected_x
+    return (
+        pauli_frame.correct_z_expectation("L0", raw_z),
+        pauli_frame.correct_x_expectation("L0", raw_x),
+    )
 
 
 def _assert_logical_expectations(
@@ -240,7 +212,10 @@ class TestOneRoundDecodeCorrect:
         stab_frame = _init_stab_frame()
         pauli_frame = PauliFrame()
         pauli_frame.register("L0")
-        _decode_one_syndrome(x_raw, z_raw, stab_frame, pauli_frame)
+        _decoder.decode_from_raw_syndromes(
+            pauli_frame, "L0",
+            x_raw=x_raw, z_raw=z_raw, stab_frame=stab_frame,
+        )
 
         # 3. Check frame-corrected logical expectations on the post-measurement
         #    statevector. The logical operators are I on ancilla qubits, so the
@@ -333,10 +308,16 @@ class TestTwoRoundDecodeCorrect:
         pauli_frame.register("L0")
 
         x1_raw, z1_raw = _parse_syndrome_bits(syn1_str)
-        _decode_one_syndrome(x1_raw, z1_raw, stab_frame, pauli_frame)
+        _decoder.decode_from_raw_syndromes(
+            pauli_frame, "L0",
+            x_raw=x1_raw, z_raw=z1_raw, stab_frame=stab_frame,
+        )
 
         x2_raw, z2_raw = _parse_syndrome_bits(syn2_str)
-        _decode_one_syndrome(x2_raw, z2_raw, stab_frame, pauli_frame)
+        _decoder.decode_from_raw_syndromes(
+            pauli_frame, "L0",
+            x_raw=x2_raw, z_raw=z2_raw, stab_frame=stab_frame,
+        )
 
         # 3. Check frame-corrected logical expectations on the post-measurement
         #    statevector directly from the syndrome circuit.
