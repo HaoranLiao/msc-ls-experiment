@@ -70,7 +70,7 @@ _X_SYNDROME_TABLE = _build_syndrome_to_qubit_table(PATCH_X_STABILIZERS, PATCH_DA
 # ---------------------------------------------------------------------------
 
 
-class SteaneDetectedErrors(NamedTuple):
+class SteaneDetectedError(NamedTuple):
     """Decoded correction for the Steane code.
 
     Each field is the patch data site where the decoder identified an error,
@@ -119,7 +119,7 @@ class SteaneDecoder:
         *,
         z_syndrome: tuple[int, ...],
         x_syndrome: tuple[int, ...],
-    ) -> SteaneDetectedErrors:
+    ) -> SteaneDetectedError:
         """Decode a 6-bit change-detected syndrome into a physical recovery.
 
         Parameters
@@ -129,14 +129,14 @@ class SteaneDecoder:
         x_syndrome
             3-bit X-stabilizer change-detected outcomes (flags Z errors).
         """
-        return SteaneDetectedErrors(
+        return SteaneDetectedError(
             x_error_site=_Z_SYNDROME_TABLE.get(z_syndrome),
             z_error_site=_X_SYNDROME_TABLE.get(x_syndrome),
         )
 
     # -- Frame update --
 
-    def apply_recovery(self, frame, label: str, recovery: SteaneDetectedErrors) -> None:
+    def apply_recovery(self, frame, label: str, recovery: SteaneDetectedError) -> None:
         """Apply a decoded recovery to a PauliFrame.
 
         An X correction on a site in the logical-Z support anticommutes with
@@ -167,7 +167,7 @@ class SteaneDecoder:
         x_raw: tuple[int, ...],
         z_raw: tuple[int, ...],
         stab_frame,
-    ) -> SteaneDetectedErrors:
+    ) -> SteaneDetectedError:
         """Change-detect raw syndrome measurements, decode, and update the Pauli frame.
 
         Full pipeline for one syndrome extraction round:
