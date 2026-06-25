@@ -425,8 +425,10 @@ def build_steane_injection_with_h_cultivation(
         circuit,
         patch_qubits=list(qreg),  # type: ignore[arg-type]
         injected_state=injected_state,
-        add_barriers=add_barriers,
+        add_barriers=False,
     )
+    if add_barriers:
+        circuit.barrier(label="state injection")
 
     append_hadamard_axis_projection_round(
         circuit,
