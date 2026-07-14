@@ -7,12 +7,14 @@ because they describe the same d=3 patch.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.patches import Rectangle
 from qiskit import QuantumCircuit
+
+from research_qec_haoran.surface_code import rotated_common_qiskit as rotated_common
 
 # ---------------------------------------------------------------------------
 # Patch geometry
@@ -138,12 +140,10 @@ X_STABILIZER_SCHEDULE: dict[str, tuple[str, ...]] = {
 
 def label2qubit(surface_qubits) -> dict[str, object]:
     """Map surface labels ``a..i`` to the supplied Qiskit qubits."""
-    if len(surface_qubits) != 9:
-        raise ValueError("surface_qubits must contain exactly 9 qubits.")
-    return {
-        label: surface_qubits[index]
-        for label, index in SURFACE_INDEX.items()
-    }
+    return rotated_common.label2qubit(
+        surface_qubits,
+        surface_index=SURFACE_INDEX,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -229,57 +229,26 @@ def draw_patch(ax: Axes | None = None) -> tuple[plt.Figure, Axes]:
 def _append_parallel_stabilizer_measurements(
     circuit: QuantumCircuit,
     *,
-    label_to_qubit: Mapping[str, object],
+    label_to_qubit,
     ancillas: Sequence[object],
     classical_bits: Sequence[object],
-    schedules: Mapping[str, tuple[str, ...]],
+    schedules,
     basis: str,
     prepare_ancillas: bool,
     add_barriers: bool,
     barrier_label: str | None,
 ) -> None:
-    ancilla_list = list(ancillas)
-    classical_list = list(classical_bits)
-    stabilizer_names = tuple(schedules)
-    n = len(stabilizer_names)
-    if len(ancilla_list) < n:
-        raise ValueError(
-            f"{basis}-check requires at least {n} ancilla qubits, got {len(ancilla_list)}."
-        )
-    if len(classical_list) < n:
-        raise ValueError(
-            f"{basis}-check requires at least {n} classical bits, got {len(classical_list)}."
-        )
-
-    if prepare_ancillas:
-        reset_to_zero(circuit, qubits=ancilla_list, add_barriers=False)
-
-    if basis == "X":
-        for ancilla in ancilla_list:
-            circuit.h(ancilla)
-
-    num_steps = len(next(iter(schedules.values())))
-    for step in range(num_steps):
-        for ancilla, stabilizer_name in zip(ancilla_list, stabilizer_names, strict=False):
-            data_label = schedules[stabilizer_name][step]
-            if not data_label:
-                continue
-            if basis == "Z":
-                circuit.cx(label_to_qubit[data_label], ancilla)
-            elif basis == "X":
-                circuit.cx(ancilla, label_to_qubit[data_label])
-            else:
-                raise ValueError(f"unsupported stabilizer basis {basis!r}")
-
-    if basis == "X":
-        for ancilla in ancilla_list:
-            circuit.h(ancilla)
-
-    for ancilla, classical_bit in zip(ancilla_list, classical_list, strict=False):
-        circuit.measure(ancilla, classical_bit)
-
-    if add_barriers:
-        circuit.barrier(label=barrier_label or f"parallel {basis} stabilizer round")
+    rotated_common.append_parallel_stabilizer_measurements(
+        circuit,
+        label_to_qubit=label_to_qubit,
+        ancillas=ancillas,
+        classical_bits=classical_bits,
+        schedules=schedules,
+        basis=basis,
+        prepare_ancillas=prepare_ancillas,
+        add_barriers=add_barriers,
+        barrier_label=barrier_label,
+    )
 
 
 def reset_to_zero(
@@ -290,11 +259,12 @@ def reset_to_zero(
     barrier_label: str | None = None,
 ) -> None:
     """Reset a collection of qubits to ``|0>``."""
-    qubit_list = list(qubits)
-    for qubit in qubit_list:
-        circuit.reset(qubit)
-    if add_barriers:
-        circuit.barrier(label=barrier_label or "prepare |0>")
+    rotated_common.reset_to_zero(
+        circuit,
+        qubits=qubits,
+        add_barriers=add_barriers,
+        barrier_label=barrier_label,
+    )
 
 
 def prepare_plus(
@@ -305,11 +275,12 @@ def prepare_plus(
     barrier_label: str | None = None,
 ) -> None:
     """Prepare a collection of qubits in ``|+>``."""
-    qubit_list = list(qubits)
-    for qubit in qubit_list:
-        circuit.h(qubit)
-    if add_barriers:
-        circuit.barrier(label=barrier_label or "prepare |+>")
+    rotated_common.prepare_plus(
+        circuit,
+        qubits=qubits,
+        add_barriers=add_barriers,
+        barrier_label=barrier_label,
+    )
 
 
 def append_z_stabilizer_measurements(
@@ -319,16 +290,25 @@ def append_z_stabilizer_measurements(
     z_ancillas: Sequence[object],
     classical_bits: Sequence[object],
     round_label: str,
+    stabilizer_names: Sequence[str] | None = None,
     prepare_ancillas: bool = False,
     add_barriers: bool = True,
 ) -> None:
     """Append one parallel rotated-``d=3`` Z-check round."""
+    schedules = (
+        Z_STABILIZER_SCHEDULE
+        if stabilizer_names is None
+        else {
+            name: Z_STABILIZER_SCHEDULE[name]
+            for name in stabilizer_names
+        }
+    )
     _append_parallel_stabilizer_measurements(
         circuit,
         label_to_qubit=label2qubit(surface_qubits),
         ancillas=z_ancillas,
         classical_bits=classical_bits,
-        schedules=Z_STABILIZER_SCHEDULE,
+        schedules=schedules,
         basis="Z",
         prepare_ancillas=prepare_ancillas,
         add_barriers=add_barriers,
@@ -343,16 +323,25 @@ def append_x_stabilizer_measurements(
     x_ancillas: Sequence[object],
     classical_bits: Sequence[object],
     round_label: str,
+    stabilizer_names: Sequence[str] | None = None,
     prepare_ancillas: bool = False,
     add_barriers: bool = True,
 ) -> None:
     """Append one parallel rotated-``d=3`` X-check round."""
+    schedules = (
+        X_STABILIZER_SCHEDULE
+        if stabilizer_names is None
+        else {
+            name: X_STABILIZER_SCHEDULE[name]
+            for name in stabilizer_names
+        }
+    )
     _append_parallel_stabilizer_measurements(
         circuit,
         label_to_qubit=label2qubit(surface_qubits),
         ancillas=x_ancillas,
         classical_bits=classical_bits,
-        schedules=X_STABILIZER_SCHEDULE,
+        schedules=schedules,
         basis="X",
         prepare_ancillas=prepare_ancillas,
         add_barriers=add_barriers,
@@ -427,38 +416,15 @@ def append_logical_measurement(
         If True (default), directly measure the data qubits in the
         appropriate basis. If False, use an ancilla for indirect measurement.
     """
-    if support is None:
-        support = DEFAULT_LOGICAL_Z if basis == "Z" else DEFAULT_LOGICAL_X
-
-    l2q = label2qubit(surface_qubits)
-    cb = list(classical_bits)
-
-    if destructive:
-        if len(cb) < len(support):
-            raise ValueError(
-                "classical_bits must have at least "
-                f"{len(support)} entries for destructive measurement."
-            )
-        if basis == "X":
-            for label in support:
-                circuit.h(l2q[label])
-        for i, label in enumerate(support):
-            circuit.measure(l2q[label], cb[i])
-    else:
-        if ancilla_qubit is None:
-            raise ValueError("ancilla_qubit is required for non-destructive measurement.")
-        if len(cb) < 1:
-            raise ValueError(
-                "classical_bits must have at least 1 entry for non-destructive measurement."
-            )
-        if basis == "Z":
-            for label in support:
-                circuit.cx(l2q[label], ancilla_qubit)
-            circuit.measure(ancilla_qubit, cb[0])
-        else:
-            circuit.h(ancilla_qubit)
-            for label in support:
-                circuit.cx(ancilla_qubit, l2q[label])
-            circuit.h(ancilla_qubit)
-            circuit.measure(ancilla_qubit, cb[0])
-
+    rotated_common.append_logical_measurement(
+        circuit,
+        basis,
+        surface_qubits=surface_qubits,
+        surface_index=SURFACE_INDEX,
+        default_logical_x=DEFAULT_LOGICAL_X,
+        default_logical_z=DEFAULT_LOGICAL_Z,
+        support=support,
+        ancilla_qubit=ancilla_qubit,
+        classical_bits=classical_bits,
+        destructive=destructive,
+    )
