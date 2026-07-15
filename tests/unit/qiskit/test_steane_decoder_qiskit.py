@@ -21,12 +21,12 @@ from research_qec_haoran.decoding import (
     StabilizerFrame,
     SteaneDecoder,
 )
+from research_qec_haoran.noise import append_pauli_faults
 from research_qec_haoran.steane_code.decoding.decoder import (
     SYNDROME_BIT_LABELS,
     X_STABILIZER_LABELS,
     Z_STABILIZER_LABELS,
 )
-from research_qec_haoran.noise import append_pauli_faults
 from research_qec_haoran.steane_code.state_injection_qiskit import (
     NUM_PATCH_QUBITS,
     PATCH_DATA_SITES,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
+from qiskit import QuantumCircuit
 
 from research_qec_haoran.steane_code.state_injection_qiskit import (
     InjectedStateName,

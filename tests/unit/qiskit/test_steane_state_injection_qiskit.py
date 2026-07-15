@@ -510,7 +510,10 @@ def test_patch_steane_code_is_css_self_dual() -> None:
 
 @pytest.mark.parametrize("encoder", PATCH_ENCODERS)
 @pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_all_stabilizers_via_ancilla_measurement(state: InjectedStateName, encoder: str) -> None:
+def test_patch_all_stabilizers_via_ancilla_measurement(
+    state: InjectedStateName,
+    encoder: str,
+) -> None:
     """Verify all 6 syndrome bits are 0 (eigenvalue +1) via measurement circuit."""
     circuit = QuantumCircuit(NUM_PATCH_QUBITS, N_PATCH_ANCILLA)
     _apply_patch_encoder(
