@@ -1,9 +1,9 @@
 """Steane-to-surface-code lattice-surgery helpers."""
 
-from research_qec_haoran.msc_by_lattice_surgery.state_transfer_common_qiskit import (
+from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_common_qiskit import (
     LookupTableEarlyRejection,
 )
-from research_qec_haoran.msc_by_lattice_surgery.state_transfer_to_d3_rotated_qiskit import (
+from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_to_d3_rotated_qiskit import (
     HIRANO_LABEL_TO_GOOGLE_SITE,
     HIRANO_STEANE_DATA_ORDER,
     HIRANO_STEANE_GEOMETRIC_ORDER,
@@ -43,32 +43,32 @@ from research_qec_haoran.msc_by_lattice_surgery.state_transfer_to_d3_rotated_qis
     transfer_pauli_frame,
     x_verification_succeeds,
 )
-from research_qec_haoran.msc_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
+from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
     MERGED_BOUNDARY_CHECKS as D5_MERGED_BOUNDARY_CHECKS,
 )
-from research_qec_haoran.msc_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
+from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
     MERGED_INTERVAL_SURFACE_SYNDROME_SCHEDULE as D5_MERGED_INTERVAL_SURFACE_SYNDROME_SCHEDULE,
 )
-from research_qec_haoran.msc_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
+from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
     POST_TRANSFER_SURFACE_SYNDROME_SCHEDULE as D5_POST_TRANSFER_SURFACE_SYNDROME_SCHEDULE,
 )
-from research_qec_haoran.msc_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
+from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
     SURFACE_TOP_X_RECOVERY_LABELS as D5_SURFACE_TOP_X_RECOVERY_LABELS,
 )
-from research_qec_haoran.msc_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
+from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
     build_hirano_labeled_d5_qregs,
     build_steane_to_rotated_d5_lattice_surgery_circuit,
 )
-from research_qec_haoran.msc_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
+from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
     corrected_surface_logical_readout as corrected_d5_surface_logical_readout,
 )
-from research_qec_haoran.msc_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
+from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
     parse_transfer_measurements as parse_d5_transfer_measurements,
 )
-from research_qec_haoran.msc_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
+from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
     post_transfer_surface_syndrome_schedule as post_transfer_d5_surface_syndrome_schedule,
 )
-from research_qec_haoran.msc_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
+from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_to_d5_rotated_qiskit import (
     transfer_acceptance_succeeds as d5_transfer_acceptance_succeeds,
 )
 
