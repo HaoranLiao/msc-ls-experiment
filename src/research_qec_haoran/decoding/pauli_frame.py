@@ -44,8 +44,7 @@ class PauliFrame:
     def _check_label(self, label: str) -> None:
         if label not in self._x_flips:
             raise KeyError(
-                f"Logical qubit {label!r} not registered. "
-                f"Call frame.register({label!r}) first."
+                f"Logical qubit {label!r} not registered. Call frame.register({label!r}) first."
             )
 
     def register(self, label: str) -> None:
@@ -129,4 +128,3 @@ class PauliFrame:
             f"{label}: {self.current_byproduct(label)}" for label in sorted(self._x_flips)
         )
         return f"PauliFrame({{{entries}}})"
-

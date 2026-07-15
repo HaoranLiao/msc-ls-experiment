@@ -16,13 +16,9 @@ from research_qec_haoran.surface_code import rotated_common_qiskit as rotated_co
 DISTANCE = 5
 NUM_DATA_QUBITS = DISTANCE * DISTANCE
 SURFACE_ORDER: tuple[str, ...] = tuple(ascii_lowercase[:NUM_DATA_QUBITS])
-SURFACE_INDEX: dict[str, int] = {
-    label: index
-    for index, label in enumerate(SURFACE_ORDER)
-}
+SURFACE_INDEX: dict[str, int] = {label: index for index, label in enumerate(SURFACE_ORDER)}
 SURFACE_COORDS: dict[str, tuple[int, int]] = {
-    label: (index % DISTANCE, index // DISTANCE)
-    for label, index in SURFACE_INDEX.items()
+    label: (index % DISTANCE, index // DISTANCE) for label, index in SURFACE_INDEX.items()
 }
 
 
@@ -128,19 +124,14 @@ def _representatives(
 LOGICAL_Z_REPRESENTATIVES = _representatives(DEFAULT_LOGICAL_Z, Z_STABILIZERS)
 LOGICAL_X_REPRESENTATIVES = _representatives(DEFAULT_LOGICAL_X, X_STABILIZERS)
 
-INIT_Z_LABELS: tuple[str, ...] = tuple(
-    f"init_{name.lower()}" for name in Z_STABILIZERS
-)
+INIT_Z_LABELS: tuple[str, ...] = tuple(f"init_{name.lower()}" for name in Z_STABILIZERS)
 
 
 def _build_schedule(
     stabilizers: Mapping[str, tuple[str, ...]],
 ) -> dict[str, tuple[str, ...]]:
     width = max(len(support) for support in stabilizers.values())
-    return {
-        name: support + ("",) * (width - len(support))
-        for name, support in stabilizers.items()
-    }
+    return {name: support + ("",) * (width - len(support)) for name, support in stabilizers.items()}
 
 
 Z_STABILIZER_SCHEDULE = _build_schedule(Z_STABILIZERS)
@@ -270,10 +261,7 @@ def append_z_stabilizer_measurements(
     schedules = (
         Z_STABILIZER_SCHEDULE
         if stabilizer_names is None
-        else {
-            name: Z_STABILIZER_SCHEDULE[name]
-            for name in stabilizer_names
-        }
+        else {name: Z_STABILIZER_SCHEDULE[name] for name in stabilizer_names}
     )
     rotated_common.append_parallel_stabilizer_measurements(
         circuit,
@@ -303,10 +291,7 @@ def append_x_stabilizer_measurements(
     schedules = (
         X_STABILIZER_SCHEDULE
         if stabilizer_names is None
-        else {
-            name: X_STABILIZER_SCHEDULE[name]
-            for name in stabilizer_names
-        }
+        else {name: X_STABILIZER_SCHEDULE[name] for name in stabilizer_names}
     )
     rotated_common.append_parallel_stabilizer_measurements(
         circuit,

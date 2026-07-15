@@ -58,10 +58,7 @@ def parse_qiskit_bitstring(
             f"bitstring {bitstring!r} has {len(flattened)} bits, "
             f"but {len(labels)} labels were provided."
         )
-    return {
-        label: qiskit_bit_value(flattened, position)
-        for position, label in enumerate(labels)
-    }
+    return {label: qiskit_bit_value(flattened, position) for position, label in enumerate(labels)}
 
 
 def parse_qiskit_registers(
@@ -93,5 +90,5 @@ def parse_qiskit_registers(
     offset = len(flattened)
     for name, labels in register_labels:
         offset -= len(labels)
-        parsed[name] = parse_qiskit_bitstring(flattened[offset:offset + len(labels)], labels)
+        parsed[name] = parse_qiskit_bitstring(flattened[offset : offset + len(labels)], labels)
     return parsed

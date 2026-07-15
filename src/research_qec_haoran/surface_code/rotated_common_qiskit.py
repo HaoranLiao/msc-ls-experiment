@@ -14,13 +14,8 @@ def label2qubit(
 ) -> dict[str, object]:
     """Map surface labels to supplied Qiskit qubits."""
     if len(surface_qubits) != len(surface_index):
-        raise ValueError(
-            f"surface_qubits must contain exactly {len(surface_index)} qubits."
-        )
-    return {
-        label: surface_qubits[index]
-        for label, index in surface_index.items()
-    }
+        raise ValueError(f"surface_qubits must contain exactly {len(surface_index)} qubits.")
+    return {label: surface_qubits[index] for label, index in surface_index.items()}
 
 
 def reset_to_zero(

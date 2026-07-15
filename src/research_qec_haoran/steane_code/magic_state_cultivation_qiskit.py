@@ -111,9 +111,7 @@ FOLD_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
         (7, 9),
     ),
     # Step 6: one CNOT.
-    (
-        (7, 4),
-    ),
+    ((7, 4),),
 )
 
 
@@ -367,6 +365,7 @@ def append_hadamard_axis_projection_round(
 # 3. Full circuit builder
 # =============================================================================
 
+
 def append_steane_injection_with_h_cultivation(
     circuit: QuantumCircuit,
     *,
@@ -428,10 +427,10 @@ def append_steane_injection_with_h_cultivation(
         )
 
 
-
 # =============================================================================
 # 4. Postselection helpers
 # =============================================================================
+
 
 def postselect_success_counts(
     counts: dict[str, int],

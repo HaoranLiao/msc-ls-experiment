@@ -308,9 +308,7 @@ def build_kickback_tomography_experiment(
 
     qec_positions = tuple(qec_registers[index][1] for index in sorted(qec_registers))
     preparation_bits = (
-        _cultivation_bits_from_positions(prep_positions)
-        if prep_positions is not None
-        else None
+        _cultivation_bits_from_positions(prep_positions) if prep_positions is not None else None
     )
     layout = KickbackTomographyBitLayout(
         preparation=preparation_bits,

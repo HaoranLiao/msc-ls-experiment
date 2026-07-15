@@ -61,4 +61,3 @@ def append_pauli_faults(
             circuit.z(qubit)
         else:
             raise ValueError(f"unsupported Pauli {pauli!r}; expected 'X', 'Y', or 'Z'")
-

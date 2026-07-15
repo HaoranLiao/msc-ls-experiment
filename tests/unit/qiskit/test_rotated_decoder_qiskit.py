@@ -27,7 +27,6 @@ Z_NAMES = tuple(d3.Z_STABILIZERS)
 X_NAMES = tuple(d3.X_STABILIZERS)
 
 
-
 def _expected_syndrome_for_fault(pauli: str, qubit_label: str):
     """Compute the expected (z_deltas, x_deltas) for a single-qubit Pauli fault."""
     z_deltas = {name: 0 for name in Z_NAMES}
@@ -416,6 +415,7 @@ def _d5_decoder() -> RotatedDecoder:
 # ===========================================================================
 # SET 3: Single-fault decoding (d=5)
 # ===========================================================================
+
 
 class TestD5SingleFaultDecoding:
     """Repeat the d=3 single-fault decoding checks on a rotated d=5 patch."""

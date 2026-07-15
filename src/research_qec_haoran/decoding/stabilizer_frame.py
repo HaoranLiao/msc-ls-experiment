@@ -69,8 +69,7 @@ class StabilizerFrame:
     ) -> dict[str, int]:
         """Return XOR-relative changes for a batch of measurements."""
         return {
-            label: self.compare(label, bit, update=update)
-            for label, bit in measurements.items()
+            label: self.compare(label, bit, update=update) for label, bit in measurements.items()
         }
 
     def advance(self, measurements: Mapping[str, int | bool]) -> dict[str, int]:

@@ -66,7 +66,18 @@ def _expected_logical_expectation_values(
 
 
 ALL_STATES: list[InjectedStateName] = [
-    "0", "1", "+", "-", "i", "-i", "Y+", "Y-", "S", "T", "Tdg", "H",
+    "0",
+    "1",
+    "+",
+    "-",
+    "i",
+    "-i",
+    "Y+",
+    "Y-",
+    "S",
+    "T",
+    "Tdg",
+    "H",
 ]
 
 
@@ -230,8 +241,7 @@ def test_all_stabilizers_plus_one(state: InjectedStateName) -> None:
         stab_type = "X" if idx < 3 else "Z"
         stab_idx = idx if idx < 3 else idx - 3
         assert ev == pytest.approx(1.0, abs=TOLERANCE), (
-            f"State {state!r}: {stab_type}-stabilizer {stab_idx} "
-            f"⟨Z_anc⟩ expected 1.0, got {ev:.6f}"
+            f"State {state!r}: {stab_type}-stabilizer {stab_idx} ⟨Z_anc⟩ expected 1.0, got {ev:.6f}"
         )
 
 
@@ -260,9 +270,7 @@ def test_logical_representatives_are_x7_times_stabilizer() -> None:
     for rep in LOGICAL_X_REPRESENTATIVES:
         rep_set = set(rep)
         found = any(all_7.symmetric_difference(g) == rep_set for g in stab_group)
-        assert found, (
-            f"X_L representative {rep} is not X^7 times any stabilizer group element"
-        )
+        assert found, f"X_L representative {rep} is not X^7 times any stabilizer group element"
 
 
 def test_logical_representatives_are_z7_times_stabilizer() -> None:
@@ -285,9 +293,7 @@ def test_logical_representatives_are_z7_times_stabilizer() -> None:
     for rep in LOGICAL_Z_REPRESENTATIVES:
         rep_set = set(rep)
         found = any(all_7.symmetric_difference(g) == rep_set for g in stab_group)
-        assert found, (
-            f"Z_L representative {rep} is not Z^7 times any stabilizer group element"
-        )
+        assert found, f"Z_L representative {rep} is not Z^7 times any stabilizer group element"
 
 
 def test_steane_code_is_css_self_dual() -> None:
@@ -316,13 +322,17 @@ def _apply_patch_encoder(
     """Dispatch to the abstract or Crumble encoder on the 11-site patch."""
     if encoder == "abstract":
         append_patch_steane_state_injection_encoder(
-            circuit, patch_qubits=patch_qubits,
-            injected_state=injected_state, add_barriers=add_barriers,
+            circuit,
+            patch_qubits=patch_qubits,
+            injected_state=injected_state,
+            add_barriers=add_barriers,
         )
     elif encoder == "crumble":
         append_patch_steane_state_injection_encoder_crumble_sequences(
-            circuit, patch_qubits=patch_qubits,
-            injected_state=injected_state, add_barriers=add_barriers,
+            circuit,
+            patch_qubits=patch_qubits,
+            injected_state=injected_state,
+            add_barriers=add_barriers,
         )
     else:
         raise ValueError(f"Unknown encoder: {encoder!r}")
@@ -337,8 +347,11 @@ def _patch_measure_logical_expectation_destructive(
     """Encode on 11-site patch and compute ⟨basis_L⟩ directly via statevector."""
     circuit = QuantumCircuit(NUM_PATCH_QUBITS)
     _apply_patch_encoder(
-        circuit, encoder, patch_qubits=list(range(NUM_PATCH_QUBITS)),
-        injected_state=state, add_barriers=False,
+        circuit,
+        encoder,
+        patch_qubits=list(range(NUM_PATCH_QUBITS)),
+        injected_state=state,
+        add_barriers=False,
     )
 
     circuit.save_expectation_value(
@@ -359,7 +372,10 @@ def test_patch_logical_z_expectation(state: InjectedStateName, encoder: str) -> 
     expected_z, _ = _expected_logical_expectation_values(state)
     for rep in PATCH_LOGICAL_Z_REPRESENTATIVES:
         measured_z = _patch_measure_logical_expectation_destructive(
-            state, "Z", support=rep, encoder=encoder,
+            state,
+            "Z",
+            support=rep,
+            encoder=encoder,
         )
         assert measured_z == pytest.approx(expected_z, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: ⟨Z_L⟩ expected {expected_z:.4f}, got {measured_z:.4f}"
@@ -373,7 +389,10 @@ def test_patch_logical_x_expectation(state: InjectedStateName, encoder: str) -> 
     _, expected_x = _expected_logical_expectation_values(state)
     for rep in PATCH_LOGICAL_X_REPRESENTATIVES:
         measured_x = _patch_measure_logical_expectation_destructive(
-            state, "X", support=rep, encoder=encoder,
+            state,
+            "X",
+            support=rep,
+            encoder=encoder,
         )
         assert measured_x == pytest.approx(expected_x, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: ⟨X_L⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
@@ -397,8 +416,11 @@ def _patch_measure_logical_expectation_non_destructive(
 
     circuit = QuantumCircuit(NUM_PATCH_QUBITS + 1, 1)
     _apply_patch_encoder(
-        circuit, encoder, patch_qubits=list(range(NUM_PATCH_QUBITS)),
-        injected_state=state, add_barriers=False,
+        circuit,
+        encoder,
+        patch_qubits=list(range(NUM_PATCH_QUBITS)),
+        injected_state=state,
+        add_barriers=False,
     )
 
     append_patch_logical_measurement(
@@ -425,7 +447,10 @@ def test_patch_logical_z_via_measurement_circuit(state: InjectedStateName, encod
     expected_z, _ = _expected_logical_expectation_values(state)
     for rep in PATCH_LOGICAL_Z_REPRESENTATIVES:
         measured_z = _patch_measure_logical_expectation_non_destructive(
-            state, "Z", support=rep, encoder=encoder,
+            state,
+            "Z",
+            support=rep,
+            encoder=encoder,
         )
         assert measured_z == pytest.approx(expected_z, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: "
@@ -440,7 +465,10 @@ def test_patch_logical_x_via_measurement_circuit(state: InjectedStateName, encod
     _, expected_x = _expected_logical_expectation_values(state)
     for rep in PATCH_LOGICAL_X_REPRESENTATIVES:
         measured_x = _patch_measure_logical_expectation_non_destructive(
-            state, "X", support=rep, encoder=encoder,
+            state,
+            "X",
+            support=rep,
+            encoder=encoder,
         )
         assert measured_x == pytest.approx(expected_x, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: "
@@ -521,8 +549,11 @@ def test_patch_all_stabilizers_via_ancilla_measurement(
     """Verify all 6 syndrome bits are 0 (eigenvalue +1) via measurement circuit."""
     circuit = QuantumCircuit(NUM_PATCH_QUBITS, N_PATCH_ANCILLA)
     _apply_patch_encoder(
-        circuit, encoder, patch_qubits=list(range(NUM_PATCH_QUBITS)),
-        injected_state=state, add_barriers=False,
+        circuit,
+        encoder,
+        patch_qubits=list(range(NUM_PATCH_QUBITS)),
+        injected_state=state,
+        add_barriers=False,
     )
 
     append_patch_stabilizer_measurement(
@@ -540,8 +571,7 @@ def test_patch_all_stabilizers_via_ancilla_measurement(
         stab_type = "X" if idx < 3 else "Z"
         stab_idx = idx if idx < 3 else idx - 3
         assert bit_val == 0, (
-            f"State {state!r}: {stab_type}-stabilizer {stab_idx} "
-            f"expected 0, got {bit_val}"
+            f"State {state!r}: {stab_type}-stabilizer {stab_idx} expected 0, got {bit_val}"
         )
 
 
@@ -551,8 +581,11 @@ def test_patch_stabilizer_expectation_values(state: InjectedStateName, encoder: 
     """Verify ⟨S⟩ = +1 for all 6 stabilizer operators directly via Statevector."""
     circuit = QuantumCircuit(NUM_PATCH_QUBITS)
     _apply_patch_encoder(
-        circuit, encoder, patch_qubits=list(range(NUM_PATCH_QUBITS)),
-        injected_state=state, add_barriers=False,
+        circuit,
+        encoder,
+        patch_qubits=list(range(NUM_PATCH_QUBITS)),
+        injected_state=state,
+        add_barriers=False,
     )
 
     sv = Statevector(circuit)
@@ -573,9 +606,11 @@ def test_patch_stabilizer_expectation_values(state: InjectedStateName, encoder: 
             f"⟨Z_S⟩ expected 1.0, got {ev:.6f}"
         )
 
+
 # ---------------------------------------------------------
 # Stabilizer syndrome on 11-site patch with injected faults
 # ---------------------------------------------------------
+
 
 def _expected_patch_syndrome(
     faults: list[tuple[str, int]],
@@ -607,8 +642,11 @@ def _build_and_run_patch_syndrome(
     circuit = QuantumCircuit(NUM_PATCH_QUBITS, N_PATCH_ANCILLA)
 
     _apply_patch_encoder(
-        circuit, encoder, patch_qubits=list(range(NUM_PATCH_QUBITS)),
-        injected_state=injected_state, add_barriers=False,
+        circuit,
+        encoder,
+        patch_qubits=list(range(NUM_PATCH_QUBITS)),
+        injected_state=injected_state,
+        add_barriers=False,
     )
 
     # Inject faults.
@@ -642,7 +680,7 @@ _TWO_SAME_FAULTS: list[list[tuple[str, int]]] = []
 _TWO_SAME_IDS: list[str] = []
 for _p in ("X", "Y", "Z"):
     for _i, _s1 in enumerate(PATCH_DATA_SITES):
-        for _s2 in PATCH_DATA_SITES[_i + 1:]:
+        for _s2 in PATCH_DATA_SITES[_i + 1 :]:
             _TWO_SAME_FAULTS.append([(_p, _s1), (_p, _s2)])
             _TWO_SAME_IDS.append(f"{_p}{_p}_{_s1}_{_s2}")
 
@@ -650,7 +688,7 @@ _TWO_MIXED_FAULTS: list[list[tuple[str, int]]] = []
 _TWO_MIXED_IDS: list[str] = []
 for _p1, _p2 in [("X", "Z"), ("X", "Y"), ("Z", "Y")]:
     for _i, _s1 in enumerate(PATCH_DATA_SITES):
-        for _s2 in PATCH_DATA_SITES[_i + 1:]:
+        for _s2 in PATCH_DATA_SITES[_i + 1 :]:
             _TWO_MIXED_FAULTS.append([(_p1, _s1), (_p2, _s2)])
             _TWO_MIXED_IDS.append(f"{_p1}{_p2}_{_s1}_{_s2}")
 
@@ -679,7 +717,9 @@ class TestPatchSyndromeExtraction:
         """Single-qubit fault produces the correct unique syndrome."""
         expected_x, expected_z = _expected_patch_syndrome(faults)
         measured_x, measured_z = _build_and_run_patch_syndrome(
-            faults, injected_state=state, encoder=encoder,
+            faults,
+            injected_state=state,
+            encoder=encoder,
         )
         pauli, site = faults[0]
         assert (measured_x, measured_z) == (expected_x, expected_z), (
@@ -699,7 +739,9 @@ class TestPatchSyndromeExtraction:
         """Two same-Pauli faults: syndrome is XOR of individual syndromes."""
         expected_x, expected_z = _expected_patch_syndrome(faults)
         measured_x, measured_z = _build_and_run_patch_syndrome(
-            faults, injected_state=state, encoder=encoder,
+            faults,
+            injected_state=state,
+            encoder=encoder,
         )
         p, s1, s2 = faults[0][0], faults[0][1], faults[1][1]
         assert (measured_x, measured_z) == (expected_x, expected_z), (
@@ -719,7 +761,9 @@ class TestPatchSyndromeExtraction:
         """Two different-Pauli faults: X and Z sectors detect independently."""
         expected_x, expected_z = _expected_patch_syndrome(faults)
         measured_x, measured_z = _build_and_run_patch_syndrome(
-            faults, injected_state=state, encoder=encoder,
+            faults,
+            injected_state=state,
+            encoder=encoder,
         )
         p1, s1 = faults[0]
         p2, s2 = faults[1]

@@ -33,7 +33,11 @@ NOISY_TEST_SEED = 20251218
 
 # States to test for cultivation — minimal representative subset.
 CULTIVATION_TEST_STATES: list[InjectedStateName] = [
-    "H", "1", "+", "Y+", "T",
+    "H",
+    "1",
+    "+",
+    "Y+",
+    "T",
 ]
 
 
@@ -191,9 +195,7 @@ class TestPostselectedLogicalExpectation:
 
     @pytest.mark.parametrize("state", CULTIVATION_TEST_STATES)
     @pytest.mark.parametrize("basis", ["Z", "X"])
-    def test_expectation_matches_h_state(
-        self, state: InjectedStateName, basis: str
-    ) -> None:
+    def test_expectation_matches_h_state(self, state: InjectedStateName, basis: str) -> None:
         """⟨Z_L⟩ = ⟨X_L⟩ = 1/√2 after successful cultivation for any input."""
         circuit = _build_cultivation_with_logical_measurement(state, basis)
         sim = AerSimulator()
@@ -202,9 +204,7 @@ class TestPostselectedLogicalExpectation:
         expectation, n_accepted = _postselect_and_compute_expectation(counts)
 
         # Must have at least some accepted shots
-        assert n_accepted > 0, (
-            f"No accepted shots for state={state!r}, basis={basis}"
-        )
+        assert n_accepted > 0, f"No accepted shots for state={state!r}, basis={basis}"
 
         # Statistical tolerance: ~4σ where σ = sqrt((1 - ev²) / n_accepted)
         # For ev ≈ 1/√2: var per shot ≈ 0.5, σ ≈ sqrt(0.5/n_accepted)
@@ -235,8 +235,7 @@ class TestPostselectedLogicalExpectation:
             sigma = math.sqrt(expected_rate * (1 - expected_rate) / NUM_SHOTS)
             tolerance = max(4 * sigma, 0.02)
             assert measured_rate == pytest.approx(expected_rate, abs=tolerance), (
-                f"State {state!r}: acceptance = {measured_rate:.4f}, "
-                f"expected = {expected_rate:.4f}"
+                f"State {state!r}: acceptance = {measured_rate:.4f}, expected = {expected_rate:.4f}"
             )
 
 
@@ -281,8 +280,7 @@ class TestStabilizerSyndromesAfterCultivation:
             found_accepted = True
             stab_start = N_POSTSELECTION_BITS
             assert all(
-                qiskit_bit_value(bitstring, i) == 0
-                for i in range(stab_start, stab_start + n_stab)
+                qiskit_bit_value(bitstring, i) == 0 for i in range(stab_start, stab_start + n_stab)
             ), (
                 f"State {state!r}: accepted shot has non-trivial syndrome "
                 f"in bitstring {bitstring!r} (expected all zeros)"
@@ -324,7 +322,8 @@ def _build_multi_round_cultivation_circuit(
     cultivation stages, then appends a destructive logical measurement.
     """
     circuit = _make_cultivation_circuit(
-        injected_state=injected_state, n_rounds=n_rounds,
+        injected_state=injected_state,
+        n_rounds=n_rounds,
     )
 
     # Destructive logical measurement
@@ -388,7 +387,9 @@ class TestNoisyCultivationImprovesWithRounds:
 
         for n_rounds in self.ROUNDS_TO_TEST:
             circuit = _build_multi_round_cultivation_circuit(
-                n_rounds, basis, injected_state="H",
+                n_rounds,
+                basis,
+                injected_state="H",
             )
             counts = sim.run(circuit, shots=NUM_SHOTS).result().get_counts()
             expectation, n_accepted = _postselect_multi_round(counts, n_rounds)
@@ -408,9 +409,7 @@ class TestNoisyCultivationImprovesWithRounds:
             )
 
     @pytest.mark.parametrize("basis", ["X"])
-    def test_more_rounds_improves_fidelity_and_increases_discard(
-        self, basis: str
-    ) -> None:
+    def test_more_rounds_improves_fidelity_and_increases_discard(self, basis: str) -> None:
         """More cultivation rounds → better fidelity and higher discard rate."""
         noise_model = _build_noisy_noise_model()
         sim = AerSimulator(noise_model=noise_model, seed_simulator=NOISY_TEST_SEED)
@@ -421,14 +420,14 @@ class TestNoisyCultivationImprovesWithRounds:
 
         for n_rounds in self.ROUNDS_TO_TEST:
             circuit = _build_multi_round_cultivation_circuit(
-                n_rounds, basis, injected_state="H",
+                n_rounds,
+                basis,
+                injected_state="H",
             )
             counts = sim.run(circuit, shots=n_shots).result().get_counts()
             expectation, n_accepted = _postselect_multi_round(counts, n_rounds)
 
-            assert n_accepted > 50, (
-                f"Too few accepted shots ({n_accepted}) for {n_rounds} rounds"
-            )
+            assert n_accepted > 50, f"Too few accepted shots ({n_accepted}) for {n_rounds} rounds"
 
             errors.append(abs(expectation - INV_SQRT2))
             acceptance_rates.append(n_accepted / n_shots)
@@ -462,12 +461,19 @@ class TestNoisyCultivationImprovesWithRounds:
         creg = ClassicalRegister(3, "c")
         raw_circuit = QuantumCircuit(qreg, creg)
         append_patch_steane_state_injection_encoder_crumble_sequences(
-            raw_circuit, patch_qubits=list(qreg), injected_state="H", add_barriers=False,
+            raw_circuit,
+            patch_qubits=list(qreg),
+            injected_state="H",
+            add_barriers=False,
         )
         support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
         append_patch_logical_measurement(
-            raw_circuit, basis, patch_qubits=list(qreg), support=support,
-            classical_bits=list(creg), destructive=True,
+            raw_circuit,
+            basis,
+            patch_qubits=list(qreg),
+            support=support,
+            classical_bits=list(creg),
+            destructive=True,
         )
         raw_counts = sim.run(raw_circuit, shots=NUM_SHOTS).result().get_counts()
         # Compute expectation from raw counts (no postselection)
@@ -487,9 +493,7 @@ class TestNoisyCultivationImprovesWithRounds:
         cult_expectation, n_accepted = _postselect_multi_round(cult_counts, 1)
         cult_error = abs(cult_expectation - INV_SQRT2)
 
-        assert n_accepted > 50, (
-            f"Too few accepted shots ({n_accepted}) for basis={basis}"
-        )
+        assert n_accepted > 50, f"Too few accepted shots ({n_accepted}) for basis={basis}"
 
         # Postselected cultivation should yield fidelity at least as good
         # as raw encoder (and typically better since it filters detectable errors).

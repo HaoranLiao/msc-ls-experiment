@@ -45,8 +45,10 @@ X_NAMES = tuple(X_STABILIZERS)
 # Helpers
 # ===========================================================================
 
+
 def _chebyshev_distance(c1: tuple[float, float], c2: tuple[float, float]) -> float:
     return max(abs(c1[0] - c2[0]), abs(c1[1] - c2[1]))
+
 
 def _build_logical_operator(basis: str, support: tuple[str, ...], n: int) -> SparsePauliOp:
     """Build an n-qubit Pauli operator acting on the given support."""
@@ -137,6 +139,7 @@ class TestPatchGeometry:
     def test_logical_z_representatives_recovered_from_stabilizer_products(self) -> None:
         """Stabilizer products recover all logical-Z representatives."""
         from itertools import combinations
+
         z_stab_supports = [frozenset(s) for s in Z_STABILIZERS.values()]
         default = frozenset(DEFAULT_LOGICAL_Z)
         generated = set()
@@ -152,6 +155,7 @@ class TestPatchGeometry:
     def test_logical_x_representatives_recovered_from_stabilizer_products(self) -> None:
         """Stabilizer products recover all logical-X representatives."""
         from itertools import combinations
+
         x_stab_supports = [frozenset(s) for s in X_STABILIZERS.values()]
         default = frozenset(DEFAULT_LOGICAL_X)
         generated = set()
@@ -188,9 +192,13 @@ class TestLogicalZeroPreparation:
         qc = QuantumCircuit(s, xa, x_cl)
 
         append_x_stabilizer_measurements(
-            qc, surface_qubits=list(s), x_ancillas=list(xa),
-            classical_bits=list(x_cl), round_label="init",
-            prepare_ancillas=False, add_barriers=False,
+            qc,
+            surface_qubits=list(s),
+            x_ancillas=list(xa),
+            classical_bits=list(x_cl),
+            round_label="init",
+            prepare_ancillas=False,
+            add_barriers=False,
         )
         qc_no_meas = qc.remove_final_measurements(inplace=False)
         return Statevector.from_instruction(qc_no_meas)
@@ -205,13 +213,21 @@ class TestLogicalZeroPreparation:
         qc = QuantumCircuit(s, xa, x_cl, log_cl)
 
         append_x_stabilizer_measurements(
-            qc, surface_qubits=list(s), x_ancillas=list(xa),
-            classical_bits=list(x_cl), round_label="init",
-            prepare_ancillas=False, add_barriers=False,
+            qc,
+            surface_qubits=list(s),
+            x_ancillas=list(xa),
+            classical_bits=list(x_cl),
+            round_label="init",
+            prepare_ancillas=False,
+            add_barriers=False,
         )
         append_logical_measurement(
-            qc, basis, surface_qubits=list(s), support=support,
-            classical_bits=list(log_cl), destructive=True,
+            qc,
+            basis,
+            surface_qubits=list(s),
+            support=support,
+            classical_bits=list(log_cl),
+            destructive=True,
         )
 
         counts = sim.run(qc, shots=1024).result().get_counts()
@@ -227,13 +243,22 @@ class TestLogicalZeroPreparation:
         qc = QuantumCircuit(s, xa, anc, x_cl, log_cl)
 
         append_x_stabilizer_measurements(
-            qc, surface_qubits=list(s), x_ancillas=list(xa),
-            classical_bits=list(x_cl), round_label="init",
-            prepare_ancillas=False, add_barriers=False,
+            qc,
+            surface_qubits=list(s),
+            x_ancillas=list(xa),
+            classical_bits=list(x_cl),
+            round_label="init",
+            prepare_ancillas=False,
+            add_barriers=False,
         )
         append_logical_measurement(
-            qc, basis, surface_qubits=list(s), support=support,
-            ancilla_qubit=anc[0], classical_bits=list(log_cl), destructive=False,
+            qc,
+            basis,
+            surface_qubits=list(s),
+            support=support,
+            ancilla_qubit=anc[0],
+            classical_bits=list(log_cl),
+            destructive=False,
         )
 
         qc_no_meas = qc.remove_final_measurements(inplace=False)
@@ -288,14 +313,22 @@ class TestLogicalZeroPreparation:
         qc = QuantumCircuit(s, xa, za, x_cl, z_cl)
 
         append_x_stabilizer_measurements(
-            qc, surface_qubits=list(s), x_ancillas=list(xa),
-            classical_bits=list(x_cl), round_label="init",
-            prepare_ancillas=False, add_barriers=False,
+            qc,
+            surface_qubits=list(s),
+            x_ancillas=list(xa),
+            classical_bits=list(x_cl),
+            round_label="init",
+            prepare_ancillas=False,
+            add_barriers=False,
         )
         append_z_stabilizer_measurements(
-            qc, surface_qubits=list(s), z_ancillas=list(za),
-            classical_bits=list(z_cl), round_label="check",
-            prepare_ancillas=False, add_barriers=False,
+            qc,
+            surface_qubits=list(s),
+            z_ancillas=list(za),
+            classical_bits=list(z_cl),
+            round_label="check",
+            prepare_ancillas=False,
+            add_barriers=False,
         )
 
         qc_no_meas = qc.remove_final_measurements(inplace=False)
@@ -328,9 +361,13 @@ class TestLogicalPlusPreparation:
 
         prepare_plus(qc, qubits=list(s))
         append_z_stabilizer_measurements(
-            qc, surface_qubits=list(s), z_ancillas=list(za),
-            classical_bits=list(z_cl), round_label="init",
-            prepare_ancillas=False, add_barriers=False,
+            qc,
+            surface_qubits=list(s),
+            z_ancillas=list(za),
+            classical_bits=list(z_cl),
+            round_label="init",
+            prepare_ancillas=False,
+            add_barriers=False,
         )
         qc_no_meas = qc.remove_final_measurements(inplace=False)
         return Statevector.from_instruction(qc_no_meas)
@@ -346,13 +383,21 @@ class TestLogicalPlusPreparation:
 
         prepare_plus(qc, qubits=list(s))
         append_z_stabilizer_measurements(
-            qc, surface_qubits=list(s), z_ancillas=list(za),
-            classical_bits=list(z_cl), round_label="init",
-            prepare_ancillas=False, add_barriers=False,
+            qc,
+            surface_qubits=list(s),
+            z_ancillas=list(za),
+            classical_bits=list(z_cl),
+            round_label="init",
+            prepare_ancillas=False,
+            add_barriers=False,
         )
         append_logical_measurement(
-            qc, basis, surface_qubits=list(s), support=support,
-            classical_bits=list(log_cl), destructive=True,
+            qc,
+            basis,
+            surface_qubits=list(s),
+            support=support,
+            classical_bits=list(log_cl),
+            destructive=True,
         )
 
         counts = sim.run(qc, shots=1024).result().get_counts()
@@ -369,13 +414,22 @@ class TestLogicalPlusPreparation:
 
         prepare_plus(qc, qubits=list(s))
         append_z_stabilizer_measurements(
-            qc, surface_qubits=list(s), z_ancillas=list(za),
-            classical_bits=list(z_cl), round_label="init",
-            prepare_ancillas=False, add_barriers=False,
+            qc,
+            surface_qubits=list(s),
+            z_ancillas=list(za),
+            classical_bits=list(z_cl),
+            round_label="init",
+            prepare_ancillas=False,
+            add_barriers=False,
         )
         append_logical_measurement(
-            qc, basis, surface_qubits=list(s), support=support,
-            ancilla_qubit=anc[0], classical_bits=list(log_cl), destructive=False,
+            qc,
+            basis,
+            surface_qubits=list(s),
+            support=support,
+            ancilla_qubit=anc[0],
+            classical_bits=list(log_cl),
+            destructive=False,
         )
 
         qc_no_meas = qc.remove_final_measurements(inplace=False)
@@ -431,14 +485,22 @@ class TestLogicalPlusPreparation:
 
         prepare_plus(qc, qubits=list(s))
         append_z_stabilizer_measurements(
-            qc, surface_qubits=list(s), z_ancillas=list(za),
-            classical_bits=list(z_cl), round_label="init",
-            prepare_ancillas=False, add_barriers=False,
+            qc,
+            surface_qubits=list(s),
+            z_ancillas=list(za),
+            classical_bits=list(z_cl),
+            round_label="init",
+            prepare_ancillas=False,
+            add_barriers=False,
         )
         append_x_stabilizer_measurements(
-            qc, surface_qubits=list(s), x_ancillas=list(xa),
-            classical_bits=list(x_cl), round_label="check",
-            prepare_ancillas=False, add_barriers=False,
+            qc,
+            surface_qubits=list(s),
+            x_ancillas=list(xa),
+            classical_bits=list(x_cl),
+            round_label="check",
+            prepare_ancillas=False,
+            add_barriers=False,
         )
 
         qc_no_meas = qc.remove_final_measurements(inplace=False)

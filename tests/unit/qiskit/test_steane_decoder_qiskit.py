@@ -83,9 +83,7 @@ _TWO_ROUND_SAMPLE: list[tuple[tuple[str, int], tuple[str, int]]] = [
     (("Z", 4), ("Z", 5)),
 ]
 
-_TWO_ROUND_IDS = [
-    f"{p1}{s1}-{p2}{s2}" for (p1, s1), (p2, s2) in _TWO_ROUND_SAMPLE
-]
+_TWO_ROUND_IDS = [f"{p1}{s1}-{p2}{s2}" for (p1, s1), (p2, s2) in _TWO_ROUND_SAMPLE]
 
 
 # ===========================================================================
@@ -175,12 +173,15 @@ def _build_one_round_syndrome_circuit(
     circuit = QuantumCircuit(patch, syn_cl)
 
     append_patch_steane_state_injection_encoder_crumble_sequences(
-        circuit, patch_qubits=list(patch),
-        injected_state=injected_state, add_barriers=False,
+        circuit,
+        patch_qubits=list(patch),
+        injected_state=injected_state,
+        add_barriers=False,
     )
     append_pauli_faults(circuit, [fault], qubit_map=list(patch))
     append_patch_stabilizer_measurement(
-        circuit, patch_qubits=list(patch),
+        circuit,
+        patch_qubits=list(patch),
         classical_bits=list(syn_cl),
         add_barriers=False,
     )
@@ -192,7 +193,8 @@ class TestOneRoundDecodeCorrect:
 
     @pytest.mark.parametrize("state", _TEST_STATES)
     @pytest.mark.parametrize(
-        "fault", _ALL_SINGLE_QUBIT_FAULTS,
+        "fault",
+        _ALL_SINGLE_QUBIT_FAULTS,
         ids=[f"{p}_{s}" for p, s in _ALL_SINGLE_QUBIT_FAULTS],
     )
     def test_logical_expectations(self, state: InjectedStateName, fault: tuple[str, int]) -> None:
@@ -213,8 +215,11 @@ class TestOneRoundDecodeCorrect:
         pauli_frame = PauliFrame()
         pauli_frame.register("L0")
         _decoder.decode_from_raw_syndromes(
-            pauli_frame, "L0",
-            x_raw=x_raw, z_raw=z_raw, stab_frame=stab_frame,
+            pauli_frame,
+            "L0",
+            x_raw=x_raw,
+            z_raw=z_raw,
+            stab_frame=stab_frame,
         )
 
         # 3. Check frame-corrected logical expectations on the post-measurement
@@ -222,7 +227,9 @@ class TestOneRoundDecodeCorrect:
         #    collapsed ancilla state doesn't affect the expectation values.
         corrected_z, corrected_x = _corrected_logical_expectations(sv, pauli_frame)
         _assert_logical_expectations(
-            corrected_z, corrected_x, state,
+            corrected_z,
+            corrected_x,
+            state,
             label=f"State {state!r}, fault {fault}",
         )
 
@@ -244,14 +251,17 @@ def _build_two_round_syndrome_circuit(
     circuit = QuantumCircuit(patch, syn1_cl, syn2_cl)
 
     append_patch_steane_state_injection_encoder_crumble_sequences(
-        circuit, patch_qubits=list(patch),
-        injected_state=injected_state, add_barriers=False,
+        circuit,
+        patch_qubits=list(patch),
+        injected_state=injected_state,
+        add_barriers=False,
     )
 
     # Round 1.
     append_pauli_faults(circuit, [fault1], qubit_map=list(patch))
     append_patch_stabilizer_measurement(
-        circuit, patch_qubits=list(patch),
+        circuit,
+        patch_qubits=list(patch),
         classical_bits=list(syn1_cl),
         add_barriers=False,
     )
@@ -259,7 +269,8 @@ def _build_two_round_syndrome_circuit(
     # Round 2.
     append_pauli_faults(circuit, [fault2], qubit_map=list(patch))
     append_patch_stabilizer_measurement(
-        circuit, patch_qubits=list(patch),
+        circuit,
+        patch_qubits=list(patch),
         classical_bits=list(syn2_cl),
         add_barriers=False,
     )
@@ -272,7 +283,9 @@ class TestTwoRoundDecodeCorrect:
 
     @pytest.mark.parametrize("state", _TEST_STATES)
     @pytest.mark.parametrize(
-        "fault1, fault2", _TWO_ROUND_SAMPLE, ids=_TWO_ROUND_IDS,
+        "fault1, fault2",
+        _TWO_ROUND_SAMPLE,
+        ids=_TWO_ROUND_IDS,
     )
     def test_logical_expectations(
         self,
@@ -309,20 +322,28 @@ class TestTwoRoundDecodeCorrect:
 
         x1_raw, z1_raw = _parse_syndrome_bits(syn1_str)
         _decoder.decode_from_raw_syndromes(
-            pauli_frame, "L0",
-            x_raw=x1_raw, z_raw=z1_raw, stab_frame=stab_frame,
+            pauli_frame,
+            "L0",
+            x_raw=x1_raw,
+            z_raw=z1_raw,
+            stab_frame=stab_frame,
         )
 
         x2_raw, z2_raw = _parse_syndrome_bits(syn2_str)
         _decoder.decode_from_raw_syndromes(
-            pauli_frame, "L0",
-            x_raw=x2_raw, z_raw=z2_raw, stab_frame=stab_frame,
+            pauli_frame,
+            "L0",
+            x_raw=x2_raw,
+            z_raw=z2_raw,
+            stab_frame=stab_frame,
         )
 
         # 3. Check frame-corrected logical expectations on the post-measurement
         #    statevector directly from the syndrome circuit.
         corrected_z, corrected_x = _corrected_logical_expectations(sv, pauli_frame)
         _assert_logical_expectations(
-            corrected_z, corrected_x, state,
+            corrected_z,
+            corrected_x,
+            state,
             label=f"State {state!r}, faults {fault1}→{fault2}",
         )

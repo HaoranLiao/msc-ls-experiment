@@ -469,6 +469,7 @@ def _append_patch_crumble_encoder_layers(
 # Encoder on the 11-site patch
 # ---------------------------------------------------------------------------
 
+
 def append_patch_steane_state_injection_encoder(
     circuit: QuantumCircuit,
     *,
@@ -498,7 +499,8 @@ def append_patch_steane_state_injection_encoder(
     q = list(patch_qubits)
 
     encoder = build_steane_state_injection_encoder(
-        injected_state=injected_state, add_barriers=add_barriers,
+        injected_state=injected_state,
+        add_barriers=add_barriers,
     )
 
     # Map abstract encoder qubits 0–6 to the corresponding patch data sites.
@@ -651,6 +653,7 @@ def append_patch_stabilizer_measurement(
 # ---------------------------------------------------------------------------
 # Logical measurement on the 11-site patch
 # ---------------------------------------------------------------------------
+
 
 def append_patch_logical_measurement(
     circuit: QuantumCircuit,

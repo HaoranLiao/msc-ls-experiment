@@ -21,10 +21,7 @@ from research_qec_haoran.surface_code import rotated_common_qiskit as rotated_co
 # ---------------------------------------------------------------------------
 
 SURFACE_ORDER: tuple[str, ...] = ("a", "b", "c", "d", "e", "f", "g", "h", "i")
-SURFACE_INDEX: dict[str, int] = {
-    label: index
-    for index, label in enumerate(SURFACE_ORDER)
-}
+SURFACE_INDEX: dict[str, int] = {label: index for index, label in enumerate(SURFACE_ORDER)}
 
 SURFACE_COORDS: dict[str, tuple[int, int]] = {
     "a": (0, 0),
@@ -114,9 +111,7 @@ LOGICAL_X_REPRESENTATIVES: tuple[tuple[str, ...], ...] = (
 # Stabilizer schedules and circuit constants
 # ---------------------------------------------------------------------------
 
-INIT_Z_LABELS: tuple[str, ...] = tuple(
-    f"init_{name.lower()}" for name in Z_STABILIZERS
-)
+INIT_Z_LABELS: tuple[str, ...] = tuple(f"init_{name.lower()}" for name in Z_STABILIZERS)
 
 Z_STABILIZER_SCHEDULE: dict[str, tuple[str, ...]] = {
     "Z_abde": ("a", "b", "d", "e"),
@@ -226,6 +221,7 @@ def draw_patch(ax: Axes | None = None) -> tuple[plt.Figure, Axes]:
 # Circuit-building primitives
 # ---------------------------------------------------------------------------
 
+
 def _append_parallel_stabilizer_measurements(
     circuit: QuantumCircuit,
     *,
@@ -298,10 +294,7 @@ def append_z_stabilizer_measurements(
     schedules = (
         Z_STABILIZER_SCHEDULE
         if stabilizer_names is None
-        else {
-            name: Z_STABILIZER_SCHEDULE[name]
-            for name in stabilizer_names
-        }
+        else {name: Z_STABILIZER_SCHEDULE[name] for name in stabilizer_names}
     )
     _append_parallel_stabilizer_measurements(
         circuit,
@@ -331,10 +324,7 @@ def append_x_stabilizer_measurements(
     schedules = (
         X_STABILIZER_SCHEDULE
         if stabilizer_names is None
-        else {
-            name: X_STABILIZER_SCHEDULE[name]
-            for name in stabilizer_names
-        }
+        else {name: X_STABILIZER_SCHEDULE[name] for name in stabilizer_names}
     )
     _append_parallel_stabilizer_measurements(
         circuit,

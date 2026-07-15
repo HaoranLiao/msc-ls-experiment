@@ -10,6 +10,7 @@ from qiskit import QuantumCircuit
 # Gate decompositions
 # ---------------------------------------------------------------------------
 
+
 def apply_ty(circuit: QuantumCircuit, qubit) -> None:
     """Apply ``T_y = RY(pi/4) = exp(-i*pi*Y/8)``.
 
@@ -41,6 +42,7 @@ def apply_ty_dagger(circuit: QuantumCircuit, qubit) -> None:
 # ---------------------------------------------------------------------------
 # Depth metrics
 # ---------------------------------------------------------------------------
+
 
 def two_qubit_depth(circuit: QuantumCircuit) -> int:
     """Return the two-qubit gate depth of a circuit."""
