@@ -94,8 +94,7 @@ def parse_transfer_measurements(
     register_chunks = {
         register.name: {
             "raw": "".join(
-                str(bits_by_register[register.name][label])
-                for label in reversed(register.labels)
+                str(bits_by_register[register.name][label]) for label in reversed(register.labels)
             ),
             "labels": register.labels,
             "bits": bits_by_register[register.name],
@@ -132,10 +131,7 @@ def parse_transfer_measurements(
             for round_index in range(LATTICE_SURGERY_ROUNDS)
         ],
         "merged_surface_z_rounds": [
-            {
-                label: merged_z_bits[f"round{round_index + 1}_{label}"]
-                for label in spec.z_labels
-            }
+            {label: merged_z_bits[f"round{round_index + 1}_{label}"] for label in spec.z_labels}
             for round_index in range(LATTICE_SURGERY_ROUNDS)
         ],
         "merged_surface_x_rounds": [
@@ -155,9 +151,7 @@ def parse_transfer_measurements(
             else f"surface_logical_{surface_readout_basis.lower()}"
         )
         output_name = (
-            "surface_readout"
-            if surface_readout_mode == "data"
-            else "surface_logical_readout"
+            "surface_readout" if surface_readout_mode == "data" else "surface_logical_readout"
         )
         parsed[output_name] = register_bits(register_name)
 
@@ -178,9 +172,9 @@ def parse_transfer_measurements(
     )
     parsed["merged_surface_qec_recoveries"] = recoveries
     logical_x_support = frozenset(spec.logical_x)
-    parsed["merged_surface_logical_z_byproduct"] = sum(
-        len(recovery.z_error_sites & logical_x_support) for recovery in recoveries
-    ) % 2
+    parsed["merged_surface_logical_z_byproduct"] = (
+        sum(len(recovery.z_error_sites & logical_x_support) for recovery in recoveries) % 2
+    )
     return parsed
 
 
@@ -206,8 +200,7 @@ def merged_boundary_checks_stable(
     """Return whether every repeated merged-boundary check is time-stable."""
     rounds = measurements["merged_zz_rounds"]
     return all(
-        len({round_bits[check_name] for round_bits in rounds}) == 1
-        for check_name in rounds[0]
+        len({round_bits[check_name] for round_bits in rounds}) == 1 for check_name in rounds[0]
     )
 
 
@@ -229,10 +222,7 @@ def final_x_verification_checks(measurements: dict[str, object]) -> dict[str, in
         **measurements["steane_x"],
         "X_ab": measurements["surface_x_recovery"]["X_ab"],
     }
-    return {
-        name: parity(bits, support)
-        for name, support in FINAL_X_VERIFICATION_CHECKS.items()
-    }
+    return {name: parity(bits, support) for name, support in FINAL_X_VERIFICATION_CHECKS.items()}
 
 
 def x_verification_succeeds(measurements: dict[str, object]) -> bool:

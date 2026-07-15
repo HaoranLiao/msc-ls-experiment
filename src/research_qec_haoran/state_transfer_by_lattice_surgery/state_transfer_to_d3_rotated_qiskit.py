@@ -17,6 +17,8 @@ from qiskit import QuantumCircuit
 
 from research_qec_haoran.state_transfer_by_lattice_surgery import (
     state_transfer_analysis_qiskit as analysis,
+)
+from research_qec_haoran.state_transfer_by_lattice_surgery import (
     state_transfer_common_qiskit as common,
 )
 from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_common_qiskit import (

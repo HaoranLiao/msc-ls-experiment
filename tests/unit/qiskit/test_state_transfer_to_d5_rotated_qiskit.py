@@ -14,7 +14,11 @@ from qiskit_aer import AerSimulator
 
 from research_qec_haoran.state_transfer_by_lattice_surgery import (
     state_transfer_analysis_qiskit as analysis,
+)
+from research_qec_haoran.state_transfer_by_lattice_surgery import (
     state_transfer_common_qiskit as common,
+)
+from research_qec_haoran.state_transfer_by_lattice_surgery import (
     state_transfer_to_d5_rotated_qiskit as d5t,
 )
 
@@ -115,9 +119,7 @@ class TestD5TransferCircuitLayout:
         assert circuit.cregs[2].name == "ls_zz"
         assert circuit.cregs[2].size == 9
         assert {
-            label
-            for _, steane_support, _ in d5t.MERGED_BOUNDARY_CHECKS
-            for label in steane_support
+            label for _, steane_support, _ in d5t.MERGED_BOUNDARY_CHECKS for label in steane_support
         } == set(common.HIRANO_STEANE_LOGICAL_Z)
         assert {
             label

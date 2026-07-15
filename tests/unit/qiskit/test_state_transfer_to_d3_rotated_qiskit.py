@@ -17,7 +17,11 @@ from qiskit_aer import AerSimulator
 
 from research_qec_haoran.state_transfer_by_lattice_surgery import (
     state_transfer_analysis_qiskit as analysis,
+)
+from research_qec_haoran.state_transfer_by_lattice_surgery import (
     state_transfer_common_qiskit as common,
+)
+from research_qec_haoran.state_transfer_by_lattice_surgery import (
     state_transfer_to_d3_rotated_qiskit as d3t,
 )
 
@@ -152,9 +156,7 @@ class TestTransferCircuitLayout:
         # Three rounds, two merged-boundary checks per round.
         assert circuit.cregs[3].size == 6
         assert {
-            label
-            for _, steane_support, _ in d3t.MERGED_BOUNDARY_CHECKS
-            for label in steane_support
+            label for _, steane_support, _ in d3t.MERGED_BOUNDARY_CHECKS for label in steane_support
         } == set(common.HIRANO_STEANE_LOGICAL_Z)
         assert {
             label
@@ -382,9 +384,7 @@ class TestLogicalTransferCorrectness:
             basis="Z",
         )
 
-        assert all(
-            analysis.transfer_acceptance_succeeds(item) for item in measurements_by_outcome
-        )
+        assert all(analysis.transfer_acceptance_succeeds(item) for item in measurements_by_outcome)
         assert all(
             item["merged_surface_qec_recoveries"][0].x_error_sites == {"a"}
             for item in measurements_by_outcome
@@ -407,9 +407,7 @@ class TestLogicalTransferCorrectness:
             basis="X",
         )
 
-        assert all(
-            analysis.transfer_acceptance_succeeds(item) for item in measurements_by_outcome
-        )
+        assert all(analysis.transfer_acceptance_succeeds(item) for item in measurements_by_outcome)
         assert all(
             item["merged_surface_qec_recoveries"][0].z_error_sites == {"d"}
             for item in measurements_by_outcome

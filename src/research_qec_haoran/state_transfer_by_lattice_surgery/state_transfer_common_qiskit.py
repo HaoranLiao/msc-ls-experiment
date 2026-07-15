@@ -197,19 +197,11 @@ def build_transfer_qregs(
 ) -> HiranoLabeledQRegs:
     """Create all quantum registers required by the paper transfer."""
     return HiranoLabeledQRegs(
-        steane_data={
-            label: QuantumRegister(1, label) for label in HIRANO_STEANE_DATA_ORDER
-        },
-        steane_helpers={
-            label: QuantumRegister(1, label) for label in STEANE_HELPER_PATCH_LABELS
-        },
+        steane_data={label: QuantumRegister(1, label) for label in HIRANO_STEANE_DATA_ORDER},
+        steane_helpers={label: QuantumRegister(1, label) for label in STEANE_HELPER_PATCH_LABELS},
         surface_data={label: QuantumRegister(1, label) for label in spec.surface_order},
-        surface_z_ancillas={
-            label: QuantumRegister(1, label) for label in spec.z_ancilla_labels
-        },
-        surface_x_ancillas={
-            label: QuantumRegister(1, label) for label in spec.x_ancilla_labels
-        },
+        surface_z_ancillas={label: QuantumRegister(1, label) for label in spec.z_ancilla_labels},
+        surface_x_ancillas={label: QuantumRegister(1, label) for label in spec.x_ancilla_labels},
         merge_ancillas={
             f"zz_{name[1:].lower()}": QuantumRegister(1, f"zz_{name[1:].lower()}")
             for name, _, _ in spec.merged_boundary_checks
@@ -301,9 +293,7 @@ def transfer_classical_register_specs(
                 )
             )
         else:
-            raise ValueError(
-                "surface_readout_mode must be 'data' or 'logical_pauli'."
-            )
+            raise ValueError("surface_readout_mode must be 'data' or 'logical_pauli'.")
     return specs
 
 
