@@ -3,7 +3,7 @@
 from research_qec_haoran.state_transfer_by_lattice_surgery import (
     state_transfer_to_d5_rotated_qiskit as _d5t,
 )
-from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_common_qiskit import (  # noqa: E501
+from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_analysis_qiskit import (  # noqa: E501
     LookupTableEarlyRejection,
 )
 from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_to_d3_rotated_qiskit import (  # noqa: E501
@@ -32,6 +32,8 @@ from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_to_d3_
     lookup_table_early_rejection_accepts,
     merged_boundary_checks_stable,
     merged_boundary_logical_zz_outcome,
+    merged_surface_qec_recoveries,
+    merged_surface_qec_recovery,
     merged_surface_syndrome_deltas,
     parse_transfer_measurements,
     post_transfer_surface_syndrome_schedule,
@@ -59,6 +61,8 @@ corrected_d5_surface_logical_readout = _d5t.corrected_surface_logical_readout
 parse_d5_transfer_measurements = _d5t.parse_transfer_measurements
 post_transfer_d5_surface_syndrome_schedule = _d5t.post_transfer_surface_syndrome_schedule
 d5_transfer_acceptance_succeeds = _d5t.transfer_acceptance_succeeds
+d5_merged_surface_qec_recoveries = _d5t.merged_surface_qec_recoveries
+d5_merged_surface_qec_recovery = _d5t.merged_surface_qec_recovery
 
 __all__ = [
     "D5_MERGED_BOUNDARY_CHECKS",
@@ -88,6 +92,8 @@ __all__ = [
     "corrected_surface_logical_readout",
     "cultivation_succeeds",
     "d5_transfer_acceptance_succeeds",
+    "d5_merged_surface_qec_recoveries",
+    "d5_merged_surface_qec_recovery",
     "early_rejection_syndrome_items",
     "early_rejection_syndrome_signature",
     "encoder_helpers_succeed",
@@ -95,6 +101,8 @@ __all__ = [
     "lookup_table_early_rejection_accepts",
     "merged_boundary_checks_stable",
     "merged_boundary_logical_zz_outcome",
+    "merged_surface_qec_recoveries",
+    "merged_surface_qec_recovery",
     "merged_surface_syndrome_deltas",
     "parse_d5_transfer_measurements",
     "parse_transfer_measurements",
