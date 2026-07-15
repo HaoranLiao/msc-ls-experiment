@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from qiskit import QuantumCircuit
 
 # ---------------------------------------------------------------------------
@@ -51,16 +53,59 @@ def two_qubit_depth(circuit: QuantumCircuit) -> int:
 # IBM device access
 # ---------------------------------------------------------------------------
 
+IBM_RUNTIME_ACCOUNT = "QR"
+IBM_RUNTIME_BACKEND = "ibm_miami"
+_IBM_RUNTIME_ACCOUNT_KWARGS = {
+    "channel",
+    "token",
+    "url",
+    "instance",
+    "proxies",
+    "verify",
+    "private_endpoint",
+    "region",
+    "plans_preference",
+    "tags",
+}
+
+
+def ibm_runtime_service(account_name: str = IBM_RUNTIME_ACCOUNT) -> Any:
+    """Return a Qiskit Runtime service using a saved account when available.
+
+    Loading the saved account explicitly avoids differences between test guards
+    and test bodies: both paths use the same credential metadata from
+    ``QiskitRuntimeService.saved_accounts()`` before falling back to the named
+    account lookup.
+    """
+    from qiskit_ibm_runtime import QiskitRuntimeService
+
+    saved_account = QiskitRuntimeService.saved_accounts().get(account_name)
+    if saved_account is None:
+        return QiskitRuntimeService(name=account_name)
+
+    service_kwargs = {
+        key: value
+        for key, value in saved_account.items()
+        if key in _IBM_RUNTIME_ACCOUNT_KWARGS and value is not None
+    }
+    return QiskitRuntimeService(**service_kwargs)
+
+
+def ibm_backend(
+    account_name: str = IBM_RUNTIME_ACCOUNT,
+    backend_name: str = IBM_RUNTIME_BACKEND,
+) -> Any:
+    """Return a backend from the configured IBM Runtime saved account."""
+    return ibm_runtime_service(account_name).backend(backend_name)
+
+
 def ibm_backend_available(
-    account_name: str = "QR",
-    backend_name: str = "ibm_miami",
+    account_name: str = IBM_RUNTIME_ACCOUNT,
+    backend_name: str = IBM_RUNTIME_BACKEND,
 ) -> bool:
     """Return True if the named IBM Runtime account and backend are reachable."""
     try:
-        from qiskit_ibm_runtime import QiskitRuntimeService
-
-        service = QiskitRuntimeService(name=account_name)
-        service.backend(backend_name)
+        ibm_backend(account_name, backend_name)
         return True
     except Exception:
         return False

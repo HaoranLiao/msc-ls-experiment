@@ -32,7 +32,11 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     append_stabilizer_measurement,
     build_steane_state_injection_encoder,
 )
-from research_qec_haoran.utils.circuit import ibm_backend_available, two_qubit_depth
+from research_qec_haoran.utils.circuit import (
+    ibm_backend,
+    ibm_backend_available,
+    two_qubit_depth,
+)
 from research_qec_haoran.utils.normalize import parse_qiskit_bitstring
 
 NUM_DATA_QUBITS = 7
@@ -817,7 +821,7 @@ def test_patch_crumble_helper_sites_measured_zero(state: InjectedStateName) -> N
 
 @pytest.mark.skipif(
     not ibm_backend_available(),
-    reason="QiskitRuntimeService account 'main-flex-us' or backend 'ibm_miami' unavailable",
+    reason="QiskitRuntimeService account 'QR' or backend 'ibm_miami' unavailable",
 )
 def test_patch_crumble_encoder_two_qubit_depth_preserved_on_ibm_miami() -> None:
     """Transpiling the Crumble encoder to ibm_miami must not increase two-qubit depth.
@@ -828,7 +832,6 @@ def test_patch_crumble_encoder_two_qubit_depth_preserved_on_ibm_miami() -> None:
     """
     from qiskit import transpile
     from qiskit.transpiler.passes import RemoveBarriers
-    from qiskit_ibm_runtime import QiskitRuntimeService
 
     circuit = QuantumCircuit(NUM_PATCH_QUBITS)
     append_patch_steane_state_injection_encoder_crumble_sequences(
@@ -840,12 +843,9 @@ def test_patch_crumble_encoder_two_qubit_depth_preserved_on_ibm_miami() -> None:
 
     original_depth = two_qubit_depth(RemoveBarriers()(circuit))
 
-    service = QiskitRuntimeService(name="main-flex-us")
-    backend = service.backend("ibm_miami")
-
     transpiled = transpile(
         RemoveBarriers()(circuit),
-        backend=backend,
+        backend=ibm_backend(),
         optimization_level=3,
     )
 
