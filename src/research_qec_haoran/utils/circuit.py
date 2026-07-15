@@ -52,7 +52,7 @@ def two_qubit_depth(circuit: QuantumCircuit) -> int:
 # ---------------------------------------------------------------------------
 
 def ibm_backend_available(
-    account_name: str = "main-flex-us",
+    account_name: str = "QR",
     backend_name: str = "ibm_miami",
 ) -> bool:
     """Return True if the named IBM Runtime account and backend are reachable."""
@@ -64,4 +64,3 @@ def ibm_backend_available(
         return True
     except Exception:
         return False
-
