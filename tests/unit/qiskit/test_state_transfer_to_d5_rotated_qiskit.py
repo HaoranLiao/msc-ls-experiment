@@ -13,9 +13,8 @@ from collections import Counter
 from qiskit_aer import AerSimulator
 
 from research_qec_haoran.state_transfer_by_lattice_surgery import (
-    LookupTableEarlyRejection,
-)
-from research_qec_haoran.state_transfer_by_lattice_surgery import (
+    state_transfer_analysis_qiskit as analysis,
+    state_transfer_common_qiskit as common,
     state_transfer_to_d5_rotated_qiskit as d5t,
 )
 
@@ -28,14 +27,6 @@ def _one_parsed_shot(**circuit_kwargs):
     build_kwargs = {"include_cultivation": False, **circuit_kwargs}
     parse_kwargs = {
         "include_cultivation": build_kwargs.get("include_cultivation", False),
-        "merged_rounds": build_kwargs.get("merged_rounds", 3),
-        "include_merged_surface_syndromes": build_kwargs.get(
-            "include_merged_surface_syndromes",
-            True,
-        ),
-        "include_steane_verification": build_kwargs.get("include_steane_verification", True),
-        "include_surface_qec": build_kwargs.get("include_surface_qec", False),
-        "surface_qec_rounds": build_kwargs.get("surface_qec_rounds", 3),
         "surface_readout_basis": build_kwargs.get("surface_readout_basis"),
         "surface_readout_mode": build_kwargs.get("surface_readout_mode", "data"),
     }
@@ -72,7 +63,11 @@ def _corrected_logical_counts(
             surface_readout_basis=basis,
             surface_readout_mode="logical_pauli",
         )
-        logical_bit = d5t.corrected_surface_logical_readout(measurements, basis=basis)
+        logical_bit = analysis.corrected_surface_logical_readout(
+            measurements,
+            basis=basis,
+            spec=d5t.TRANSFER_SPEC,
+        )
         logical_counts[logical_bit] += count
     return logical_counts
 
@@ -94,9 +89,9 @@ class TestD5TransferCircuitLayout:
         )
         register_names = {register.name for register in circuit.qregs}
 
-        for label in d5t.HIRANO_STEANE_DATA_ORDER:
+        for label in common.HIRANO_STEANE_DATA_ORDER:
             assert label in register_names
-        for label in d5t.SURFACE_ORDER:
+        for label in d5t.TRANSFER_SPEC.surface_order:
             assert label in register_names
 
     def test_merged_boundary_checks_match_paper_d5_schedule(self) -> None:
@@ -119,15 +114,28 @@ class TestD5TransferCircuitLayout:
         }
         assert circuit.cregs[2].name == "ls_zz"
         assert circuit.cregs[2].size == 9
+        assert {
+            label
+            for _, steane_support, _ in d5t.MERGED_BOUNDARY_CHECKS
+            for label in steane_support
+        } == set(common.HIRANO_STEANE_LOGICAL_Z)
+        assert {
+            label
+            for _, _, surface_support in d5t.MERGED_BOUNDARY_CHECKS
+            for label in surface_support
+        } == set(d5t.TRANSFER_SPEC.logical_z)
 
     def test_top_edge_recovery_labels_are_declared(self) -> None:
-        assert d5t.SURFACE_TOP_X_RECOVERY_LABELS == ("X_ab", "X_cd")
-        assert d5t.MERGED_INTERVAL_SURFACE_SYNDROME_SCHEDULE == (
-            ("merged_surface_z", d5t.SURFACE_MERGED_Z_LABELS),
-            ("merged_surface_x", d5t.SURFACE_MERGED_X_LABELS),
-        )
-        assert "X_ab" not in d5t.SURFACE_MERGED_X_LABELS
-        assert "X_cd" not in d5t.SURFACE_MERGED_X_LABELS
+        spec = d5t.TRANSFER_SPEC
+
+        assert spec.top_x_recovery_labels == ("X_ab", "X_cd")
+        assert "X_ab" not in spec.merged_x_labels
+        assert "X_cd" not in spec.merged_x_labels
+        assert set(spec.z_labels) == set(spec.z_stabilizers)
+        assert set(spec.merged_x_labels) == set(spec.x_stabilizers) - {
+            "X_ab",
+            "X_cd",
+        }
 
     def test_steane_check_groups_are_inside_merged_rounds_one_and_two(self) -> None:
         circuit = d5t.build_steane_to_rotated_d5_lattice_surgery_circuit(
@@ -163,11 +171,10 @@ class TestD5TransferCircuitLayout:
         assert "surface_post_z" not in {register.name for register in circuit.cregs}
         assert "surface_post_x" not in {register.name for register in circuit.cregs}
 
-    def test_top_x_recovery_is_independent_of_steane_verification_ablation(self) -> None:
+    def test_top_x_recovery_is_unconditional(self) -> None:
         circuit = d5t.build_steane_to_rotated_d5_lattice_surgery_circuit(
             injected_state="0",
             include_cultivation=False,
-            include_steane_verification=False,
             add_barriers=False,
         )
 
@@ -220,15 +227,25 @@ class TestD5TransferMeasurementParsing:
         )
 
         assert set(measurements["surface_x_recovery"]) == {"X_ab", "X_cd"}
-        assert set(measurements["local_x_verification_checks"]) == {
+        assert set(measurements["final_x_verification_checks"]) == {
             "X0145ab",
             "X0235",
             "X0246",
         }
-        assert d5t.merged_boundary_checks_stable(measurements)
-        assert d5t.steane_verification_succeeds(measurements)
-        assert d5t.x_verification_succeeds(measurements)
-        assert d5t.transfer_acceptance_succeeds(measurements)
+        assert analysis.merged_boundary_checks_stable(measurements)
+        assert analysis.steane_verification_succeeds(measurements)
+        assert analysis.x_verification_succeeds(measurements)
+        assert analysis.transfer_acceptance_succeeds(measurements)
+
+    def test_first_x_cd_recovery_outcome_is_not_hard_postselected(self) -> None:
+        measurements = _one_parsed_shot(
+            injected_state="0",
+            surface_readout_basis=None,
+        )
+
+        measurements["surface_x_recovery"]["X_cd"] ^= 1
+
+        assert analysis.transfer_acceptance_succeeds(measurements)
 
     def test_merged_interval_surface_syndrome_rounds_have_noiseless_deltas(self) -> None:
         measurements = _one_parsed_shot(
@@ -246,44 +263,23 @@ class TestD5TransferMeasurementParsing:
             for bit in deltas[basis].values()
         )
 
-    def test_optional_post_transfer_surface_qec_rounds_are_available(self) -> None:
-        measurements = _one_parsed_shot(
-            injected_state="0",
-            include_surface_qec=True,
-            surface_readout_basis=None,
-        )
-        schedule = d5t.post_transfer_surface_syndrome_schedule(2)
-
-        assert len(measurements["surface_post_z_rounds"]) == 3
-        assert len(measurements["surface_post_x_rounds"]) == 3
-        assert measurements["surface_qec_syndrome_is_trivial"]
-        assert [name for name, _ in schedule] == [
-            "surface_init_z",
-            "surface_top_x_recovery",
-            "round1_surface_post_z",
-            "round1_surface_post_x",
-            "round2_surface_post_z",
-            "round2_surface_post_x",
-        ]
-        assert schedule[1][1] == ("X_ab", "X_cd")
-        assert "Z_abfg" in schedule[2][1]
-        assert "X_ab" in schedule[3][1]
-        assert "X_cd" in schedule[3][1]
-
     def test_lookup_table_early_rejection_can_reject_pre_expansion_signature(self) -> None:
         measurements = _one_parsed_shot(
             injected_state="0",
             surface_readout_basis=None,
         )
 
-        signature = d5t.early_rejection_syndrome_signature(measurements)
-        table = LookupTableEarlyRejection.from_signatures([signature])
+        signature = analysis.early_rejection_syndrome_signature(measurements)
+        table = analysis.LookupTableEarlyRejection.from_signatures([signature])
 
         assert all(bit == 0 for bit in signature)
-        assert d5t.early_rejection_syndrome_items(measurements)
-        assert d5t.lookup_table_early_rejection_accepts(measurements)
-        assert not d5t.lookup_table_early_rejection_accepts(measurements, lookup_table=table)
-        assert not d5t.transfer_acceptance_succeeds(measurements, lookup_table=table)
+        assert analysis.early_rejection_syndrome_items(measurements)
+        assert analysis.lookup_table_early_rejection_accepts(measurements)
+        assert not analysis.lookup_table_early_rejection_accepts(
+            measurements,
+            lookup_table=table,
+        )
+        assert not analysis.transfer_acceptance_succeeds(measurements, lookup_table=table)
 
 
 # ===========================================================================
