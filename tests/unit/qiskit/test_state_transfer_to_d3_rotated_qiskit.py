@@ -40,7 +40,9 @@ def _one_parsed_shot(**circuit_kwargs):
         add_barriers=False,
         **circuit_kwargs,
     )
-    bitstring = next(iter(AerSimulator().run(circuit, shots=1).result().get_counts()))
+    bitstring = next(
+        iter(AerSimulator(method="stabilizer").run(circuit, shots=1).result().get_counts())
+    )
     return d3t.parse_transfer_measurements(bitstring, **parse_kwargs)
 
 
@@ -57,7 +59,7 @@ def _corrected_logical_counts(
         surface_readout_basis=basis,
         add_barriers=False,
     )
-    counts = AerSimulator().run(circuit, shots=shots).result().get_counts()
+    counts = AerSimulator(method="stabilizer").run(circuit, shots=shots).result().get_counts()
 
     logical_counts: Counter[int] = Counter()
     for bitstring, count in counts.items():
