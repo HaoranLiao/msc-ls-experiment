@@ -67,6 +67,95 @@ class RotatedDetectedErrors:
         return " ".join(parts)
 
 
+@dataclass(frozen=True)
+class TemporalRotatedDetectedErrors:
+    """Net data correction decoded from a repeated delta history.
+
+    Timelike matching edges represent syndrome-measurement faults and therefore
+    do not appear in ``x_error_sites`` or ``z_error_sites``. The two history
+    fields preserve the change-detection layers supplied to the joint decoder.
+    """
+
+    x_error_sites: frozenset[str]
+    z_error_sites: frozenset[str]
+    z_delta_history: tuple[dict[str, int], ...]
+    x_delta_history: tuple[dict[str, int], ...]
+
+    @property
+    def is_trivial(self) -> bool:
+        """True if the joint decoder predicts no net data correction."""
+        return not self.x_error_sites and not self.z_error_sites
+
+
+@dataclass(frozen=True, eq=False)
+class _RotatedMatchingModel:
+    """Shared spatial foundation for rotated-code matching decoders.
+
+    Both the single-layer and temporal decoders use these exact qubit/check
+    orderings and parity-check matrices. They differ only in whether PyMatching
+    builds one spatial graph or repeats it and adds timelike edges.
+    """
+
+    data_qubits: tuple[str, ...]
+    z_stabilizer_names: tuple[str, ...]
+    x_stabilizer_names: tuple[str, ...]
+    z_check: np.ndarray
+    x_check: np.ndarray
+    logical_x: frozenset[str]
+    logical_z: frozenset[str]
+
+    @classmethod
+    def from_stabilizers(
+        cls,
+        *,
+        data_qubits: Sequence[str],
+        z_stabilizers: Mapping[str, tuple[str, ...]],
+        x_stabilizers: Mapping[str, tuple[str, ...]],
+        logical_x: Sequence[str] = (),
+        logical_z: Sequence[str] = (),
+    ) -> _RotatedMatchingModel:
+        ordered_data = tuple(data_qubits)
+        qubit_index = {label: index for index, label in enumerate(ordered_data)}
+        z_names = tuple(z_stabilizers)
+        x_names = tuple(x_stabilizers)
+
+        def check_matrix(
+            stabilizers: Mapping[str, tuple[str, ...]],
+            names: Sequence[str],
+        ) -> np.ndarray:
+            matrix = np.zeros((len(names), len(ordered_data)), dtype=np.uint8)
+            for row, name in enumerate(names):
+                for qubit in stabilizers[name]:
+                    matrix[row, qubit_index[qubit]] = 1
+            return matrix
+
+        return cls(
+            data_qubits=ordered_data,
+            z_stabilizer_names=z_names,
+            x_stabilizer_names=x_names,
+            z_check=check_matrix(z_stabilizers, z_names),
+            x_check=check_matrix(x_stabilizers, x_names),
+            logical_x=frozenset(logical_x),
+            logical_z=frozenset(logical_z),
+        )
+
+    def apply_recovery(
+        self,
+        frame,
+        label: str,
+        detected_errors: RotatedDetectedErrors | TemporalRotatedDetectedErrors,
+    ) -> None:
+        """Fold decoded physical corrections into a logical Pauli frame."""
+        frame.update_x(
+            label,
+            len(detected_errors.x_error_sites & self.logical_z) % 2 == 1,
+        )
+        frame.update_z(
+            label,
+            len(detected_errors.z_error_sites & self.logical_x) % 2 == 1,
+        )
+
+
 # ---------------------------------------------------------------------------
 # General matching decoder for a rotated surface-code patch
 # ---------------------------------------------------------------------------
@@ -95,27 +184,25 @@ class RotatedDecoder:
     ) -> None:
         import pymatching
 
-        self.data_qubits = list(data_qubits)
-        self.z_stabilizer_names = list(z_stabilizers.keys())
-        self.x_stabilizer_names = list(x_stabilizers.keys())
-        self._qubit_index = {q: i for i, q in enumerate(self.data_qubits)}
-        self._logical_x_set = frozenset(logical_x)
-        self._logical_z_set = frozenset(logical_z)
-        n = len(self.data_qubits)
+        self._model = _RotatedMatchingModel.from_stabilizers(
+            data_qubits=data_qubits,
+            z_stabilizers=z_stabilizers,
+            x_stabilizers=x_stabilizers,
+            logical_x=logical_x,
+            logical_z=logical_z,
+        )
+        # Keep the existing list-valued attributes for API compatibility.
+        self.data_qubits = list(self._model.data_qubits)
+        self.z_stabilizer_names = list(self._model.z_stabilizer_names)
+        self.x_stabilizer_names = list(self._model.x_stabilizer_names)
+        self._logical_x_set = self._model.logical_x
+        self._logical_z_set = self._model.logical_z
 
         # Build X-error decoder (detects X errors via Z stabilizers)
-        z_check = np.zeros((len(self.z_stabilizer_names), n), dtype=np.uint8)
-        for row, name in enumerate(self.z_stabilizer_names):
-            for q in z_stabilizers[name]:
-                z_check[row, self._qubit_index[q]] = 1
-        self._x_decoder = pymatching.Matching(z_check)
+        self._x_decoder = pymatching.Matching(self._model.z_check)
 
         # Build Z-error decoder (detects Z errors via X stabilizers)
-        x_check = np.zeros((len(self.x_stabilizer_names), n), dtype=np.uint8)
-        for row, name in enumerate(self.x_stabilizer_names):
-            for q in x_stabilizers[name]:
-                x_check[row, self._qubit_index[q]] = 1
-        self._z_decoder = pymatching.Matching(x_check)
+        self._z_decoder = pymatching.Matching(self._model.x_check)
 
     def decode(
         self,
@@ -153,27 +240,6 @@ class RotatedDecoder:
             x_deltas=x_dict,
         )
 
-    # -- Frame update --
-
-    def apply_recovery(self, frame, label: str, detected_errors: RotatedDetectedErrors) -> None:
-        """Update a PauliFrame based on detected errors.
-
-        An X error on a site in the logical-Z support anticommutes with
-        Z_L, producing a logical X flip. A Z error on a site in the
-        logical-X support anticommutes with X_L, producing a logical Z flip.
-
-        Parameters
-        ----------
-        frame : PauliFrame
-            The Pauli frame to update.
-        label
-            Logical-qubit label in the frame (e.g. ``"L0"``).
-        detected_errors
-            The decoded error sites to apply.
-        """
-        frame.update_x(label, len(detected_errors.x_error_sites & self._logical_z_set) % 2 == 1)
-        frame.update_z(label, len(detected_errors.z_error_sites & self._logical_x_set) % 2 == 1)
-
     def update_pauli_frame(
         self,
         frame,
@@ -184,8 +250,132 @@ class RotatedDecoder:
     ) -> RotatedDetectedErrors:
         """Decode the syndrome, update the Pauli frame, and return detected errors.
 
-        Convenience method that calls :meth:`decode` then :meth:`apply_recovery`.
+        An X correction crossing logical Z updates the logical X frame, while a
+        Z correction crossing logical X updates the logical Z frame.
         """
         detected_errors = self.decode(z_deltas=z_deltas, x_deltas=x_deltas)
-        self.apply_recovery(frame, label, detected_errors)
+        self._model.apply_recovery(frame, label, detected_errors)
         return detected_errors
+
+
+class TemporalRotatedDecoder:
+    """Joint MWPM decoder for repeated rotated-code syndrome measurements.
+
+    A separate spacetime graph is built for each CSS sector. Spatial edges are
+    data errors; timelike edges are measurement errors. Histories may have
+    different lengths, which is needed when one sector has a known preparation
+    boundary while the other sector uses its first measurement as a reference.
+    """
+
+    def __init__(
+        self,
+        *,
+        data_qubits: Sequence[str],
+        z_stabilizers: Mapping[str, tuple[str, ...]],
+        x_stabilizers: Mapping[str, tuple[str, ...]],
+        logical_x: Sequence[str] = (),
+        logical_z: Sequence[str] = (),
+        data_weight: float = 1.0,
+        measurement_weight: float = 1.0,
+    ) -> None:
+        self._model = _RotatedMatchingModel.from_stabilizers(
+            data_qubits=data_qubits,
+            z_stabilizers=z_stabilizers,
+            x_stabilizers=x_stabilizers,
+            logical_x=logical_x,
+            logical_z=logical_z,
+        )
+        self.data_qubits = self._model.data_qubits
+        self.z_stabilizer_names = self._model.z_stabilizer_names
+        self.x_stabilizer_names = self._model.x_stabilizer_names
+        self._data_weight = data_weight
+        self._measurement_weight = measurement_weight
+
+    @staticmethod
+    def _delta_history_array(
+        history: Sequence[Mapping[str, int | bool]],
+        names: Sequence[str],
+    ) -> np.ndarray:
+        if not history:
+            raise ValueError("delta history must contain at least one time layer.")
+        expected = set(names)
+        for layer in history:
+            if set(layer) != expected:
+                raise ValueError(
+                    "every delta-history layer must contain exactly the decoder checks."
+                )
+        return np.array(
+            [[normalize_bit(layer[name]) for layer in history] for name in names],
+            dtype=np.uint8,
+        )
+
+    def _decode_sector(
+        self,
+        *,
+        check_matrix: np.ndarray,
+        delta_history: Sequence[Mapping[str, int | bool]],
+        names: Sequence[str],
+    ) -> np.ndarray:
+        import pymatching
+
+        syndrome = self._delta_history_array(delta_history, names)
+        matching = pymatching.Matching.from_check_matrix(
+            check_matrix,
+            weights=self._data_weight,
+            repetitions=syndrome.shape[1],
+            timelike_weights=self._measurement_weight,
+            use_virtual_boundary_node=True,
+        )
+        correction = matching.decode(syndrome)
+        return correction[0] if isinstance(correction, tuple) else correction
+
+    def decode(
+        self,
+        *,
+        z_delta_history: Sequence[Mapping[str, int | bool]],
+        x_delta_history: Sequence[Mapping[str, int | bool]],
+    ) -> TemporalRotatedDetectedErrors:
+        """Jointly decode all supplied delta layers in both CSS sectors."""
+        x_correction = self._decode_sector(
+            check_matrix=self._model.z_check,
+            delta_history=z_delta_history,
+            names=self.z_stabilizer_names,
+        )
+        z_correction = self._decode_sector(
+            check_matrix=self._model.x_check,
+            delta_history=x_delta_history,
+            names=self.x_stabilizer_names,
+        )
+        return TemporalRotatedDetectedErrors(
+            x_error_sites=frozenset(
+                self.data_qubits[index] for index in np.flatnonzero(x_correction)
+            ),
+            z_error_sites=frozenset(
+                self.data_qubits[index] for index in np.flatnonzero(z_correction)
+            ),
+            z_delta_history=tuple(
+                {name: normalize_bit(layer[name]) for name in self.z_stabilizer_names}
+                for layer in z_delta_history
+            ),
+            x_delta_history=tuple(
+                {name: normalize_bit(layer[name]) for name in self.x_stabilizer_names}
+                for layer in x_delta_history
+            ),
+        )
+
+    def update_pauli_frame(
+        self,
+        frame,
+        label: str,
+        *,
+        z_delta_history: Sequence[Mapping[str, int | bool]],
+        x_delta_history: Sequence[Mapping[str, int | bool]],
+    ) -> TemporalRotatedDetectedErrors:
+        """Decode all delta layers, update the frame, and return the recovery."""
+        detected_errors = self.decode(
+            z_delta_history=z_delta_history,
+            x_delta_history=x_delta_history,
+        )
+        self._model.apply_recovery(frame, label, detected_errors)
+        return detected_errors
+
