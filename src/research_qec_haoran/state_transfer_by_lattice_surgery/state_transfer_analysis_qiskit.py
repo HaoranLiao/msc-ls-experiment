@@ -25,8 +25,8 @@ from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_common
     transfer_classical_register_specs,
 )
 from research_qec_haoran.surface_code.decoding.rotated_decoder import (
-    RotatedDecoder,
-    RotatedDetectedErrors,
+    TemporalRotatedDecoder,
+    TemporalRotatedDetectedErrors,
 )
 from research_qec_haoran.utils.normalize import parse_qiskit_registers
 
@@ -161,19 +161,18 @@ def parse_transfer_measurements(
     )
     parsed["final_x_verification_checks"] = final_x_verification_checks(parsed)
     parsed["x_verification_succeeds"] = x_verification_succeeds(parsed)
-    recoveries = merged_surface_qec_recoveries(
+    recovery = merged_surface_qec_recovery(
         parsed,
         surface_order=spec.surface_order,
         z_stabilizers=spec.z_stabilizers,
         x_stabilizers=spec.x_stabilizers,
-        logical_x=spec.logical_x,
-        logical_z=spec.logical_z,
     )
-    parsed["merged_surface_qec_recoveries"] = recoveries
+    parsed["merged_surface_qec_recovery"] = recovery
+    parsed["merged_surface_qec_recoveries"] = (recovery,)
     logical_x_support = frozenset(spec.logical_x)
-    parsed["merged_surface_logical_z_byproduct"] = (
-        sum(len(recovery.z_error_sites & logical_x_support) for recovery in recoveries) % 2
-    )
+    parsed["merged_surface_logical_z_byproduct"] = len(
+        recovery.z_error_sites & logical_x_support
+    ) % 2
     return parsed
 
 
@@ -284,22 +283,19 @@ def merged_surface_syndrome_deltas(
     return deltas
 
 
-def merged_surface_qec_recoveries(
+def merged_surface_qec_recovery(
     measurements: dict[str, object],
     *,
     surface_order: Sequence[str],
     z_stabilizers: Mapping[str, tuple[str, ...]],
     x_stabilizers: Mapping[str, tuple[str, ...]],
-    logical_x: Sequence[str],
-    logical_z: Sequence[str],
-) -> list[RotatedDetectedErrors]:
-    """Decode surface-code deltas measured while the patches are merged.
+) -> TemporalRotatedDetectedErrors:
+    """Jointly decode all surface detector layers measured during the merge.
 
-    The decoder is restricted to checks that commute with the active merged
-    boundary: all measured Z checks and the measured subset of X checks.  This
-    reuses the repository's rotated-code decoder for the Qiskit abstraction.
-    A circuit-level noisy study should instead decode the complete detector
-    error model, as in the paper's Stim implementation.
+    Compatible X checks have a known preparation boundary and therefore three
+    detector layers. Nondeterministic Z checks use round 1 as their reference
+    and therefore have two layers. Timelike matching edges distinguish repeated
+    measurement faults from persistent data errors.
     """
     deltas_by_round = measurements["merged_surface_syndrome_deltas"]
     measured_z_labels = tuple(
@@ -308,20 +304,15 @@ def merged_surface_qec_recoveries(
     measured_x_labels = tuple(
         label for label in x_stabilizers if any(label in deltas["x"] for deltas in deltas_by_round)
     )
-    decoder = RotatedDecoder(
+    decoder = TemporalRotatedDecoder(
         data_qubits=surface_order,
         z_stabilizers={label: z_stabilizers[label] for label in measured_z_labels},
         x_stabilizers={label: x_stabilizers[label] for label in measured_x_labels},
-        logical_x=logical_x,
-        logical_z=logical_z,
     )
-    return [
-        decoder.decode(
-            z_deltas={label: deltas["z"].get(label, 0) for label in measured_z_labels},
-            x_deltas={label: deltas["x"].get(label, 0) for label in measured_x_labels},
-        )
-        for deltas in deltas_by_round
-    ]
+    return decoder.decode(
+        z_delta_history=[deltas["z"] for deltas in deltas_by_round if deltas["z"]],
+        x_delta_history=[deltas["x"] for deltas in deltas_by_round],
+    )
 
 
 def early_rejection_syndrome_items(

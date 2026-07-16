@@ -404,7 +404,7 @@ class TestLogicalTransferCorrectness:
 
         assert all(analysis.transfer_acceptance_succeeds(item) for item in measurements_by_outcome)
         assert all(
-            item["merged_surface_qec_recoveries"][0].x_error_sites == set()
+            item["merged_surface_qec_recovery"].x_error_sites == set()
             for item in measurements_by_outcome
         )
         assert all(
@@ -427,7 +427,7 @@ class TestLogicalTransferCorrectness:
 
         assert all(analysis.transfer_acceptance_succeeds(item) for item in measurements_by_outcome)
         assert all(
-            item["merged_surface_qec_recoveries"][0].z_error_sites == {"d"}
+            item["merged_surface_qec_recovery"].z_error_sites == {"d"}
             for item in measurements_by_outcome
         )
         assert all(
@@ -439,6 +439,70 @@ class TestLogicalTransferCorrectness:
             == 0
             for item in measurements_by_outcome
         )
+
+    def test_joint_temporal_decoder_identifies_measurement_fault(self) -> None:
+        measurements = _one_parsed_shot(
+            injected_state="+",
+            include_cultivation=False,
+            surface_readout_basis=None,
+        )
+        measurements["merged_surface_x_rounds"][1]["X_bcef"] ^= 1
+        measurements["merged_surface_syndrome_deltas"] = analysis.merged_surface_syndrome_deltas(
+            measurements,
+            merged_surface_z_labels=d3t.TRANSFER_SPEC.z_labels,
+            merged_surface_x_labels=d3t.TRANSFER_SPEC.merged_x_labels,
+        )
+
+        recovery = analysis.merged_surface_qec_recovery(
+            measurements,
+            surface_order=d3t.TRANSFER_SPEC.surface_order,
+            z_stabilizers=d3t.TRANSFER_SPEC.z_stabilizers,
+            x_stabilizers=d3t.TRANSFER_SPEC.x_stabilizers,
+        )
+
+        assert recovery.z_error_sites == set()
+
+    def test_physical_surface_measurement_fault_decodes_timelike(self) -> None:
+        circuit = d3t.build_steane_to_rotated_d3_lattice_surgery_circuit(
+            injected_state="+",
+            include_cultivation=False,
+            surface_readout_basis="X",
+            surface_readout_mode="logical_pauli",
+            add_barriers=False,
+        )
+        labels = common.round_labels(d3t.TRANSFER_SPEC.merged_x_labels)
+        syndrome_register = next(
+            register for register in circuit.cregs if register.name == "merged_surface_x"
+        )
+        fault_bit = syndrome_register[labels.index("round2_X_bcef")]
+        measurement_position = next(
+            position
+            for position, instruction in enumerate(circuit.data)
+            if instruction.operation.name == "measure" and instruction.clbits[0] == fault_bit
+        )
+        ancilla = circuit.data[measurement_position].qubits[0]
+        circuit.data.insert(measurement_position, CircuitInstruction(XGate(), (ancilla,), ()))
+
+        counts = AerSimulator(method="stabilizer").run(circuit, shots=8).result().get_counts()
+        for bitstring in counts:
+            measurements = d3t.parse_transfer_measurements(
+                bitstring,
+                include_cultivation=False,
+                surface_readout_basis="X",
+                surface_readout_mode="logical_pauli",
+            )
+            history = measurements["merged_surface_qec_recovery"].x_delta_history
+            assert history[1]["X_bcef"] == 1
+            assert history[2]["X_bcef"] == 1
+            assert measurements["merged_surface_qec_recovery"].is_trivial
+            assert (
+                analysis.corrected_surface_logical_readout(
+                    measurements,
+                    basis="X",
+                    spec=d3t.TRANSFER_SPEC,
+                )
+                == 0
+            )
 
     def test_direct_logical_pauli_readout_preserves_basis_states_without_cultivation(self) -> None:
         zero_measurements = _one_parsed_shot(
