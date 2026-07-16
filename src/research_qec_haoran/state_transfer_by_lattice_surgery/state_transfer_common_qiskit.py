@@ -38,7 +38,6 @@ SurfaceReadoutBasis = Literal["X", "Z"]
 SurfaceReadoutMode = Literal["data", "logical_pauli"]
 LATTICE_SURGERY_ROUNDS = 3
 MergedBoundaryCheck = tuple[str, tuple[str, ...], tuple[str, ...]]
-TopXRecoveryCheck = tuple[str, tuple[str, ...]]
 CircuitAppender = Callable[..., None]
 
 HIRANO_STEANE_DATA_ORDER: tuple[str, ...] = ("0", "1", "2", "3", "4", "5", "6")
@@ -141,10 +140,9 @@ class SurfaceCodeTransferSpec:
     supports, merged-boundary checks, and top-edge X checks.  Binding those
     values once avoids maintaining two nearly identical protocol builders.
 
-    ``top_x_recovery_checks`` preserves measurement order.  Each item is a
-    paper-style check label (for example ``X_ab``) and its surface-data support.
-    The callable fields bind the shared rotated-patch API implemented by the
-    distance-specific surface-code module.
+    ``top_x_recovery_labels`` preserves measurement order using paper-style
+    check labels such as ``X_ab``. The canonical supports and schedules remain
+    owned by the distance-specific surface-code module.
     """
 
     name: str
@@ -154,7 +152,7 @@ class SurfaceCodeTransferSpec:
     z_stabilizers: Mapping[str, tuple[str, ...]]
     x_stabilizers: Mapping[str, tuple[str, ...]]
     merged_boundary_checks: tuple[MergedBoundaryCheck, ...]
-    top_x_recovery_checks: tuple[TopXRecoveryCheck, ...]
+    top_x_recovery_labels: tuple[str, ...]
     prepare_plus: CircuitAppender
     append_z_stabilizer_measurements: CircuitAppender
     append_x_stabilizer_measurements: CircuitAppender
@@ -175,11 +173,6 @@ class SurfaceCodeTransferSpec:
         """Surface X checks commuting with the active merged-boundary checks."""
         withheld = set(self.top_x_recovery_labels)
         return tuple(label for label in self.x_stabilizers if label not in withheld)
-
-    @property
-    def top_x_recovery_labels(self) -> tuple[str, ...]:
-        """Top-edge X checks recovered after Steane demolition."""
-        return tuple(label for label, _ in self.top_x_recovery_checks)
 
     @property
     def z_ancilla_labels(self) -> tuple[str, ...]:
@@ -264,7 +257,6 @@ def transfer_classical_register_specs(
         )
     specs.extend(
         [
-            ClassicalRegisterSpec("init_z", spec.z_labels),
             ClassicalRegisterSpec(
                 "ls_zz",
                 round_labels(tuple(name for name, _, _ in spec.merged_boundary_checks)),
@@ -449,7 +441,7 @@ def append_merged_surface_syndrome_round(
     """Measure all surface checks compatible with the merged code.
 
     All ordinary Z checks commute with the merged-boundary Z checks.  The
-    top-edge X checks listed by ``spec.top_x_recovery_checks`` do not, so they
+    top-edge X checks listed by ``spec.top_x_recovery_labels`` do not, so they
     are withheld until the Steane patch has been demolished.
     """
     spec.append_z_stabilizer_measurements(
@@ -484,34 +476,26 @@ def append_surface_top_x_recovery_measurements(
     classical_bits: Sequence,
     add_barriers: bool = True,
 ) -> None:
-    """Recover surface top-edge X checks after Steane demolition."""
-    if len(classical_bits) != len(spec.top_x_recovery_checks):
+    """Recover surface top-edge X checks in parallel after Steane demolition."""
+    if len(classical_bits) != len(spec.top_x_recovery_labels):
         raise ValueError(
             "classical_bits must contain "
-            f"{len(spec.top_x_recovery_checks)} top-edge X recovery bits."
+            f"{len(spec.top_x_recovery_labels)} top-edge X recovery bits."
         )
 
-    surface_qubits = surface_data_qubits(registers, spec.surface_order)
-    for (check_name, support), classical_bit in zip(
-        spec.top_x_recovery_checks,
-        classical_bits,
-        strict=True,
-    ):
-        ancilla_name = check_name.lower()
-        if ancilla_name not in registers.surface_x_ancillas:
-            raise ValueError(f"registers do not include the {ancilla_name} ancilla.")
-        spec.append_logical_measurement(
-            circuit,
-            "X",
-            surface_qubits=surface_qubits,
-            support=support,
-            ancilla_qubit=registers.surface_x_ancillas[ancilla_name][0],
-            classical_bits=[classical_bit],
-            destructive=False,
-        )
-    if add_barriers:
-        labels = " and ".join(spec.top_x_recovery_labels)
-        circuit.barrier(label=f"recover surface {labels}")
+    spec.append_x_stabilizer_measurements(
+        circuit,
+        surface_qubits=surface_data_qubits(registers, spec.surface_order),
+        x_ancillas=[
+            registers.surface_x_ancillas[label.lower()][0]
+            for label in spec.top_x_recovery_labels
+        ],
+        classical_bits=classical_bits,
+        round_label="recover surface top edge",
+        stabilizer_names=spec.top_x_recovery_labels,
+        prepare_ancillas=False,
+        add_barriers=add_barriers,
+    )
 
 
 def append_surface_logical_pauli_readout(
@@ -603,22 +587,14 @@ def build_lattice_surgery_circuit(
             add_barriers=add_barriers,
         )
 
-    # Project a product |+> state into the target surface code and record its Z frame.
+    # Prepare the target in |+>. During merged round 1, compatible X checks have
+    # known +1 values while nondeterministic Z checks establish their references.
     surface_qubits = surface_data_qubits(qregs, spec.surface_order)
     spec.prepare_plus(
         circuit,
         qubits=surface_qubits,
         add_barriers=add_barriers,
         barrier_label=f"prepare {spec.name} |+> product state",
-    )
-    spec.append_z_stabilizer_measurements(
-        circuit,
-        surface_qubits=surface_qubits,
-        z_ancillas=[qregs.surface_z_ancillas[label][0] for label in spec.z_ancilla_labels],
-        classical_bits=list(cregs["init_z"]),
-        round_label="surface init",
-        prepare_ancillas=False,
-        add_barriers=add_barriers,
     )
 
     # Run merged-code rounds, including the two paper-defined Steane check groups.

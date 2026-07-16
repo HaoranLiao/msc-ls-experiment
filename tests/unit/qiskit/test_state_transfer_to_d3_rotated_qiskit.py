@@ -97,7 +97,7 @@ def _parsed_surface_fault_shots(
         index
         for index, instruction in enumerate(circuit.data)
         if instruction.operation.name == "barrier"
-        and instruction.operation.label == "surface init parallel Z checks"
+        and instruction.operation.label == "prepare rotated d3 |+> product state"
     )
     surface_qubit = next(register for register in circuit.qregs if register.name == surface_site)[0]
     circuit.data.insert(
@@ -154,9 +154,9 @@ class TestTransferCircuitLayout:
             "zz_1a",
             "zz_35bc",
         }
-        assert circuit.cregs[3].name == "ls_zz"
+        assert circuit.cregs[2].name == "ls_zz"
         # Three rounds, two merged-boundary checks per round.
-        assert circuit.cregs[3].size == 6
+        assert circuit.cregs[2].size == 6
         assert {
             label for _, steane_support, _ in d3t.MERGED_BOUNDARY_CHECKS for label in steane_support
         } == set(common.HIRANO_STEANE_LOGICAL_Z)
@@ -245,7 +245,6 @@ class TestTransferMeasurementParsing:
 
         assert set(measurements["registers"]) == {
             "enc_helpers",
-            "init_z",
             "ls_zz",
             "merged_surface_z",
             "merged_surface_x",
@@ -292,6 +291,7 @@ class TestTransferMeasurementParsing:
         assert len(measurements["merged_surface_z_rounds"]) == 3
         assert len(measurements["merged_surface_x_rounds"]) == 3
         assert len(measurements["merged_surface_syndrome_deltas"]) == 3
+        assert measurements["merged_surface_syndrome_deltas"][0]["z"] == {}
         assert all(
             bit == 0
             for deltas in measurements["merged_surface_syndrome_deltas"]
@@ -302,6 +302,22 @@ class TestTransferMeasurementParsing:
     def test_merged_interval_surface_syndrome_schedule_is_explicit(self) -> None:
         assert d3t.TRANSFER_SPEC.z_labels == ("Z_abde", "Z_cf", "Z_dg", "Z_efhi")
         assert d3t.TRANSFER_SPEC.merged_x_labels == ("X_bcef", "X_degh", "X_hi")
+
+    def test_pre_expansion_surface_signature_has_paper_detector_boundary(self) -> None:
+        measurements = _one_parsed_shot(
+            injected_state="0",
+            include_cultivation=False,
+            surface_readout_basis=None,
+        )
+
+        items = analysis.early_rejection_syndrome_items(measurements)
+
+        # Three known-X detector layers plus two Z change-detector layers.
+        assert len(items) == 3 * len(d3t.TRANSFER_SPEC.merged_x_labels) + 2 * len(
+            d3t.TRANSFER_SPEC.z_labels
+        )
+        assert len(items) == 17
+        assert not any(":round1:z:" in name for name, _ in items)
 
     def test_lookup_table_early_rejection_is_separate_from_steane_postselection(self) -> None:
         measurements = _one_parsed_shot(
@@ -378,7 +394,7 @@ class TestLogicalTransferCorrectness:
         assert plus_counts[0] == sum(plus_counts.values())
         assert minus_counts[1] == sum(minus_counts.values())
 
-    def test_pre_merge_surface_x_fault_is_not_double_counted(self) -> None:
+    def test_x_after_plus_preparation_is_trivial(self) -> None:
         measurements_by_outcome = _parsed_surface_fault_shots(
             injected_state="0",
             fault=XGate(),
@@ -388,7 +404,7 @@ class TestLogicalTransferCorrectness:
 
         assert all(analysis.transfer_acceptance_succeeds(item) for item in measurements_by_outcome)
         assert all(
-            item["merged_surface_qec_recoveries"][0].x_error_sites == {"a"}
+            item["merged_surface_qec_recoveries"][0].x_error_sites == set()
             for item in measurements_by_outcome
         )
         assert all(

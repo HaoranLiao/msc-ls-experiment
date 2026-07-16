@@ -116,8 +116,8 @@ class TestD5TransferCircuitLayout:
             "zz_35bc",
             "zz_de",
         }
-        assert circuit.cregs[2].name == "ls_zz"
-        assert circuit.cregs[2].size == 9
+        assert circuit.cregs[1].name == "ls_zz"
+        assert circuit.cregs[1].size == 9
         assert {
             label for _, steane_support, _ in d5t.MERGED_BOUNDARY_CHECKS for label in steane_support
         } == set(common.HIRANO_STEANE_LOGICAL_Z)
@@ -185,6 +185,38 @@ class TestD5TransferCircuitLayout:
         )
         assert recovery_register.size == 2
 
+    def test_top_x_recovery_checks_are_parallel_scheduled(self) -> None:
+        circuit = d5t.build_steane_to_rotated_d5_lattice_surgery_circuit(
+            injected_state="0",
+            include_cultivation=False,
+            add_barriers=False,
+        )
+        ancillas = {
+            label: next(register for register in circuit.qregs if register.name == label.lower())[0]
+            for label in d5t.TRANSFER_SPEC.top_x_recovery_labels
+        }
+        cx_positions = {
+            label: [
+                position
+                for position, instruction in enumerate(circuit.data)
+                if instruction.operation.name == "cx" and ancilla in instruction.qubits
+            ]
+            for label, ancilla in ancillas.items()
+        }
+        recovery_bits = set(
+            next(register for register in circuit.cregs if register.name == "surface_x_recovery")
+        )
+        measurement_positions = [
+            position
+            for position, instruction in enumerate(circuit.data)
+            if instruction.operation.name == "measure" and instruction.clbits[0] in recovery_bits
+        ]
+
+        assert cx_positions["X_ab"][-2] < cx_positions["X_cd"][-2]
+        assert cx_positions["X_cd"][-2] < cx_positions["X_ab"][-1]
+        assert cx_positions["X_ab"][-1] < cx_positions["X_cd"][-1]
+        assert measurement_positions[1] == measurement_positions[0] + 1
+
 
 # ===========================================================================
 # SET 2: Measurement parsing, postselection predicates, and syndrome data
@@ -203,7 +235,6 @@ class TestD5TransferMeasurementParsing:
 
         assert set(measurements["registers"]) == {
             "enc_helpers",
-            "init_z",
             "ls_zz",
             "merged_surface_z",
             "merged_surface_x",
@@ -258,12 +289,29 @@ class TestD5TransferMeasurementParsing:
         assert len(measurements["merged_surface_z_rounds"]) == 3
         assert len(measurements["merged_surface_x_rounds"]) == 3
         assert len(measurements["merged_surface_syndrome_deltas"]) == 3
+        assert measurements["merged_surface_syndrome_deltas"][0]["z"] == {}
         assert all(
             bit == 0
             for deltas in measurements["merged_surface_syndrome_deltas"]
             for basis in ("z", "x")
             for bit in deltas[basis].values()
         )
+
+    def test_pre_expansion_surface_signature_has_papers_54_detectors(self) -> None:
+        measurements = _one_parsed_shot(
+            injected_state="0",
+            surface_readout_basis=None,
+        )
+
+        items = analysis.early_rejection_syndrome_items(measurements)
+
+        # 10 compatible X checks have known +1 references in all three rounds;
+        # 12 nondeterministic Z checks produce changes only in rounds 2 and 3.
+        assert len(items) == 3 * len(d5t.TRANSFER_SPEC.merged_x_labels) + 2 * len(
+            d5t.TRANSFER_SPEC.z_labels
+        )
+        assert len(items) == 54
+        assert not any(":round1:z:" in name for name, _ in items)
 
     def test_lookup_table_early_rejection_can_reject_pre_expansion_signature(self) -> None:
         measurements = _one_parsed_shot(

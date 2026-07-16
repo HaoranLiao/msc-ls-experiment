@@ -112,7 +112,6 @@ def parse_transfer_measurements(
     parsed: dict[str, object] = {
         "registers": register_chunks,
         "enc_helpers": register_bits("enc_helpers"),
-        "surface_init_z": register_bits("init_z"),
         "surface_x_recovery": register_bits("surface_x_recovery"),
         "steane_x": register_bits("steane_x"),
         "steane_verification": verification_bits,
@@ -249,32 +248,36 @@ def merged_surface_syndrome_deltas(
     """Return change-detected surface-code deltas measured during the merge.
 
     These are the compatible surface stabilizers extracted while the Steane and
-    surface patches are connected by merged-boundary Z checks.  Z deltas compare
-    against the initial surface Z frame.  X deltas compare against the expected
-    `|+>` value for the compatible X stabilizers measured during the merge.
+    surface patches are connected by merged-boundary Z checks. Because the
+    surface data start in a product `|+>` state, compatible X checks have known
+    +1 values and produce detectors from round 1. Z checks are initially
+    nondeterministic: round 1 establishes their reference and rounds 2--3
+    produce change detectors, exactly as in the paper's circuit.
 
     Top-edge X checks that do not commute with active merged-boundary Z checks
     are intentionally absent here and recovered only after Steane demolition.
     """
-    z_frame = StabilizerFrame()
-    z_frame.record_many(
-        {label: measurements["surface_init_z"][label] for label in merged_surface_z_labels}
-    )
-
     x_frame = StabilizerFrame()
     x_frame.record_many({label: 0 for label in merged_surface_x_labels})
 
+    z_frame = StabilizerFrame()
     deltas: list[dict[str, dict[str, int]]] = []
-    for merged_z, merged_x in zip(
-        measurements["merged_surface_z_rounds"],
-        measurements["merged_surface_x_rounds"],
-        strict=True,
+    for round_index, (merged_z, merged_x) in enumerate(
+        zip(
+            measurements["merged_surface_z_rounds"],
+            measurements["merged_surface_x_rounds"],
+            strict=True,
+        )
     ):
-        z_deltas = z_frame.compare_many(merged_z, update=True)
+        if round_index == 0:
+            z_frame.record_many(merged_z)
+            z_deltas = {}
+        else:
+            z_deltas = z_frame.advance(merged_z)
         x_deltas = x_frame.compare_many(merged_x, update=True)
         deltas.append(
             {
-                "z": {label: z_deltas[label] for label in merged_surface_z_labels},
+                "z": dict(z_deltas),
                 "x": {label: x_deltas[label] for label in merged_surface_x_labels},
             }
         )
@@ -299,18 +302,25 @@ def merged_surface_qec_recoveries(
     error model, as in the paper's Stim implementation.
     """
     deltas_by_round = measurements["merged_surface_syndrome_deltas"]
-    first_round = deltas_by_round[0]
-    measured_z_stabilizers = {label: z_stabilizers[label] for label in first_round["z"]}
-    measured_x_stabilizers = {label: x_stabilizers[label] for label in first_round["x"]}
+    measured_z_labels = tuple(
+        label for label in z_stabilizers if any(label in deltas["z"] for deltas in deltas_by_round)
+    )
+    measured_x_labels = tuple(
+        label for label in x_stabilizers if any(label in deltas["x"] for deltas in deltas_by_round)
+    )
     decoder = RotatedDecoder(
         data_qubits=surface_order,
-        z_stabilizers=measured_z_stabilizers,
-        x_stabilizers=measured_x_stabilizers,
+        z_stabilizers={label: z_stabilizers[label] for label in measured_z_labels},
+        x_stabilizers={label: x_stabilizers[label] for label in measured_x_labels},
         logical_x=logical_x,
         logical_z=logical_z,
     )
     return [
-        decoder.decode(z_deltas=deltas["z"], x_deltas=deltas["x"]) for deltas in deltas_by_round
+        decoder.decode(
+            z_deltas={label: deltas["z"].get(label, 0) for label in measured_z_labels},
+            x_deltas={label: deltas["x"].get(label, 0) for label in measured_x_labels},
+        )
+        for deltas in deltas_by_round
     ]
 
 

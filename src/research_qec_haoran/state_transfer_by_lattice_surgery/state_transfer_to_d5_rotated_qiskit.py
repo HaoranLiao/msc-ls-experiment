@@ -43,10 +43,7 @@ TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
     z_stabilizers=d5.Z_STABILIZERS,
     x_stabilizers=d5.X_STABILIZERS,
     merged_boundary_checks=MERGED_BOUNDARY_CHECKS,
-    top_x_recovery_checks=(
-        ("X_ab", ("a", "b")),
-        ("X_cd", ("c", "d")),
-    ),
+    top_x_recovery_labels=("X_ab", "X_cd"),
     prepare_plus=d5.prepare_plus,
     append_z_stabilizer_measurements=d5.append_z_stabilizer_measurements,
     append_x_stabilizer_measurements=d5.append_x_stabilizer_measurements,
