@@ -303,50 +303,22 @@ class TestTransferMeasurementParsing:
         assert d3t.TRANSFER_SPEC.z_labels == ("Z_abde", "Z_cf", "Z_dg", "Z_efhi")
         assert d3t.TRANSFER_SPEC.merged_x_labels == ("X_bcef", "X_degh", "X_hi")
 
-    def test_pre_expansion_surface_signature_has_paper_detector_boundary(self) -> None:
+    def test_surface_delta_history_has_paper_detector_boundary(self) -> None:
         measurements = _one_parsed_shot(
             injected_state="0",
             include_cultivation=False,
             surface_readout_basis=None,
         )
 
-        items = analysis.early_rejection_syndrome_items(measurements)
+        deltas = measurements["merged_surface_syndrome_deltas"]
+        z_delta_count = sum(len(layer["z"]) for layer in deltas)
+        x_delta_count = sum(len(layer["x"]) for layer in deltas)
 
         # Three known-X detector layers plus two Z change-detector layers.
-        assert len(items) == 3 * len(d3t.TRANSFER_SPEC.merged_x_labels) + 2 * len(
-            d3t.TRANSFER_SPEC.z_labels
-        )
-        assert len(items) == 17
-        assert not any(":round1:z:" in name for name, _ in items)
-
-    def test_lookup_table_early_rejection_is_separate_from_steane_postselection(self) -> None:
-        measurements = _one_parsed_shot(
-            injected_state="0",
-            include_cultivation=False,
-            surface_readout_basis=None,
-        )
-
-        signature = analysis.early_rejection_syndrome_signature(measurements)
-        items = analysis.early_rejection_syndrome_items(measurements)
-        table = analysis.LookupTableEarlyRejection.from_signatures([signature])
-
-        assert all(bit == 0 for bit in signature)
-        assert items
-        assert all(name.startswith("merged_surface:") for name, _ in items)
-        assert analysis.steane_verification_succeeds(measurements)
-        assert analysis.x_verification_succeeds(measurements)
-        assert analysis.lookup_table_early_rejection_accepts(measurements)
-        assert not analysis.lookup_table_early_rejection_accepts(
-            measurements,
-            lookup_table=table,
-        )
-        assert not analysis.transfer_acceptance_succeeds(measurements, lookup_table=table)
-
-    def test_lookup_table_remove_all_nontrivial_rejects_syndrome_signature(self) -> None:
-        table = analysis.LookupTableEarlyRejection(remove_all_nontrivial=True)
-
-        assert not table.rejects((0, 0, 0))
-        assert table.rejects((0, 1, 0))
+        assert x_delta_count == 3 * len(d3t.TRANSFER_SPEC.merged_x_labels)
+        assert z_delta_count == 2 * len(d3t.TRANSFER_SPEC.z_labels)
+        assert x_delta_count + z_delta_count == 17
+        assert deltas[0]["z"] == {}
 
     def test_parser_rejects_register_chunks_with_wrong_width(self) -> None:
         with pytest.raises(ValueError, match="labels"):

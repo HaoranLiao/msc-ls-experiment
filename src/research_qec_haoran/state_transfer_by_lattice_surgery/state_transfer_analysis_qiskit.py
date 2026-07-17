@@ -8,8 +8,7 @@ Pauli frame.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
 
 from research_qec_haoran.decoding.pauli_frame import PauliFrame
 from research_qec_haoran.decoding.stabilizer_frame import StabilizerFrame
@@ -29,44 +28,6 @@ from research_qec_haoran.surface_code.decoding.rotated_decoder import (
     TemporalRotatedDetectedErrors,
 )
 from research_qec_haoran.utils.normalize import parse_qiskit_registers
-
-SyndromeItem = tuple[str, int]
-SyndromeSignature = tuple[int, ...]
-
-
-@dataclass(frozen=True)
-class LookupTableEarlyRejection:
-    """Paper-style early-rejection table over pre-expansion syndromes.
-
-    This is separate from Steane syndrome postselection. The table stores
-    pre-expansion signatures that offline sampling predicts will fail final
-    complementary-gap postselection. ``remove_all_nontrivial`` implements the
-    paper's special policy of rejecting every nonzero signature.
-    """
-
-    rejected_signatures: frozenset[SyndromeSignature] = frozenset()
-    remove_all_nontrivial: bool = False
-
-    @classmethod
-    def from_signatures(
-        cls,
-        signatures: Iterable[Iterable[int]],
-        *,
-        remove_all_nontrivial: bool = False,
-    ) -> LookupTableEarlyRejection:
-        """Build a rejection table from iterable bit signatures."""
-        return cls(
-            rejected_signatures=frozenset(tuple(int(bit) for bit in sig) for sig in signatures),
-            remove_all_nontrivial=remove_all_nontrivial,
-        )
-
-    def rejects(self, signature: Iterable[int]) -> bool:
-        """Return whether the table rejects ``signature``."""
-        normalized = tuple(int(bit) for bit in signature)
-        if self.remove_all_nontrivial and any(normalized):
-            return True
-        return normalized in self.rejected_signatures
-
 
 def parse_transfer_measurements(
     bitstring: str,
@@ -315,61 +276,6 @@ def merged_surface_qec_recovery(
     )
 
 
-def early_rejection_syndrome_items(
-    measurements: dict[str, object],
-) -> tuple[SyndromeItem, ...]:
-    """Return the pre-expansion syndrome bits used by lookup-table rejection.
-
-    The table acts only on correctable surface-code detector events available
-    before expansion. Color-code checks, final X checks, and repeated merged
-    boundary parities are mandatory postselection predicates; accepted shots
-    have zero values for them, so including those bits would only pad every
-    lookup key with constants.
-
-    The names are kept with the bits so tests and notebooks can display which
-    physical/protocol stage triggered rejection.
-    """
-    items: list[SyndromeItem] = []
-
-    for round_index, deltas in enumerate(
-        measurements["merged_surface_syndrome_deltas"],
-        start=1,
-    ):
-        items.extend(
-            (f"merged_surface:round{round_index}:z:{label}", bit)
-            for label, bit in deltas["z"].items()
-        )
-        items.extend(
-            (f"merged_surface:round{round_index}:x:{label}", bit)
-            for label, bit in deltas["x"].items()
-        )
-
-    return tuple(items)
-
-
-def early_rejection_syndrome_signature(
-    measurements: dict[str, object],
-) -> SyndromeSignature:
-    """Return only the ordered bits of ``early_rejection_syndrome_items``."""
-    return tuple(bit for _, bit in early_rejection_syndrome_items(measurements))
-
-
-def lookup_table_early_rejection_accepts(
-    measurements: dict[str, object],
-    *,
-    lookup_table: LookupTableEarlyRejection | Iterable[Iterable[int]] | None = None,
-) -> bool:
-    """Return whether the paper-style early-rejection table accepts a shot."""
-    if lookup_table is None:
-        return True
-    table = (
-        lookup_table
-        if isinstance(lookup_table, LookupTableEarlyRejection)
-        else LookupTableEarlyRejection.from_signatures(lookup_table)
-    )
-    return not table.rejects(early_rejection_syndrome_signature(measurements))
-
-
 def cultivation_succeeds(measurements: dict[str, object]) -> bool:
     """Return whether optional cultivation postselection bits are all zero."""
     cultivation = measurements.get("cultivation")
@@ -385,16 +291,14 @@ def encoder_helpers_succeed(measurements: dict[str, object]) -> bool:
 
 def transfer_acceptance_succeeds(
     measurements: dict[str, object],
-    *,
-    lookup_table: LookupTableEarlyRejection | Iterable[Iterable[int]] | None = None,
 ) -> bool:
     """Return whether transfer-local fault-detecting checks accept.
 
     Acceptance here means all hard fault-detection predicates are satisfied:
     encoder helper checks, optional cultivation checks, repeated merged-boundary
-    consistency, Steane LS verification, final deterministic X checks, and the
-    optional paper-style lookup-table early-rejection hook. Surface syndromes
-    are corrected rather than hard-postselected, as required by Section III A.
+    consistency, Steane LS verification, and final deterministic X checks.
+    Surface syndromes are corrected rather than hard-postselected, as required
+    by Section III A.
     """
     return (
         encoder_helpers_succeed(measurements)
@@ -402,7 +306,6 @@ def transfer_acceptance_succeeds(
         and merged_boundary_checks_stable(measurements)
         and steane_verification_succeeds(measurements)
         and x_verification_succeeds(measurements)
-        and lookup_table_early_rejection_accepts(measurements, lookup_table=lookup_table)
     )
 
 
