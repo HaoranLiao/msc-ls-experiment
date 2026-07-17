@@ -215,8 +215,8 @@ class TestOneRoundDecodeCorrect:
         pauli_frame = PauliFrame()
         pauli_frame.register("L0")
         _decoder.decode_from_raw_syndromes(
-            pauli_frame,
-            "L0",
+            pauli_frame=pauli_frame,
+            logical_qubit_label="L0",
             x_raw=x_raw,
             z_raw=z_raw,
             stab_frame=stab_frame,
@@ -322,8 +322,8 @@ class TestTwoRoundDecodeCorrect:
 
         x1_raw, z1_raw = _parse_syndrome_bits(syn1_str)
         _decoder.decode_from_raw_syndromes(
-            pauli_frame,
-            "L0",
+            pauli_frame=pauli_frame,
+            logical_qubit_label="L0",
             x_raw=x1_raw,
             z_raw=z1_raw,
             stab_frame=stab_frame,
@@ -331,8 +331,8 @@ class TestTwoRoundDecodeCorrect:
 
         x2_raw, z2_raw = _parse_syndrome_bits(syn2_str)
         _decoder.decode_from_raw_syndromes(
-            pauli_frame,
-            "L0",
+            pauli_frame=pauli_frame,
+            logical_qubit_label="L0",
             x_raw=x2_raw,
             z_raw=z2_raw,
             stab_frame=stab_frame,

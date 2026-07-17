@@ -136,7 +136,12 @@ class SteaneDecoder:
 
     # -- Frame update --
 
-    def apply_recovery(self, frame, label: str, detected_errors: SteaneDetectedError) -> None:
+    def apply_recovery(
+        self,
+        pauli_frame,
+        logical_qubit_label: str,
+        detected_errors: SteaneDetectedError,
+    ) -> None:
         """Update a PauliFrame based on detected errors.
 
         An X error on a site in the logical-Z support anticommutes with
@@ -145,24 +150,30 @@ class SteaneDecoder:
 
         Parameters
         ----------
-        frame : PauliFrame
+        pauli_frame : PauliFrame
             The Pauli frame to update.
-        label
-            Logical-qubit label in the frame (e.g. ``"L0"``).
+        logical_qubit_label
+            Logical-qubit label registered in ``pauli_frame`` (e.g. ``"L0"``).
         detected_errors
             The decoded error sites to apply.
         """
         if detected_errors.x_error_site is not None:
-            frame.update_x(label, detected_errors.x_error_site in self._logical_z_set)
+            pauli_frame.update_x(
+                logical_qubit_label,
+                detected_errors.x_error_site in self._logical_z_set,
+            )
         if detected_errors.z_error_site is not None:
-            frame.update_z(label, detected_errors.z_error_site in self._logical_x_set)
+            pauli_frame.update_z(
+                logical_qubit_label,
+                detected_errors.z_error_site in self._logical_x_set,
+            )
 
     # -- Convenience pipeline --
 
     def decode_from_raw_syndromes(
         self,
-        frame,
-        label: str,
+        pauli_frame,
+        logical_qubit_label: str,
         *,
         x_raw: tuple[int, ...],
         z_raw: tuple[int, ...],
@@ -178,10 +189,10 @@ class SteaneDecoder:
 
         Parameters
         ----------
-        frame : PauliFrame
+        pauli_frame : PauliFrame
             The Pauli frame to update.
-        label
-            Logical-qubit label in the frame (e.g. ``"L0"``).
+        logical_qubit_label
+            Logical-qubit label registered in ``pauli_frame`` (e.g. ``"L0"``).
         x_raw
             3-bit raw X-stabilizer measurement outcomes.
         z_raw
@@ -199,5 +210,9 @@ class SteaneDecoder:
         z_syn = tuple(z_deltas[lab] for lab in Z_STABILIZER_LABELS)
 
         detected_errors = self.decode(z_syndrome=z_syn, x_syndrome=x_syn)
-        self.apply_recovery(frame, label, detected_errors)
+        self.apply_recovery(
+            pauli_frame=pauli_frame,
+            logical_qubit_label=logical_qubit_label,
+            detected_errors=detected_errors,
+        )
         return detected_errors

@@ -141,17 +141,17 @@ class _RotatedMatchingModel:
 
     def apply_recovery(
         self,
-        frame,
-        label: str,
+        pauli_frame,
+        logical_qubit_label: str,
         detected_errors: RotatedDetectedErrors | TemporalRotatedDetectedErrors,
     ) -> None:
         """Fold decoded physical corrections into a logical Pauli frame."""
-        frame.update_x(
-            label,
+        pauli_frame.update_x(
+            logical_qubit_label,
             len(detected_errors.x_error_sites & self.logical_z) % 2 == 1,
         )
-        frame.update_z(
-            label,
+        pauli_frame.update_z(
+            logical_qubit_label,
             len(detected_errors.z_error_sites & self.logical_x) % 2 == 1,
         )
 
@@ -242,8 +242,8 @@ class RotatedDecoder:
 
     def update_pauli_frame(
         self,
-        frame,
-        label: str,
+        pauli_frame,
+        logical_qubit_label: str,
         *,
         z_deltas: Mapping[str, int | bool],
         x_deltas: Mapping[str, int | bool],
@@ -254,8 +254,53 @@ class RotatedDecoder:
         Z correction crossing logical X updates the logical Z frame.
         """
         detected_errors = self.decode(z_deltas=z_deltas, x_deltas=x_deltas)
-        self._model.apply_recovery(frame, label, detected_errors)
+        self._model.apply_recovery(
+            pauli_frame=pauli_frame,
+            logical_qubit_label=logical_qubit_label,
+            detected_errors=detected_errors,
+        )
         return detected_errors
+
+    def decode_from_raw_syndromes(
+        self,
+        pauli_frame,
+        logical_qubit_label: str,
+        *,
+        x_raw: Mapping[str, int | bool],
+        z_raw: Mapping[str, int | bool],
+        stab_frame,
+    ) -> RotatedDetectedErrors:
+        """Change-detect raw syndromes, decode, and update the Pauli frame.
+
+        ``stab_frame`` must already contain the reference value for every
+        stabilizer used by this decoder. It is advanced in place to the raw
+        measurements supplied for this round.
+
+        Parameters
+        ----------
+        pauli_frame
+            Pauli frame to update.
+        logical_qubit_label
+            Logical-qubit label registered in ``pauli_frame``.
+        x_raw
+            Raw X-stabilizer outcomes keyed by ``x_stabilizer_names``.
+        z_raw
+            Raw Z-stabilizer outcomes keyed by ``z_stabilizer_names``.
+        stab_frame
+            Stabilizer frame containing the previous raw outcomes.
+        """
+        x_deltas = stab_frame.advance(
+            {name: x_raw[name] for name in self.x_stabilizer_names}
+        )
+        z_deltas = stab_frame.advance(
+            {name: z_raw[name] for name in self.z_stabilizer_names}
+        )
+        return self.update_pauli_frame(
+            pauli_frame=pauli_frame,
+            logical_qubit_label=logical_qubit_label,
+            z_deltas=z_deltas,
+            x_deltas=x_deltas,
+        )
 
 
 class TemporalRotatedDecoder:
@@ -365,17 +410,20 @@ class TemporalRotatedDecoder:
 
     def update_pauli_frame(
         self,
-        frame,
-        label: str,
+        pauli_frame,
+        logical_qubit_label: str,
         *,
         z_delta_history: Sequence[Mapping[str, int | bool]],
         x_delta_history: Sequence[Mapping[str, int | bool]],
     ) -> TemporalRotatedDetectedErrors:
-        """Decode all delta layers, update the frame, and return the recovery."""
+        """Decode all delta layers, update the Pauli frame, and return the recovery."""
         detected_errors = self.decode(
             z_delta_history=z_delta_history,
             x_delta_history=x_delta_history,
         )
-        self._model.apply_recovery(frame, label, detected_errors)
+        self._model.apply_recovery(
+            pauli_frame=pauli_frame,
+            logical_qubit_label=logical_qubit_label,
+            detected_errors=detected_errors,
+        )
         return detected_errors
-

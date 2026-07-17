@@ -245,25 +245,20 @@ class TestD3SingleFaultDecoding:
             ),
         )
 
-        # Step 6: Compute change-detected syndrome.
+        # Step 6: Initialize the stabilizer reference.
         stab_frame = StabilizerFrame()
         stab_frame.record_many(parsed["init_z"])
         stab_frame.record_many({name: 0 for name in X_NAMES})
-        deltas = stab_frame.compare_many(
-            {**parsed["det_z"], **parsed["det_x"]},
-            update=False,
-        )
-        z_deltas = {name: deltas[name] for name in Z_NAMES}
-        x_deltas = {name: deltas[name] for name in X_NAMES}
 
-        # Step 7: Decode and update Pauli frame.
+        # Step 7: Change-detect, decode, and update the Pauli frame.
         pauli_frame = PauliFrame()
         pauli_frame.register("L0")
-        _d3_decoder().update_pauli_frame(
-            pauli_frame,
-            "L0",
-            z_deltas=z_deltas,
-            x_deltas=x_deltas,
+        _d3_decoder().decode_from_raw_syndromes(
+            pauli_frame=pauli_frame,
+            logical_qubit_label="L0",
+            z_raw=parsed["det_z"],
+            x_raw=parsed["det_x"],
+            stab_frame=stab_frame,
         )
 
         # Step 8: Frame-corrected logical readout.
@@ -356,15 +351,12 @@ class TestD3MultiRoundFaultDecoding:
         decoder = _d3_decoder()
 
         for index in range(n_rounds):
-            deltas = stab_frame.compare_many(
-                {**parsed[f"z_r{index}"], **parsed[f"x_r{index}"]},
-                update=True,
-            )
-            decoder.update_pauli_frame(
-                pauli_frame,
-                "L0",
-                z_deltas={name: deltas[name] for name in Z_NAMES},
-                x_deltas={name: deltas[name] for name in X_NAMES},
+            decoder.decode_from_raw_syndromes(
+                pauli_frame=pauli_frame,
+                logical_qubit_label="L0",
+                z_raw=parsed[f"z_r{index}"],
+                x_raw=parsed[f"x_r{index}"],
+                stab_frame=stab_frame,
             )
 
         # Frame-corrected logical readout.
@@ -562,20 +554,15 @@ class TestD5SingleFaultDecoding:
         stab_frame = StabilizerFrame()
         stab_frame.record_many(parsed["init_z"])
         stab_frame.record_many({name: 0 for name in D5_X_NAMES})
-        deltas = stab_frame.compare_many(
-            {**parsed["det_z"], **parsed["det_x"]},
-            update=False,
-        )
-        z_deltas = {name: deltas[name] for name in D5_Z_NAMES}
-        x_deltas = {name: deltas[name] for name in D5_X_NAMES}
 
         pauli_frame = PauliFrame()
         pauli_frame.register("L0")
-        _d5_decoder().update_pauli_frame(
-            pauli_frame,
-            "L0",
-            z_deltas=z_deltas,
-            x_deltas=x_deltas,
+        _d5_decoder().decode_from_raw_syndromes(
+            pauli_frame=pauli_frame,
+            logical_qubit_label="L0",
+            z_raw=parsed["det_z"],
+            x_raw=parsed["det_x"],
+            stab_frame=stab_frame,
         )
 
         raw_logical_x = sum(parsed["log_x"].values()) % 2
@@ -658,15 +645,12 @@ class TestD5MultiRoundFaultDecoding:
         decoder = _d5_decoder()
 
         for index in range(n_rounds):
-            deltas = stab_frame.compare_many(
-                {**parsed[f"z_r{index}"], **parsed[f"x_r{index}"]},
-                update=True,
-            )
-            decoder.update_pauli_frame(
-                pauli_frame,
-                "L0",
-                z_deltas={name: deltas[name] for name in D5_Z_NAMES},
-                x_deltas={name: deltas[name] for name in D5_X_NAMES},
+            decoder.decode_from_raw_syndromes(
+                pauli_frame=pauli_frame,
+                logical_qubit_label="L0",
+                z_raw=parsed[f"z_r{index}"],
+                x_raw=parsed[f"x_r{index}"],
+                stab_frame=stab_frame,
             )
 
         raw_logical_x = sum(parsed["log_x"].values()) % 2
@@ -936,8 +920,8 @@ def test_temporal_decoder_updates_frame_from_physical_fault_history() -> None:
     pauli_frame = PauliFrame()
     pauli_frame.register("L0")
     recovery = decoder.update_pauli_frame(
-        pauli_frame,
-        "L0",
+        pauli_frame=pauli_frame,
+        logical_qubit_label="L0",
         z_delta_history=z_delta_history,
         x_delta_history=x_delta_history,
     )
@@ -947,4 +931,3 @@ def test_temporal_decoder_updates_frame_from_physical_fault_history() -> None:
     assert pauli_frame.current_byproduct("L0") == "Z"
     raw_logical_x = sum(parsed["log_x"].values()) % 2
     assert pauli_frame.interpret_x_readout("L0", raw_logical_x) == 0
-
