@@ -1,9 +1,10 @@
 """Qiskit helpers for Steane-code state injection."""
 
 from research_qec_haoran.steane_code.kickback_tomography_qiskit import (
+    KT_DEFAULT_QEC_CYCLE_INDICES,
+    KT_FULL_QEC_CYCLE_INDICES,
     KickbackTomographyExperiment,
     KickbackTomographySummary,
-    build_kickback_tomography_circuit,
     build_kickback_tomography_experiment,
     summarize_kickback_tomography_counts,
 )
@@ -16,10 +17,11 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
 
 __all__ = [
     "InjectedStateName",
+    "KT_DEFAULT_QEC_CYCLE_INDICES",
+    "KT_FULL_QEC_CYCLE_INDICES",
     "KickbackTomographyExperiment",
     "KickbackTomographySummary",
     "STEANE_ENCODER_CNOTS",
-    "build_kickback_tomography_circuit",
     "build_kickback_tomography_experiment",
     "build_steane_state_injection_encoder",
     "prepare_physical_state",
