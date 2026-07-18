@@ -24,7 +24,6 @@ from research_qec_haoran.state_transfer_by_lattice_surgery import (
 )
 from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_common_qiskit import (
     SurfaceReadoutBasis,
-    SurfaceReadoutMode,
 )
 from research_qec_haoran.steane_code.state_injection_qiskit import InjectedStateName
 from research_qec_haoran.surface_code import rotated_d5_qiskit as d5
@@ -58,21 +57,58 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     injected_state: InjectedStateName | tuple[complex, complex] = "H",
     include_cultivation: bool = True,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
-    surface_readout_mode: SurfaceReadoutMode = "data",
     add_barriers: bool = True,
 ) -> QuantumCircuit:
-    """Build the complete Figure 6 stabilizer-level transfer.
+    """Build the paper-facing Steane-to-rotated-d5 transfer circuit.
 
-    All three merged rounds and all paper-required verification and recovery
-    checks are unconditional. ``surface_readout_basis`` adds an analysis
-    measurement after the transfer; it is not part of Figure 6.
+    The target is the 25-data-qubit rotated distance-5 patch used by Figure 6.
+    Each of the three merged rounds measures ``Z1a``, ``Z35bc``, and ``Zde``
+    together with every compatible d5 surface stabilizer. The anticommuting
+    top-edge checks ``X_ab`` and ``X_cd`` are withheld during the merge and
+    recovered unconditionally after destructive Steane-X demolition. The
+    first ``X_cd`` recovery outcome is not hard-postselected.
+
+    The builder also includes the Crumble Steane encoder, optional logical-H
+    cultivation, and the two paper-defined Steane verification groups assigned
+    to merged rounds 1 and 2. It records all raw measurements needed for
+    temporal surface decoding by ``parse_transfer_measurements``; decoding and
+    Pauli-frame interpretation occur classically after circuit execution.
+
+    Parameters
+    ----------
+    injected_state
+        Named physical state or amplitude pair supplied to the Steane Crumble
+        encoder. The default ``"H"`` is the Hadamard-axis magic-state input.
+    include_cultivation
+        Whether to append the logical-H cultivation projection and its
+        postselection measurements. Disable this only for transfer tests or an
+        input that has already been cultivated.
+    surface_readout_basis
+        Optional ``"X"`` or ``"Z"`` basis for a destructive analysis
+        measurement of the standard d5 logical support after top-edge
+        recovery. ``None`` ends the circuit at the Figure 6 transfer boundary.
+    add_barriers
+        Whether to add labeled barriers between conceptual protocol stages.
+
+    Returns
+    -------
+    QuantumCircuit
+        A register-owning d5 transfer circuit with an optional terminal
+        analysis readout.
+
+    Notes
+    -----
+    The optional terminal readout is an analysis aid and is not part of Figure
+    6. Ordinary post-transfer surface QEC is also intentionally absent; the
+    paper performs later stabilizing rounds after code expansion. Full shared
+    protocol semantics are documented by
+    ``common.build_lattice_surgery_circuit``.
     """
     return common.build_lattice_surgery_circuit(
         TRANSFER_SPEC,
         injected_state=injected_state,
         include_cultivation=include_cultivation,
         surface_readout_basis=surface_readout_basis,
-        surface_readout_mode=surface_readout_mode,
         add_barriers=add_barriers,
     )
 
@@ -82,7 +118,6 @@ def parse_transfer_measurements(
     *,
     include_cultivation: bool = True,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
-    surface_readout_mode: SurfaceReadoutMode = "data",
 ) -> dict[str, object]:
     """Parse one d5 transfer count key into labeled protocol fields."""
     return analysis.parse_transfer_measurements(
@@ -90,5 +125,4 @@ def parse_transfer_measurements(
         spec=TRANSFER_SPEC,
         include_cultivation=include_cultivation,
         surface_readout_basis=surface_readout_basis,
-        surface_readout_mode=surface_readout_mode,
     )
