@@ -25,13 +25,11 @@ from typing import Literal
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
-from research_qec_haoran.steane_code.magic_state_cultivation_qiskit import (
-    append_hadamard_axis_projection_round,
+from research_qec_haoran.steane_code import (
+    magic_state_cultivation_qiskit as cultivation,
 )
-from research_qec_haoran.steane_code.state_injection_qiskit import (
-    InjectedStateName,
-    append_patch_logical_measurement,
-    append_patch_steane_state_injection_encoder_crumble_sequences,
+from research_qec_haoran.steane_code import (
+    state_injection_qiskit as steane,
 )
 
 SurfaceReadoutBasis = Literal["X", "Z"]
@@ -354,7 +352,7 @@ def append_measure_steane_data_in_x_basis(
     if len(classical_bits) != len(HIRANO_STEANE_DATA_ORDER):
         raise ValueError("classical_bits must contain seven Steane-data bits.")
 
-    append_patch_logical_measurement(
+    steane.append_patch_logical_measurement(
         circuit,
         "X",
         patch_qubits=hirano_labeled_patch_qubits(registers),
@@ -398,7 +396,7 @@ def append_steane_lattice_surgery_verification_round(
         helper_label = STEANE_LS_VERIFICATION_ANCILLA_HELPER[check_name]
         ancilla = registers.steane_helpers[helper_label][0]
         circuit.reset(ancilla)
-        append_patch_logical_measurement(
+        steane.append_patch_logical_measurement(
             circuit,
             basis,
             patch_qubits=patch_qubits,
@@ -486,7 +484,7 @@ def append_surface_top_x_recovery_measurements(
 def build_lattice_surgery_circuit(
     spec: SurfaceCodeTransferSpec,
     *,
-    injected_state: InjectedStateName | tuple[complex, complex] = "H",
+    injected_state: steane.InjectedStateName | tuple[complex, complex] = "H",
     include_cultivation: bool = True,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     surface_readout_mode: SurfaceReadoutMode = "data",
@@ -531,14 +529,14 @@ def build_lattice_surgery_circuit(
 
     # Prepare the accepted color-code input using the existing Steane front end.
     patch_qubits = hirano_labeled_patch_qubits(qregs)
-    append_patch_steane_state_injection_encoder_crumble_sequences(
+    steane.append_patch_steane_state_injection_encoder_crumble_sequences(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
         helper_classical_bits=list(cregs["enc_helpers"]),
     )
     if include_cultivation:
-        append_hadamard_axis_projection_round(
+        cultivation.append_hadamard_axis_projection_round(
             circuit,
             patch_qubits=patch_qubits,
             classical_bits=list(cregs["cult"]),
