@@ -490,15 +490,83 @@ def build_lattice_surgery_circuit(
     surface_readout_mode: SurfaceReadoutMode = "data",
     add_barriers: bool = True,
 ) -> QuantumCircuit:
-    """Build the shared Steane-to-rotated-surface transfer protocol.
+    """Build the complete observable-level Steane-to-surface transfer circuit.
 
-    The default sequence follows Section III A at the stabilizer-measurement
-    level.  The two Steane check groups are part of merged rounds 1 and 2, and
-    Steane demolition plus top-edge X recovery follows round 3.  The commuting
-    checks are serialized in Qiskit; this function does not reproduce the
-    paper implementation's hardware-specific superdense gate interleaving.
-    Full surface-code QEC after transfer is intentionally absent: the paper
-    performs its stabilizing rounds after code expansion, outside Section III A.
+    The circuit implements the fixed-patch lattice-surgery sequence from
+    Section III A of Hirano et al., specialized by ``spec`` to a rotated d=3
+    or d=5 target. It creates all quantum and classical registers internally
+    and appends these stages in protocol order:
+
+    1. Encode ``injected_state`` on the 11-site Steane patch with the routed
+       Crumble encoder and measure its helper-qubit acceptance bits.
+    2. Optionally apply the Steane logical-H cultivation projection.
+    3. Prepare every target surface-data qubit in ``|+>``.
+    4. Perform exactly three merged rounds. Every round measures the mixed
+       boundary-Z checks, every compatible surface Z check, and every
+       compatible surface X check. The paper-defined Steane verification
+       groups are additionally measured in rounds 1 and 2.
+    5. Demolish the Steane data in X after round 3 and recover the surface
+       top-edge X checks that were withheld during the merge.
+    6. Optionally append a destructive surface logical readout for analysis.
+
+    Parameters
+    ----------
+    spec
+        Target geometry, logical supports, stabilizer definitions,
+        merged-boundary checks, withheld top-edge checks, and distance-specific
+        surface-code circuit operations.
+    injected_state
+        Named physical state or amplitude pair passed to the Steane Crumble
+        encoder. The default ``"H"`` prepares the Hadamard-axis magic-state
+        input used by cultivation.
+    include_cultivation
+        Whether to append the logical-H projection and its classical
+        postselection register. Disable this only for transfer plumbing tests
+        or when the input has already been cultivated.
+    surface_readout_basis
+        Optional ``"X"`` or ``"Z"`` analysis basis. ``None`` returns the
+        transfer circuit immediately after top-edge recovery, matching the
+        paper-facing transfer boundary.
+    surface_readout_mode
+        Readout representation used when ``surface_readout_basis`` is set.
+        ``"data"`` measures every surface data qubit so logical and stabilizer
+        parities can be reconstructed. ``"logical_pauli"`` measures only the
+        target's standard logical support. Both modes are destructive and are
+        analysis additions, not lattice-surgery protocol rounds.
+    add_barriers
+        Whether to add labeled barriers between conceptual protocol stages.
+        Barriers improve circuit inspection but do not change the measured
+        observables.
+
+    Returns
+    -------
+    QuantumCircuit
+        A register-owning Qiskit circuit containing the requested transfer and
+        optional terminal analysis measurement. Its classical registers are
+        described by ``transfer_classical_register_specs`` and interpreted by
+        ``state_transfer_analysis_qiskit.parse_transfer_measurements``.
+
+    Raises
+    ------
+    ValueError
+        If ``surface_readout_mode`` is not ``"data"`` or
+        ``"logical_pauli"``. Invalid readout bases or inconsistent target
+        specifications are rejected by the delegated surface-code operations.
+
+    Notes
+    -----
+    The three merged rounds contain temporal surface-code syndrome extraction,
+    not in-circuit decoding. After circuit execution,
+    ``parse_transfer_measurements`` establishes the known X-check preparation
+    boundary, uses the first nondeterministic Z-check round as its reference,
+    and jointly decodes the resulting three X-detector layers and two
+    Z-detector layers with ``TemporalRotatedDecoder``. Corrections are tracked
+    classically in a Pauli frame rather than applied as physical gates.
+
+    Commuting measurements assigned to one merged round are serialized here
+    for readability. This builder does not reproduce the paper's hardware-level
+    superdense gate interleaving, circuit-level detector error model, later
+    code expansion, or post-expansion surface-code stabilization rounds.
     """
     if surface_readout_mode not in {"data", "logical_pauli"}:
         raise ValueError("surface_readout_mode must be 'data' or 'logical_pauli'.")
