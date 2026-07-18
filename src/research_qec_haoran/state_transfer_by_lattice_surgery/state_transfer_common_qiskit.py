@@ -133,12 +133,28 @@ class ClassicalRegisterSpec:
 
 
 @dataclass(frozen=True)
+class SurfaceCodeOperations:
+    """Distance-specific surface-code circuit operations used by transfer.
+
+    Grouping these callables keeps their ownership explicit at shared call
+    sites without adding transfer-level wrappers around the surface modules.
+    """
+
+    prepare_plus: CircuitAppender
+    append_z_stabilizer_measurements: CircuitAppender
+    append_x_stabilizer_measurements: CircuitAppender
+    append_logical_measurement: CircuitAppender
+
+
+@dataclass(frozen=True)
 class SurfaceCodeTransferSpec:
     """Distance-specific data and circuit operations for one transfer target.
 
     The d=3 and d=5 transfer modules differ only in patch geometry, logical
     supports, merged-boundary checks, and top-edge X checks.  Binding those
     values once avoids maintaining two nearly identical protocol builders.
+    Distance-specific circuit callables are namespaced under
+    ``surface_code_operations``.
 
     ``top_x_recovery_labels`` preserves measurement order using paper-style
     check labels such as ``X_ab``. The canonical supports and schedules remain
@@ -153,10 +169,7 @@ class SurfaceCodeTransferSpec:
     x_stabilizers: Mapping[str, tuple[str, ...]]
     merged_boundary_checks: tuple[MergedBoundaryCheck, ...]
     top_x_recovery_labels: tuple[str, ...]
-    prepare_plus: CircuitAppender
-    append_z_stabilizer_measurements: CircuitAppender
-    append_x_stabilizer_measurements: CircuitAppender
-    append_logical_measurement: CircuitAppender
+    surface_code_operations: SurfaceCodeOperations
 
     @property
     def z_labels(self) -> tuple[str, ...]:
@@ -289,34 +302,6 @@ def transfer_classical_register_specs(
     return specs
 
 
-def append_surface_logical_readout(
-    circuit: QuantumCircuit,
-    *,
-    spec: SurfaceCodeTransferSpec,
-    registers: HiranoLabeledQRegs,
-    classical_bits: Sequence,
-    basis: SurfaceReadoutBasis,
-    add_barriers: bool = True,
-) -> None:
-    """Measure all surface data qubits in ``basis`` for logical readout."""
-    if len(classical_bits) != len(spec.surface_order):
-        raise ValueError(
-            f"classical_bits must contain {len(spec.surface_order)} surface-data bits."
-        )
-
-    spec.append_logical_measurement(
-        circuit,
-        basis.upper(),
-        surface_qubits=surface_data_qubits(registers, spec.surface_order),
-        support=spec.surface_order,
-        classical_bits=classical_bits,
-        destructive=True,
-    )
-
-    if add_barriers:
-        circuit.barrier(label=f"surface logical {basis.upper()} readout")
-
-
 def append_boundary_zz_round(
     circuit: QuantumCircuit,
     *,
@@ -444,7 +429,7 @@ def append_merged_surface_syndrome_round(
     top-edge X checks listed by ``spec.top_x_recovery_labels`` do not, so they
     are withheld until the Steane patch has been demolished.
     """
-    spec.append_z_stabilizer_measurements(
+    spec.surface_code_operations.append_z_stabilizer_measurements(
         circuit,
         surface_qubits=surface_qubits,
         z_ancillas=[registers.surface_z_ancillas[label.lower()][0] for label in spec.z_labels],
@@ -454,7 +439,7 @@ def append_merged_surface_syndrome_round(
         prepare_ancillas=True,
         add_barriers=add_barriers,
     )
-    spec.append_x_stabilizer_measurements(
+    spec.surface_code_operations.append_x_stabilizer_measurements(
         circuit,
         surface_qubits=surface_qubits,
         x_ancillas=[
@@ -483,7 +468,7 @@ def append_surface_top_x_recovery_measurements(
             f"{len(spec.top_x_recovery_labels)} top-edge X recovery bits."
         )
 
-    spec.append_x_stabilizer_measurements(
+    spec.surface_code_operations.append_x_stabilizer_measurements(
         circuit,
         surface_qubits=surface_data_qubits(registers, spec.surface_order),
         x_ancillas=[
@@ -496,33 +481,6 @@ def append_surface_top_x_recovery_measurements(
         prepare_ancillas=False,
         add_barriers=add_barriers,
     )
-
-
-def append_surface_logical_pauli_readout(
-    circuit: QuantumCircuit,
-    *,
-    spec: SurfaceCodeTransferSpec,
-    registers: HiranoLabeledQRegs,
-    classical_bits: Sequence,
-    basis: SurfaceReadoutBasis,
-    add_barriers: bool = True,
-) -> None:
-    """Destructively measure a target logical Pauli on its standard support."""
-    normalized_basis = basis.upper()
-    if normalized_basis not in {"X", "Z"}:
-        raise ValueError("basis must be 'X' or 'Z'.")
-
-    support = spec.logical_x if normalized_basis == "X" else spec.logical_z
-    spec.append_logical_measurement(
-        circuit,
-        normalized_basis,
-        surface_qubits=surface_data_qubits(registers, spec.surface_order),
-        support=support,
-        classical_bits=classical_bits,
-        destructive=True,
-    )
-    if add_barriers:
-        circuit.barrier(label=f"destructive logical {normalized_basis}_{''.join(support)}")
 
 
 def build_lattice_surgery_circuit(
@@ -590,7 +548,7 @@ def build_lattice_surgery_circuit(
     # Prepare the target in |+>. During merged round 1, compatible X checks have
     # known +1 values while nondeterministic Z checks establish their references.
     surface_qubits = surface_data_qubits(qregs, spec.surface_order)
-    spec.prepare_plus(
+    spec.surface_code_operations.prepare_plus(
         circuit,
         qubits=surface_qubits,
         add_barriers=add_barriers,
@@ -660,29 +618,24 @@ def build_lattice_surgery_circuit(
     if surface_readout_basis is None:
         return circuit
 
-    readout_register = cregs[
-        (
-            f"surface_{surface_readout_basis.lower()}"
-            if surface_readout_mode == "data"
-            else f"surface_logical_{surface_readout_basis.lower()}"
-        )
-    ]
+    normalized_basis = surface_readout_basis.upper()
     if surface_readout_mode == "data":
-        append_surface_logical_readout(
-            circuit,
-            spec=spec,
-            registers=qregs,
-            classical_bits=list(readout_register),
-            basis=surface_readout_basis,
-            add_barriers=add_barriers,
-        )
+        readout_register_name = f"surface_{surface_readout_basis.lower()}"
+        support = spec.surface_order
+        barrier_label = f"surface logical {normalized_basis} readout"
     else:
-        append_surface_logical_pauli_readout(
-            circuit,
-            spec=spec,
-            registers=qregs,
-            classical_bits=list(readout_register),
-            basis=surface_readout_basis,
-            add_barriers=add_barriers,
-        )
+        readout_register_name = f"surface_logical_{surface_readout_basis.lower()}"
+        support = spec.logical_x if normalized_basis == "X" else spec.logical_z
+        barrier_label = f"destructive logical {normalized_basis}_{''.join(support)}"
+
+    spec.surface_code_operations.append_logical_measurement(
+        circuit,
+        normalized_basis,
+        surface_qubits=surface_data_qubits(qregs, spec.surface_order),
+        support=support,
+        classical_bits=list(cregs[readout_register_name]),
+        destructive=True,
+    )
+    if add_barriers:
+        circuit.barrier(label=barrier_label)
     return circuit
