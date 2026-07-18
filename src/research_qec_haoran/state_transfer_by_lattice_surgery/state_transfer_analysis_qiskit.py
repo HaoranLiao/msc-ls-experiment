@@ -19,7 +19,6 @@ from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_common
     STEANE_LS_VERIFICATION_ROUNDS,
     SurfaceCodeTransferSpec,
     SurfaceReadoutBasis,
-    SurfaceReadoutMode,
     parity,
     transfer_classical_register_specs,
 )
@@ -36,7 +35,6 @@ def parse_transfer_measurements(
     spec: SurfaceCodeTransferSpec,
     include_cultivation: bool = True,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
-    surface_readout_mode: SurfaceReadoutMode = "data",
 ) -> dict[str, object]:
     """Parse and interpret one fixed-protocol transfer shot.
 
@@ -49,7 +47,6 @@ def parse_transfer_measurements(
         spec,
         include_cultivation=include_cultivation,
         surface_readout_basis=surface_readout_basis,
-        surface_readout_mode=surface_readout_mode,
     )
     labels_by_register = [(register.name, register.labels) for register in specs]
     bits_by_register = parse_qiskit_registers(bitstring, labels_by_register)
@@ -106,15 +103,9 @@ def parse_transfer_measurements(
     if include_cultivation:
         parsed["cultivation"] = register_bits("cult")
     if surface_readout_basis is not None:
-        register_name = (
-            f"surface_{surface_readout_basis.lower()}"
-            if surface_readout_mode == "data"
-            else f"surface_logical_{surface_readout_basis.lower()}"
+        parsed["surface_logical_readout"] = register_bits(
+            f"surface_logical_{surface_readout_basis.lower()}"
         )
-        output_name = (
-            "surface_readout" if surface_readout_mode == "data" else "surface_logical_readout"
-        )
-        parsed[output_name] = register_bits(register_name)
 
     parsed["merged_surface_syndrome_deltas"] = merged_surface_syndrome_deltas(
         parsed,
@@ -345,37 +336,24 @@ def transfer_pauli_frame(
 
 def raw_surface_logical_readout(
     measurements: dict[str, object],
-    *,
-    basis: SurfaceReadoutBasis,
-    spec: SurfaceCodeTransferSpec,
 ) -> int:
-    """Return the uncorrected surface logical readout bit."""
-    if "surface_readout" not in measurements:
-        if "surface_logical_readout" not in measurements:
-            raise ValueError("measurements do not include a surface logical readout.")
-        return sum(measurements["surface_logical_readout"].values()) % 2
-
-    support = spec.logical_x if basis.upper() == "X" else spec.logical_z
-    return sum(measurements["surface_readout"][label] for label in support) % 2
+    """Return the parity of the destructively measured logical support."""
+    if "surface_logical_readout" not in measurements:
+        raise ValueError("measurements do not include a surface logical readout.")
+    return sum(measurements["surface_logical_readout"].values()) % 2
 
 
 def corrected_surface_logical_readout(
     measurements: dict[str, object],
     *,
     basis: SurfaceReadoutBasis,
-    spec: SurfaceCodeTransferSpec,
 ) -> int:
     """Return the surface logical readout corrected by the Pauli frame.
 
-    Raw logical readout can come from data-basis measurement or destructive
-    logical-support measurement. This helper extracts the raw logical bit and
-    applies the transfer byproducts inferred from the same shot.
+    The raw bit is the parity of the destructively measured logical support.
+    This helper applies the transfer byproducts inferred from the same shot.
     """
-    raw_bit = raw_surface_logical_readout(
-        measurements,
-        basis=basis,
-        spec=spec,
-    )
+    raw_bit = raw_surface_logical_readout(measurements)
     frame = transfer_pauli_frame(measurements)
     if basis.upper() == "X":
         return frame.interpret_x_readout("surface", raw_bit)

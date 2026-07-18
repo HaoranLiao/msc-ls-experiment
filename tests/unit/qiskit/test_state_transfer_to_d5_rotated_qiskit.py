@@ -32,7 +32,6 @@ def _one_parsed_shot(**circuit_kwargs):
     parse_kwargs = {
         "include_cultivation": build_kwargs.get("include_cultivation", False),
         "surface_readout_basis": build_kwargs.get("surface_readout_basis"),
-        "surface_readout_mode": build_kwargs.get("surface_readout_mode", "data"),
     }
     circuit = d5t.build_steane_to_rotated_d5_lattice_surgery_circuit(
         add_barriers=False,
@@ -54,7 +53,6 @@ def _corrected_logical_counts(
         injected_state=injected_state,
         include_cultivation=False,
         surface_readout_basis=basis,
-        surface_readout_mode="logical_pauli",
         add_barriers=False,
     )
     counts = AerSimulator(method="stabilizer").run(circuit, shots=shots).result().get_counts()
@@ -65,12 +63,10 @@ def _corrected_logical_counts(
             bitstring,
             include_cultivation=False,
             surface_readout_basis=basis,
-            surface_readout_mode="logical_pauli",
         )
         logical_bit = analysis.corrected_surface_logical_readout(
             measurements,
             basis=basis,
-            spec=d5t.TRANSFER_SPEC,
         )
         logical_counts[logical_bit] += count
     return logical_counts
@@ -230,7 +226,6 @@ class TestD5TransferMeasurementParsing:
         measurements = _one_parsed_shot(
             injected_state="0",
             surface_readout_basis="Z",
-            surface_readout_mode="logical_pauli",
         )
 
         assert set(measurements["registers"]) == {

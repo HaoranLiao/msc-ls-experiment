@@ -34,7 +34,6 @@ def _one_parsed_shot(**circuit_kwargs):
     parse_kwargs = {
         "include_cultivation": circuit_kwargs.get("include_cultivation", True),
         "surface_readout_basis": circuit_kwargs.get("surface_readout_basis"),
-        "surface_readout_mode": circuit_kwargs.get("surface_readout_mode", "data"),
     }
     circuit = d3t.build_steane_to_rotated_d3_lattice_surgery_circuit(
         add_barriers=False,
@@ -71,7 +70,6 @@ def _corrected_logical_counts(
         logical_bit = analysis.corrected_surface_logical_readout(
             measurements,
             basis=basis,
-            spec=d3t.TRANSFER_SPEC,
         )
         logical_counts[logical_bit] += count
     return logical_counts
@@ -90,7 +88,6 @@ def _parsed_surface_fault_shots(
         injected_state=injected_state,
         include_cultivation=False,
         surface_readout_basis=basis,
-        surface_readout_mode="logical_pauli",
         add_barriers=True,
     )
     initialization_end = next(
@@ -111,7 +108,6 @@ def _parsed_surface_fault_shots(
             bitstring,
             include_cultivation=False,
             surface_readout_basis=basis,
-            surface_readout_mode="logical_pauli",
         )
         for bitstring in counts
     ]
@@ -240,7 +236,6 @@ class TestTransferMeasurementParsing:
             injected_state="0",
             include_cultivation=False,
             surface_readout_basis="Z",
-            surface_readout_mode="logical_pauli",
         )
 
         assert set(measurements["registers"]) == {
@@ -383,7 +378,6 @@ class TestLogicalTransferCorrectness:
             analysis.corrected_surface_logical_readout(
                 item,
                 basis="Z",
-                spec=d3t.TRANSFER_SPEC,
             )
             == 0
             for item in measurements_by_outcome
@@ -406,7 +400,6 @@ class TestLogicalTransferCorrectness:
             analysis.corrected_surface_logical_readout(
                 item,
                 basis="X",
-                spec=d3t.TRANSFER_SPEC,
             )
             == 0
             for item in measurements_by_outcome
@@ -439,7 +432,6 @@ class TestLogicalTransferCorrectness:
             injected_state="+",
             include_cultivation=False,
             surface_readout_basis="X",
-            surface_readout_mode="logical_pauli",
             add_barriers=False,
         )
         labels = common.round_labels(d3t.TRANSFER_SPEC.merged_x_labels)
@@ -461,7 +453,6 @@ class TestLogicalTransferCorrectness:
                 bitstring,
                 include_cultivation=False,
                 surface_readout_basis="X",
-                surface_readout_mode="logical_pauli",
             )
             history = measurements["merged_surface_qec_recovery"].x_delta_history
             assert history[1]["X_bcef"] == 1
@@ -471,30 +462,26 @@ class TestLogicalTransferCorrectness:
                 analysis.corrected_surface_logical_readout(
                     measurements,
                     basis="X",
-                    spec=d3t.TRANSFER_SPEC,
                 )
                 == 0
             )
 
-    def test_direct_logical_pauli_readout_preserves_basis_states_without_cultivation(self) -> None:
+    def test_logical_support_readout_preserves_basis_states_without_cultivation(self) -> None:
         zero_measurements = _one_parsed_shot(
             injected_state="0",
             include_cultivation=False,
             surface_readout_basis="Z",
-            surface_readout_mode="logical_pauli",
         )
         plus_measurements = _one_parsed_shot(
             injected_state="+",
             include_cultivation=False,
             surface_readout_basis="X",
-            surface_readout_mode="logical_pauli",
         )
 
         assert (
             analysis.corrected_surface_logical_readout(
                 zero_measurements,
                 basis="Z",
-                spec=d3t.TRANSFER_SPEC,
             )
             == 0
         )
@@ -502,7 +489,6 @@ class TestLogicalTransferCorrectness:
             analysis.corrected_surface_logical_readout(
                 plus_measurements,
                 basis="X",
-                spec=d3t.TRANSFER_SPEC,
             )
             == 0
         )

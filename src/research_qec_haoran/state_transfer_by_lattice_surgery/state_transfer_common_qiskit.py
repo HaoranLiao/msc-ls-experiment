@@ -33,7 +33,6 @@ from research_qec_haoran.steane_code import (
 )
 
 SurfaceReadoutBasis = Literal["X", "Z"]
-SurfaceReadoutMode = Literal["data", "logical_pauli"]
 LATTICE_SURGERY_ROUNDS = 3
 MergedBoundaryCheck = tuple[str, tuple[str, ...], tuple[str, ...]]
 CircuitAppender = Callable[..., None]
@@ -250,7 +249,6 @@ def transfer_classical_register_specs(
     *,
     include_cultivation: bool,
     surface_readout_basis: SurfaceReadoutBasis | None,
-    surface_readout_mode: SurfaceReadoutMode,
 ) -> list[ClassicalRegisterSpec]:
     """Return the classical registers for the fixed paper transfer sequence."""
     specs: list[ClassicalRegisterSpec] = [
@@ -280,23 +278,13 @@ def transfer_classical_register_specs(
         ]
     )
     if surface_readout_basis is not None:
-        if surface_readout_mode == "data":
-            specs.append(
-                ClassicalRegisterSpec(
-                    f"surface_{surface_readout_basis.lower()}",
-                    spec.surface_order,
-                )
+        support = spec.logical_x if surface_readout_basis.upper() == "X" else spec.logical_z
+        specs.append(
+            ClassicalRegisterSpec(
+                f"surface_logical_{surface_readout_basis.lower()}",
+                tuple(support),
             )
-        elif surface_readout_mode == "logical_pauli":
-            support = spec.logical_x if surface_readout_basis.upper() == "X" else spec.logical_z
-            specs.append(
-                ClassicalRegisterSpec(
-                    f"surface_logical_{surface_readout_basis.lower()}",
-                    tuple(support),
-                )
-            )
-        else:
-            raise ValueError("surface_readout_mode must be 'data' or 'logical_pauli'.")
+        )
     return specs
 
 
@@ -487,7 +475,6 @@ def build_lattice_surgery_circuit(
     injected_state: steane.InjectedStateName | tuple[complex, complex] = "H",
     include_cultivation: bool = True,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
-    surface_readout_mode: SurfaceReadoutMode = "data",
     add_barriers: bool = True,
 ) -> QuantumCircuit:
     """Build the complete observable-level Steane-to-surface transfer circuit.
@@ -526,13 +513,9 @@ def build_lattice_surgery_circuit(
     surface_readout_basis
         Optional ``"X"`` or ``"Z"`` analysis basis. ``None`` returns the
         transfer circuit immediately after top-edge recovery, matching the
-        paper-facing transfer boundary.
-    surface_readout_mode
-        Readout representation used when ``surface_readout_basis`` is set.
-        ``"data"`` measures every surface data qubit so logical and stabilizer
-        parities can be reconstructed. ``"logical_pauli"`` measures only the
-        target's standard logical support. Both modes are destructive and are
-        analysis additions, not lattice-surgery protocol rounds.
+        paper-facing transfer boundary. Otherwise, the target's standard
+        logical-operator support is measured destructively. This terminal
+        measurement is an analysis addition, not a lattice-surgery round.
     add_barriers
         Whether to add labeled barriers between conceptual protocol stages.
         Barriers improve circuit inspection but do not change the measured
@@ -545,13 +528,6 @@ def build_lattice_surgery_circuit(
         optional terminal analysis measurement. Its classical registers are
         described by ``transfer_classical_register_specs`` and interpreted by
         ``state_transfer_analysis_qiskit.parse_transfer_measurements``.
-
-    Raises
-    ------
-    ValueError
-        If ``surface_readout_mode`` is not ``"data"`` or
-        ``"logical_pauli"``. Invalid readout bases or inconsistent target
-        specifications are rejected by the delegated surface-code operations.
 
     Notes
     -----
@@ -568,15 +544,11 @@ def build_lattice_surgery_circuit(
     superdense gate interleaving, circuit-level detector error model, later
     code expansion, or post-expansion surface-code stabilization rounds.
     """
-    if surface_readout_mode not in {"data", "logical_pauli"}:
-        raise ValueError("surface_readout_mode must be 'data' or 'logical_pauli'.")
-
     qregs = build_transfer_qregs(spec)
     classical_specs = transfer_classical_register_specs(
         spec,
         include_cultivation=include_cultivation,
         surface_readout_basis=surface_readout_basis,
-        surface_readout_mode=surface_readout_mode,
     )
     cregs = {
         register_spec.name: ClassicalRegister(len(register_spec.labels), register_spec.name)
@@ -685,14 +657,8 @@ def build_lattice_surgery_circuit(
         return circuit
 
     normalized_basis = surface_readout_basis.upper()
-    if surface_readout_mode == "data":
-        readout_register_name = f"surface_{surface_readout_basis.lower()}"
-        support = spec.surface_order
-        barrier_label = f"surface logical {normalized_basis} readout"
-    else:
-        readout_register_name = f"surface_logical_{surface_readout_basis.lower()}"
-        support = spec.logical_x if normalized_basis == "X" else spec.logical_z
-        barrier_label = f"destructive logical {normalized_basis}_{''.join(support)}"
+    readout_register_name = f"surface_logical_{surface_readout_basis.lower()}"
+    support = spec.logical_x if normalized_basis == "X" else spec.logical_z
 
     spec.surface_code_operations.append_logical_measurement(
         circuit,
@@ -703,5 +669,5 @@ def build_lattice_surgery_circuit(
         destructive=True,
     )
     if add_barriers:
-        circuit.barrier(label=barrier_label)
+        circuit.barrier(label=f"destructive logical {normalized_basis}_{''.join(support)}")
     return circuit
