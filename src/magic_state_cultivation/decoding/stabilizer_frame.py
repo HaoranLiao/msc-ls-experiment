@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from research_qec_haoran.utils.normalize import normalize_bit
+from magic_state_cultivation.utils.normalize import normalize_bit
 
 
 @dataclass

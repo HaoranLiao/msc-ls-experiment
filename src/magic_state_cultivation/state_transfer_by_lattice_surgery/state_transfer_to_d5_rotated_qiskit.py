@@ -16,17 +16,17 @@ from __future__ import annotations
 
 from qiskit import QuantumCircuit
 
-from research_qec_haoran.state_transfer_by_lattice_surgery import (
+from magic_state_cultivation.state_transfer_by_lattice_surgery import (
     state_transfer_analysis_qiskit as analysis,
 )
-from research_qec_haoran.state_transfer_by_lattice_surgery import (
+from magic_state_cultivation.state_transfer_by_lattice_surgery import (
     state_transfer_common_qiskit as common,
 )
-from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_common_qiskit import (
+from magic_state_cultivation.state_transfer_by_lattice_surgery.state_transfer_common_qiskit import (
     SurfaceReadoutBasis,
 )
-from research_qec_haoran.steane_code.state_injection_qiskit import InjectedStateName
-from research_qec_haoran.surface_code import rotated_d5_qiskit as d5
+from magic_state_cultivation.steane_code.state_injection_qiskit import InjectedStateName
+from magic_state_cultivation.surface_code import rotated_d5_qiskit as d5
 
 MERGED_BOUNDARY_CHECKS: tuple[common.MergedBoundaryCheck, ...] = (
     ("Z1a", ("1",), ("a",)),

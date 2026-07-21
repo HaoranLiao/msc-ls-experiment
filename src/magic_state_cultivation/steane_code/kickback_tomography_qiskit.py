@@ -15,15 +15,15 @@ from typing import Literal
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
-from research_qec_haoran.steane_code.magic_state_cultivation_qiskit import (
+from magic_state_cultivation.steane_code.magic_state_cultivation_qiskit import (
     append_hadamard_axis_projection_round,
 )
-from research_qec_haoran.steane_code.state_injection_qiskit import (
+from magic_state_cultivation.steane_code.state_injection_qiskit import (
     InjectedStateName,
     append_patch_stabilizer_measurement,
     append_patch_steane_state_injection_encoder_crumble_sequences,
 )
-from research_qec_haoran.utils.normalize import qiskit_bit_value
+from magic_state_cultivation.utils.normalize import qiskit_bit_value
 
 FinalStabilizerMode = Literal["x", "z", "both", "none"]
 

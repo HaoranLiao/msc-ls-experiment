@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from research_qec_haoran.utils.normalize import normalize_bit
+from magic_state_cultivation.utils.normalize import normalize_bit
 
 # ---------------------------------------------------------------------------
 # Data classes

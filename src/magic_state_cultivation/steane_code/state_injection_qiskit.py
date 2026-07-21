@@ -6,7 +6,7 @@ from typing import Literal
 from qiskit import QuantumCircuit
 from qiskit.circuit import Qubit
 
-from research_qec_haoran.utils.circuit import apply_ty
+from magic_state_cultivation.utils.circuit import apply_ty
 
 InjectedStateName = Literal["0", "1", "+", "-", "i", "-i", "Y+", "Y-", "S", "T", "Tdg", "Ty"]
 PatchCrumbleGateName = Literal["h", "cz"]

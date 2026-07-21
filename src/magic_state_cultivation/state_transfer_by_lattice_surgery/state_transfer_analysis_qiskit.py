@@ -13,9 +13,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from research_qec_haoran.decoding.pauli_frame import PauliFrame
-from research_qec_haoran.decoding.stabilizer_frame import StabilizerFrame
-from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_common_qiskit import (
+from magic_state_cultivation.decoding.pauli_frame import PauliFrame
+from magic_state_cultivation.decoding.stabilizer_frame import StabilizerFrame
+from magic_state_cultivation.state_transfer_by_lattice_surgery.state_transfer_common_qiskit import (
     FINAL_X_VERIFICATION_CHECKS,
     HIRANO_STEANE_LOGICAL_X,
     LATTICE_SURGERY_ROUNDS,
@@ -26,11 +26,11 @@ from research_qec_haoran.state_transfer_by_lattice_surgery.state_transfer_common
     parity,
     transfer_classical_register_specs,
 )
-from research_qec_haoran.surface_code.decoding.rotated_decoder import (
+from magic_state_cultivation.surface_code.decoding.rotated_decoder import (
     TemporalRotatedDecoder,
     TemporalRotatedDetectedErrors,
 )
-from research_qec_haoran.utils.normalize import normalize_bit, parse_qiskit_registers
+from magic_state_cultivation.utils.normalize import normalize_bit, parse_qiskit_registers
 
 
 @dataclass(frozen=True)

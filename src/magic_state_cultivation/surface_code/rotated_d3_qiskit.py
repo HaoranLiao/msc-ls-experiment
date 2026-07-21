@@ -14,7 +14,7 @@ from matplotlib.axes import Axes
 from matplotlib.patches import Rectangle
 from qiskit import QuantumCircuit
 
-from research_qec_haoran.surface_code import rotated_common_qiskit as rotated_common
+from magic_state_cultivation.surface_code import rotated_common_qiskit as rotated_common
 
 # ---------------------------------------------------------------------------
 # Patch geometry

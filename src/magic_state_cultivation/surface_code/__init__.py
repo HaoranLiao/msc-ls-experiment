@@ -1,12 +1,12 @@
 """Surface-code helpers and geometry utilities."""
 
-from research_qec_haoran.surface_code.decoding import (
+from magic_state_cultivation.surface_code.decoding import (
     PauliFrame,
     RotatedDecoder,
     RotatedDetectedErrors,
     StabilizerFrame,
 )
-from research_qec_haoran.surface_code.rotated_d3_qiskit import (
+from magic_state_cultivation.surface_code.rotated_d3_qiskit import (
     DEFAULT_LOGICAL_X,
     DEFAULT_LOGICAL_Z,
     INIT_Z_LABELS,

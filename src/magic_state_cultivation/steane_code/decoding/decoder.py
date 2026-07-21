@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from research_qec_haoran.steane_code.state_injection_qiskit import (
+from magic_state_cultivation.steane_code.state_injection_qiskit import (
     PATCH_DATA_SITES,
     PATCH_DEFAULT_LOGICAL_X,
     PATCH_DEFAULT_LOGICAL_Z,

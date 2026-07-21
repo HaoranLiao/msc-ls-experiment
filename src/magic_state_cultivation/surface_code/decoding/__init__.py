@@ -1,8 +1,8 @@
 """Decoding and syndrome-processing utilities."""
 
-from research_qec_haoran.decoding.pauli_frame import PauliFrame
-from research_qec_haoran.decoding.stabilizer_frame import StabilizerFrame
-from research_qec_haoran.surface_code.decoding.rotated_decoder import (
+from magic_state_cultivation.decoding.pauli_frame import PauliFrame
+from magic_state_cultivation.decoding.stabilizer_frame import StabilizerFrame
+from magic_state_cultivation.surface_code.decoding.rotated_decoder import (
     RotatedDecoder,
     RotatedDetectedErrors,
     TemporalRotatedDecoder,

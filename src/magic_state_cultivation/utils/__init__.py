@@ -1,12 +1,12 @@
 """Shared utility helpers for the research codebase."""
 
-from research_qec_haoran.utils.circuit import (
+from magic_state_cultivation.utils.circuit import (
     apply_ty,
     apply_ty_dagger,
     ibm_backend_available,
     two_qubit_depth,
 )
-from research_qec_haoran.utils.normalize import (
+from magic_state_cultivation.utils.normalize import (
     normalize_bit,
     normalize_pauli_char,
     parse_qiskit_bitstring,

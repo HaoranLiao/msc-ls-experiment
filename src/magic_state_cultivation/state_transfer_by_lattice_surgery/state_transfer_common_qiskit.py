@@ -25,10 +25,10 @@ from typing import Literal
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
-from research_qec_haoran.steane_code import (
+from magic_state_cultivation.steane_code import (
     magic_state_cultivation_qiskit as cultivation,
 )
-from research_qec_haoran.steane_code import (
+from magic_state_cultivation.steane_code import (
     state_injection_qiskit as steane,
 )
 

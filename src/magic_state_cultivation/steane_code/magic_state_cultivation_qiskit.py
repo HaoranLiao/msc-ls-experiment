@@ -4,11 +4,11 @@ from collections.abc import Sequence
 
 from qiskit import QuantumCircuit
 
-from research_qec_haoran.steane_code.state_injection_qiskit import (
+from magic_state_cultivation.steane_code.state_injection_qiskit import (
     InjectedStateName,
     append_patch_steane_state_injection_encoder_crumble_sequences,
 )
-from research_qec_haoran.utils.normalize import qiskit_bit_value
+from magic_state_cultivation.utils.normalize import qiskit_bit_value
 
 # =============================================================================
 # 11-site cultivation patch layout
