@@ -472,7 +472,7 @@ def append_surface_top_x_recovery_measurements(
 def build_lattice_surgery_circuit(
     spec: SurfaceCodeTransferSpec,
     *,
-    injected_state: steane.InjectedStateName | tuple[complex, complex] = "H",
+    injected_state: steane.InjectedStateName | tuple[complex, complex] = "T",
     include_cultivation: bool = True,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     add_barriers: bool = True,
@@ -486,7 +486,7 @@ def build_lattice_surgery_circuit(
 
     1. Encode ``injected_state`` on the 11-site Steane patch with the routed
        Crumble encoder and measure its helper-qubit acceptance bits.
-    2. Optionally apply the Steane logical-H cultivation projection.
+    2. Optionally apply the Steane logical-H_XY cultivation projection.
     3. Prepare every target surface-data qubit in ``|+>``.
     4. Perform exactly three merged rounds. Every round measures the mixed
        boundary-Z checks, every compatible surface Z check, and every
@@ -504,10 +504,10 @@ def build_lattice_surgery_circuit(
         surface-code circuit operations.
     injected_state
         Named physical state or amplitude pair passed to the Steane Crumble
-        encoder. The default ``"H"`` prepares the Hadamard-axis magic-state
-        input used by cultivation.
+        encoder. The default ``"T"`` prepares the H_XY-axis magic-state input
+        used by cultivation.
     include_cultivation
-        Whether to append the logical-H projection and its classical
+        Whether to append the logical-H_XY projection and its classical
         postselection register. Disable this only for transfer plumbing tests
         or when the input has already been cultivated.
     surface_readout_basis
