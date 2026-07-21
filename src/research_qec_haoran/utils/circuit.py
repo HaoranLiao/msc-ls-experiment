@@ -14,8 +14,7 @@ from qiskit import QuantumCircuit
 def apply_ty(circuit: QuantumCircuit, qubit) -> None:
     """Apply ``T_y = RY(pi/4) = exp(-i*pi*Y/8)``.
 
-    This is the rotation satisfying ``H = T_y^dagger X T_y``, used in
-    magic-state cultivation to map the Hadamard-axis observable onto the X basis.
+    This rotation prepares the retained ``|Ty>`` encoder input.
 
     The decomposition uses only named Clifford+T gates (no parameterized
     ``rz`` or ``ry``), making it compatible with Aer's ``extended_stabilizer``
