@@ -2,7 +2,7 @@
 
 This module builds the Fig. 3-style kickback tomography (KT) circuit from
 Rosenfeld et al. using the repo's existing 11-site Steane patch primitives.
-The KT measurement reuses cultivation rounds as repeated logical Hadamard-axis
+The KT measurement reuses cultivation rounds as repeated logical H_XY-axis
 measurements: one optional preparation round, one tomography measurement round,
 and one consistency-check round.
 """
@@ -179,7 +179,7 @@ def _final_stabilizer_bit_count(mode: FinalStabilizerMode) -> int:
 
 
 def build_kickback_tomography_experiment(
-    injected_state: InjectedStateName = "H",
+    injected_state: InjectedStateName = "T",
     *,
     include_preparation_cultivation: bool = True,
     qec_cycle_indices: Iterable[int] = KT_DEFAULT_QEC_CYCLE_INDICES,
@@ -203,6 +203,8 @@ def build_kickback_tomography_experiment(
     ``final_stabilizer_basis="x"`` matches the final detector block drawn in
     Fig. 3. ``"z"`` selects the equivalent CSS basis, ``"both"`` measures all
     six stabilizers, and ``"none"`` omits the final check.
+
+    Every cultivation and KT round measures ``H_XY = (X + Y) / sqrt(2)``.
     """
 
     qec_indices = _normalise_qec_cycle_indices(qec_cycle_indices)
