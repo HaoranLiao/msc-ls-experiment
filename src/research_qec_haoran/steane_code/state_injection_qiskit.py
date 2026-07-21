@@ -8,7 +8,7 @@ from qiskit.circuit import Qubit
 
 from research_qec_haoran.utils.circuit import apply_ty
 
-InjectedStateName = Literal["0", "1", "+", "-", "i", "-i", "Y+", "Y-", "S", "T", "Tdg", "H"]
+InjectedStateName = Literal["0", "1", "+", "-", "i", "-i", "Y+", "Y-", "S", "T", "Tdg", "Ty"]
 PatchCrumbleGateName = Literal["h", "cz"]
 PatchStabilizerBasis = Literal["x", "z", "both"]
 
@@ -139,9 +139,9 @@ def prepare_physical_state(
         circuit.tdg(qubit)
         return
 
-    if state == "H":
-        # +1 eigenstate of H
-        # |H> = cos(pi/8)|0> + sin(pi/8)|1> = T_y|0>
+    if state == "Ty":
+        # +1 eigenstate of H_XZ = (X+Z)/sqrt(2).
+        # |Ty> = cos(pi/8)|0> + sin(pi/8)|1> = T_y|0>.
         apply_ty(circuit, qubit)
         return
 
@@ -149,7 +149,7 @@ def prepare_physical_state(
 
 
 def build_steane_state_injection_encoder(
-    injected_state: InjectedStateName = "H",
+    injected_state: InjectedStateName = "T",
     *,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
@@ -475,7 +475,7 @@ def append_patch_steane_state_injection_encoder(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
-    injected_state: InjectedStateName = "H",
+    injected_state: InjectedStateName = "T",
     add_barriers: bool = True,
 ) -> None:
     """Append the Steane-code state-injection encoder on the 11-site patch.
@@ -515,7 +515,7 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
-    injected_state: InjectedStateName = "H",
+    injected_state: InjectedStateName = "T",
     helper_classical_bits: Sequence | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
