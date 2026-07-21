@@ -20,7 +20,7 @@ from research_qec_haoran.surface_code.rotated_d3_qiskit import (
     append_x_stabilizer_measurements,
     append_z_stabilizer_measurements,
     draw_patch,
-    prepare_plus,
+    prepare_product_plus,
     reset_to_zero,
 )
 
@@ -38,7 +38,7 @@ __all__ = [
     "Z_STABILIZER_CENTERS",
     "Z_STABILIZERS",
     "StabilizerFrame",
-    "prepare_plus",
+    "prepare_product_plus",
     "reset_to_zero",
     "append_x_stabilizer_measurements",
     "append_z_stabilizer_measurements",

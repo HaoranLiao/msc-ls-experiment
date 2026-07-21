@@ -230,7 +230,7 @@ def reset_to_zero(
     )
 
 
-def prepare_plus(
+def prepare_product_plus(
     circuit: QuantumCircuit,
     *,
     qubits: Sequence[object],

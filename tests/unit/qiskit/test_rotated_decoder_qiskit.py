@@ -81,7 +81,7 @@ class TestD3SingleFaultDecoding:
         circuit = QuantumCircuit(data, z_anc, x_anc, init_z_cl, det_z_cl, det_x_cl)
 
         # Step 1: Prepare |+_L⟩ (all data in |+⟩, then Z-stabilizer round).
-        d3.prepare_plus(circuit, qubits=list(data))
+        d3.prepare_product_plus(circuit, qubits=list(data))
         d3.append_z_stabilizer_measurements(
             circuit,
             surface_qubits=list(data),
@@ -192,7 +192,7 @@ class TestD3SingleFaultDecoding:
         circuit = QuantumCircuit(data, z_anc, x_anc, init_z_cl, det_z_cl, det_x_cl, log_cl)
 
         # Step 1: Prepare |+_L⟩.
-        d3.prepare_plus(circuit, qubits=list(data))
+        d3.prepare_product_plus(circuit, qubits=list(data))
         d3.append_z_stabilizer_measurements(
             circuit,
             surface_qubits=list(data),
@@ -292,7 +292,7 @@ class TestD3MultiRoundFaultDecoding:
         circuit = QuantumCircuit(data, z_anc, x_anc, init_z_cl, *round_z_cls, *round_x_cls, log_cl)
 
         # Prepare |+_L⟩.
-        d3.prepare_plus(circuit, qubits=list(data))
+        d3.prepare_product_plus(circuit, qubits=list(data))
         d3.append_z_stabilizer_measurements(
             circuit,
             surface_qubits=list(data),
@@ -429,7 +429,7 @@ class TestD5SingleFaultDecoding:
         det_x_cl = ClassicalRegister(D5_NUM_X_ANCILLAS, "det_x")
         circuit = QuantumCircuit(data, z_anc, x_anc, init_z_cl, det_z_cl, det_x_cl)
 
-        d5.prepare_plus(circuit, qubits=list(data))
+        d5.prepare_product_plus(circuit, qubits=list(data))
         d5.append_z_stabilizer_measurements(
             circuit,
             surface_qubits=list(data),
@@ -505,7 +505,7 @@ class TestD5SingleFaultDecoding:
         log_cl = ClassicalRegister(len(d5.DEFAULT_LOGICAL_X), "log_x")
         circuit = QuantumCircuit(data, z_anc, x_anc, init_z_cl, det_z_cl, det_x_cl, log_cl)
 
-        d5.prepare_plus(circuit, qubits=list(data))
+        d5.prepare_product_plus(circuit, qubits=list(data))
         d5.append_z_stabilizer_measurements(
             circuit,
             surface_qubits=list(data),
@@ -590,7 +590,7 @@ class TestD5MultiRoundFaultDecoding:
         log_cl = ClassicalRegister(len(d5.DEFAULT_LOGICAL_X), "log_x")
         circuit = QuantumCircuit(data, z_anc, x_anc, init_z_cl, *round_z_cls, *round_x_cls, log_cl)
 
-        d5.prepare_plus(circuit, qubits=list(data))
+        d5.prepare_product_plus(circuit, qubits=list(data))
         d5.append_z_stabilizer_measurements(
             circuit,
             surface_qubits=list(data),
@@ -852,7 +852,7 @@ def test_temporal_decoder_updates_frame_from_physical_fault_history() -> None:
         log_cl,
     )
 
-    d3.prepare_plus(circuit, qubits=list(data))
+    d3.prepare_product_plus(circuit, qubits=list(data))
     d3.append_z_stabilizer_measurements(
         circuit,
         surface_qubits=list(data),
