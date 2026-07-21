@@ -12,13 +12,13 @@ from collections import Counter
 
 from qiskit_aer import AerSimulator
 
-from research_qec_haoran.state_transfer_by_lattice_surgery import (
+from magic_state_cultivation.state_transfer_by_lattice_surgery import (
     state_transfer_analysis_qiskit as analysis,
 )
-from research_qec_haoran.state_transfer_by_lattice_surgery import (
+from magic_state_cultivation.state_transfer_by_lattice_surgery import (
     state_transfer_common_qiskit as common,
 )
-from research_qec_haoran.state_transfer_by_lattice_surgery import (
+from magic_state_cultivation.state_transfer_by_lattice_surgery import (
     state_transfer_to_d5_rotated_qiskit as d5t,
 )
 

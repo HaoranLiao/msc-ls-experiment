@@ -9,8 +9,8 @@ from qiskit import QuantumCircuit
 from qiskit.quantum_info import SparsePauliOp, Statevector
 from qiskit_aer import AerSimulator
 
-from research_qec_haoran.noise import append_pauli_faults
-from research_qec_haoran.steane_code.state_injection_qiskit import (
+from magic_state_cultivation.noise import append_pauli_faults
+from magic_state_cultivation.steane_code.state_injection_qiskit import (
     LOGICAL_X_REPRESENTATIVES,
     LOGICAL_Z_REPRESENTATIVES,
     NUM_PATCH_QUBITS,
@@ -32,12 +32,12 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     append_stabilizer_measurement,
     build_steane_state_injection_encoder,
 )
-from research_qec_haoran.utils.circuit import (
+from magic_state_cultivation.utils.circuit import (
     ibm_backend,
     ibm_backend_available,
     two_qubit_depth,
 )
-from research_qec_haoran.utils.normalize import parse_qiskit_bitstring
+from magic_state_cultivation.utils.normalize import parse_qiskit_bitstring
 
 NUM_DATA_QUBITS = 7
 TOLERANCE = 1e-10

@@ -5,8 +5,8 @@ from __future__ import annotations
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit_aer import AerSimulator
 
-import research_qec_haoran.surface_code.rotated_d5_qiskit as d5
-from research_qec_haoran.utils.normalize import parse_qiskit_registers
+import magic_state_cultivation.surface_code.rotated_d5_qiskit as d5
+from magic_state_cultivation.utils.normalize import parse_qiskit_registers
 
 NUM_DATA_QUBITS = 25
 NUM_Z_ANCILLAS = 12

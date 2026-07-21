@@ -10,16 +10,16 @@ import pytest
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit_aer import AerSimulator
 
-import research_qec_haoran.surface_code.rotated_d3_qiskit as d3
-import research_qec_haoran.surface_code.rotated_d5_qiskit as d5
-from research_qec_haoran.noise import append_pauli_faults
-from research_qec_haoran.surface_code.decoding import (
+import magic_state_cultivation.surface_code.rotated_d3_qiskit as d3
+import magic_state_cultivation.surface_code.rotated_d5_qiskit as d5
+from magic_state_cultivation.noise import append_pauli_faults
+from magic_state_cultivation.surface_code.decoding import (
     PauliFrame,
     RotatedDecoder,
     StabilizerFrame,
     TemporalRotatedDecoder,
 )
-from research_qec_haoran.utils.normalize import parse_qiskit_registers
+from magic_state_cultivation.utils.normalize import parse_qiskit_registers
 
 # ===========================================================================
 # Shared constants and helpers (d=3)

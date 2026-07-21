@@ -7,7 +7,7 @@ import math
 import pytest
 from qiskit_aer import AerSimulator
 
-from research_qec_haoran.steane_code.kickback_tomography_qiskit import (
+from magic_state_cultivation.steane_code.kickback_tomography_qiskit import (
     KT_CULTIVATION_BITS_PER_ROUND,
     KT_DEFAULT_QEC_CYCLE_INDICES,
     KT_FULL_QEC_CYCLE_INDICES,
@@ -18,7 +18,7 @@ from research_qec_haoran.steane_code.kickback_tomography_qiskit import (
     kickback_tomography_shot_is_retained,
     summarize_kickback_tomography_counts,
 )
-from research_qec_haoran.steane_code.state_injection_qiskit import InjectedStateName
+from magic_state_cultivation.steane_code.state_injection_qiskit import InjectedStateName
 
 NUM_SHOTS = 2000
 

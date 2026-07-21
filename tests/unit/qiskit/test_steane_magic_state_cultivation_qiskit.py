@@ -9,11 +9,11 @@ from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit_aer import AerSimulator
 from qiskit_aer.noise import NoiseModel, depolarizing_error
 
-from research_qec_haoran.steane_code.magic_state_cultivation_qiskit import (
+from magic_state_cultivation.steane_code.magic_state_cultivation_qiskit import (
     append_steane_injection_with_h_cultivation,
     postselect_success_counts,
 )
-from research_qec_haoran.steane_code.state_injection_qiskit import (
+from magic_state_cultivation.steane_code.state_injection_qiskit import (
     PATCH_DEFAULT_LOGICAL_X,
     PATCH_DEFAULT_LOGICAL_Z,
     InjectedStateName,
@@ -21,7 +21,7 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     append_patch_stabilizer_measurement,
     append_patch_steane_state_injection_encoder_crumble_sequences,
 )
-from research_qec_haoran.utils.normalize import qiskit_bit_value
+from magic_state_cultivation.utils.normalize import qiskit_bit_value
 
 # =============================================================================
 # Constants

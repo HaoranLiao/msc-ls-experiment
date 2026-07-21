@@ -12,7 +12,7 @@ from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit.quantum_info import SparsePauliOp, Statevector
 from qiskit_aer import AerSimulator
 
-from research_qec_haoran.surface_code.rotated_d3_qiskit import (
+from magic_state_cultivation.surface_code.rotated_d3_qiskit import (
     DEFAULT_LOGICAL_X,
     DEFAULT_LOGICAL_Z,
     LOGICAL_X_REPRESENTATIVES,

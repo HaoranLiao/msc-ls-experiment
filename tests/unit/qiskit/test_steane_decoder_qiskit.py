@@ -16,18 +16,18 @@ from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit.quantum_info import SparsePauliOp, Statevector
 from qiskit_aer import AerSimulator
 
-from research_qec_haoran.decoding import (
+from magic_state_cultivation.decoding import (
     PauliFrame,
     StabilizerFrame,
     SteaneDecoder,
 )
-from research_qec_haoran.noise import append_pauli_faults
-from research_qec_haoran.steane_code.decoding.decoder import (
+from magic_state_cultivation.noise import append_pauli_faults
+from magic_state_cultivation.steane_code.decoding.decoder import (
     SYNDROME_BIT_LABELS,
     X_STABILIZER_LABELS,
     Z_STABILIZER_LABELS,
 )
-from research_qec_haoran.steane_code.state_injection_qiskit import (
+from magic_state_cultivation.steane_code.state_injection_qiskit import (
     NUM_PATCH_QUBITS,
     PATCH_DATA_SITES,
     PATCH_DEFAULT_LOGICAL_X,
@@ -36,7 +36,7 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     append_patch_stabilizer_measurement,
     append_patch_steane_state_injection_encoder_crumble_sequences,
 )
-from research_qec_haoran.utils.normalize import parse_qiskit_bitstring
+from magic_state_cultivation.utils.normalize import parse_qiskit_bitstring
 
 TOLERANCE = 1e-10
 
