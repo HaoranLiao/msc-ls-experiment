@@ -27,7 +27,7 @@ from research_qec_haoran.surface_code.rotated_d3_qiskit import (
     append_logical_measurement,
     append_x_stabilizer_measurements,
     append_z_stabilizer_measurements,
-    prepare_plus,
+    prepare_product_plus,
 )
 
 # ===========================================================================
@@ -359,7 +359,7 @@ class TestLogicalPlusPreparation:
         z_cl = ClassicalRegister(NUM_Z_ANCILLAS, "z_syn")
         qc = QuantumCircuit(s, za, z_cl)
 
-        prepare_plus(qc, qubits=list(s))
+        prepare_product_plus(qc, qubits=list(s))
         append_z_stabilizer_measurements(
             qc,
             surface_qubits=list(s),
@@ -381,7 +381,7 @@ class TestLogicalPlusPreparation:
         log_cl = ClassicalRegister(len(support), "log")
         qc = QuantumCircuit(s, za, z_cl, log_cl)
 
-        prepare_plus(qc, qubits=list(s))
+        prepare_product_plus(qc, qubits=list(s))
         append_z_stabilizer_measurements(
             qc,
             surface_qubits=list(s),
@@ -412,7 +412,7 @@ class TestLogicalPlusPreparation:
         log_cl = ClassicalRegister(1, "log")
         qc = QuantumCircuit(s, za, anc, z_cl, log_cl)
 
-        prepare_plus(qc, qubits=list(s))
+        prepare_product_plus(qc, qubits=list(s))
         append_z_stabilizer_measurements(
             qc,
             surface_qubits=list(s),
@@ -483,7 +483,7 @@ class TestLogicalPlusPreparation:
         x_cl = ClassicalRegister(NUM_X_ANCILLAS, "x_syn")
         qc = QuantumCircuit(s, za, xa, z_cl, x_cl)
 
-        prepare_plus(qc, qubits=list(s))
+        prepare_product_plus(qc, qubits=list(s))
         append_z_stabilizer_measurements(
             qc,
             surface_qubits=list(s),
