@@ -36,25 +36,25 @@ def _measurement_register_order(experiment: KickbackTomographyExperiment) -> lis
     return order
 
 
-def _expected_h_axis_error_probability(state: InjectedStateName) -> float:
-    """Return probability of the -1 H-axis outcome for a named input state."""
+def _expected_h_xy_axis_error_probability(state: InjectedStateName) -> float:
+    """Return probability of the -1 H_XY-axis outcome for a named input state."""
 
     inv_sqrt2 = 1.0 / math.sqrt(2.0)
-    h_plus_probs: dict[InjectedStateName, float] = {
-        "H": 1.0,
-        "0": (1.0 + inv_sqrt2) / 2.0,
-        "1": (1.0 - inv_sqrt2) / 2.0,
+    h_xy_plus_probs: dict[InjectedStateName, float] = {
+        "0": 0.5,
+        "1": 0.5,
         "+": (1.0 + inv_sqrt2) / 2.0,
         "-": (1.0 - inv_sqrt2) / 2.0,
-        "Y+": 0.5,
-        "Y-": 0.5,
-        "i": 0.5,
-        "-i": 0.5,
-        "S": 0.5,
-        "T": 0.75,
-        "Tdg": 0.75,
+        "i": (1.0 + inv_sqrt2) / 2.0,
+        "Y+": (1.0 + inv_sqrt2) / 2.0,
+        "S": (1.0 + inv_sqrt2) / 2.0,
+        "-i": (1.0 - inv_sqrt2) / 2.0,
+        "Y-": (1.0 - inv_sqrt2) / 2.0,
+        "T": 1.0,
+        "Tdg": 0.5,
+        "Ty": 0.75,
     }
-    return 1.0 - h_plus_probs[state]
+    return 1.0 - h_xy_plus_probs[state]
 
 
 # =============================================================================
@@ -259,11 +259,11 @@ class TestKickbackTomographyCountsAnalysis:
 
 
 class TestNoiselessKickbackTomography:
-    """Noiseless KT matches H-axis projective-measurement probabilities."""
+    """Noiseless KT matches H_XY projective-measurement probabilities."""
 
-    def test_cultivated_h_state_has_zero_kt_logical_error(self) -> None:
+    def test_cultivated_t_state_has_zero_kt_logical_error(self) -> None:
         experiment = build_kickback_tomography_experiment(
-            injected_state="H",
+            injected_state="T",
             add_barriers=False,
         )
         counts = AerSimulator().run(experiment.circuit, shots=10).result().get_counts()
@@ -274,7 +274,7 @@ class TestNoiselessKickbackTomography:
         assert summary.retainment_rate == 1.0
         assert summary.logical_error_probability == 0.0
 
-    @pytest.mark.parametrize("state", ["H", "+", "1", "Y+", "T"])
+    @pytest.mark.parametrize("state", ["Ty", "+", "1", "Y+", "T"])
     def test_injection_only_kt_error_probability(self, state: InjectedStateName) -> None:
         experiment = build_kickback_tomography_experiment(
             injected_state=state,
@@ -286,7 +286,7 @@ class TestNoiselessKickbackTomography:
         counts = AerSimulator().run(experiment.circuit, shots=NUM_SHOTS).result().get_counts()
         summary = summarize_kickback_tomography_counts(counts, experiment.layout)
 
-        expected_error = _expected_h_axis_error_probability(state)
+        expected_error = _expected_h_xy_axis_error_probability(state)
         sigma = math.sqrt(expected_error * (1.0 - expected_error) / NUM_SHOTS)
         tolerance = max(4 * sigma, 0.02)
 
@@ -295,8 +295,8 @@ class TestNoiselessKickbackTomography:
 
     def test_preparation_cultivation_projects_before_kt(self) -> None:
         """
-        With preparation cultivation, the state will be projected to the H state
-        and hence no logical error in KT
+        With preparation cultivation, the state is projected to the +1 H_XY
+        state and hence has no logical error in KT.
         """
         experiment = build_kickback_tomography_experiment(
             injected_state="1",
