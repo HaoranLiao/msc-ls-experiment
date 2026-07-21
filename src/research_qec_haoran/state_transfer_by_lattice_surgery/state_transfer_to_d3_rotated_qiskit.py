@@ -52,7 +52,7 @@ TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
 
 def build_steane_to_rotated_d3_lattice_surgery_circuit(
     *,
-    injected_state: InjectedStateName | tuple[complex, complex] = "H",
+    injected_state: InjectedStateName | tuple[complex, complex] = "T",
     include_cultivation: bool = True,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     add_barriers: bool = True,
@@ -66,7 +66,7 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     measured during those rounds; the anticommuting top-edge check ``X_ab`` is
     withheld until Steane demolition and then recovered unconditionally.
 
-    The builder also includes the Crumble Steane encoder, optional logical-H
+    The builder also includes the Crumble Steane encoder, optional logical-H_XY
     cultivation, both paper-defined Steane verification groups, destructive
     Steane-X demolition, and all classical registers needed by
     ``parse_transfer_measurements``. Temporal surface decoding is classical
@@ -76,9 +76,9 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     ----------
     injected_state
         Named physical state or amplitude pair supplied to the Steane Crumble
-        encoder. The default ``"H"`` is the Hadamard-axis magic-state input.
+        encoder. The default ``"T"`` is the H_XY-axis magic-state input.
     include_cultivation
-        Whether to append the logical-H cultivation projection and its
+        Whether to append the logical-H_XY cultivation projection and its
         postselection measurements. Disable this only for transfer tests or an
         input that has already been cultivated.
     surface_readout_basis
