@@ -60,7 +60,7 @@ def _expected_logical_expectation_values(
         "S": (0.0, 0.0),
         "T": (0.0, inv_sqrt2),
         "Tdg": (0.0, inv_sqrt2),
-        "H": (inv_sqrt2, inv_sqrt2),
+        "Ty": (inv_sqrt2, inv_sqrt2),
     }
     return expectations[state]
 
@@ -77,7 +77,7 @@ ALL_STATES: list[InjectedStateName] = [
     "S",
     "T",
     "Tdg",
-    "H",
+    "Ty",
 ]
 
 
@@ -583,7 +583,7 @@ def test_patch_single_basis_stabilizer_measurement(basis: str) -> None:
     append_patch_steane_state_injection_encoder_crumble_sequences(
         circuit,
         patch_qubits=list(range(NUM_PATCH_QUBITS)),
-        injected_state="H",
+        injected_state="Ty",
         add_barriers=False,
     )
     append_patch_stabilizer_measurement(
@@ -721,7 +721,7 @@ class TestPatchSyndromeExtraction:
     """Verify stabilizer measurement outputs match expected syndromes for injected faults."""
 
     @pytest.mark.parametrize("encoder", PATCH_ENCODERS)
-    @pytest.mark.parametrize("state", ["0", "T", "H"])
+    @pytest.mark.parametrize("state", ["0", "T", "Ty"])
     def test_no_fault_trivial(self, state: InjectedStateName, encoder: str) -> None:
         """No faults → all syndrome bits zero for any encoded state."""
         x_syn, z_syn = _build_and_run_patch_syndrome([], injected_state=state, encoder=encoder)
@@ -730,7 +730,7 @@ class TestPatchSyndromeExtraction:
         )
 
     @pytest.mark.parametrize("encoder", PATCH_ENCODERS)
-    @pytest.mark.parametrize("state", ["0", "T", "H"])
+    @pytest.mark.parametrize("state", ["0", "T", "Ty"])
     @pytest.mark.parametrize("faults", _SINGLE_FAULTS, ids=_SINGLE_IDS)
     def test_single_fault(
         self,
@@ -752,7 +752,7 @@ class TestPatchSyndromeExtraction:
         )
 
     @pytest.mark.parametrize("encoder", PATCH_ENCODERS)
-    @pytest.mark.parametrize("state", ["0", "T", "H"])
+    @pytest.mark.parametrize("state", ["0", "T", "Ty"])
     @pytest.mark.parametrize("faults", _TWO_SAME_FAULTS, ids=_TWO_SAME_IDS)
     def test_two_qubit_same_pauli(
         self,
@@ -774,7 +774,7 @@ class TestPatchSyndromeExtraction:
         )
 
     @pytest.mark.parametrize("encoder", PATCH_ENCODERS)
-    @pytest.mark.parametrize("state", ["0", "T", "H"])
+    @pytest.mark.parametrize("state", ["0", "T", "Ty"])
     @pytest.mark.parametrize("faults", _TWO_MIXED_FAULTS, ids=_TWO_MIXED_IDS)
     def test_two_qubit_mixed_pauli(
         self,
