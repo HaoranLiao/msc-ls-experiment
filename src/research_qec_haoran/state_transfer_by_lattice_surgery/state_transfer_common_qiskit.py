@@ -538,9 +538,11 @@ def build_lattice_surgery_circuit(
     not in-circuit decoding. After circuit execution,
     ``parse_transfer_measurements`` establishes the known X-check preparation
     boundary, uses the pre-merge Z-stabilizer measurements as the Z-check
-    reference, and jointly decodes the resulting three X-detector layers and
-    three Z-detector layers with ``TemporalRotatedDecoder``. Corrections are
-    tracked classically in a Pauli frame rather than applied as physical gates.
+    reference, and decodes the resulting detector layers. Its transfer-specific
+    joint decoder combines the repeated merged-boundary records with the three
+    Z-detector layers to distinguish X errors before versus after the final
+    logical parity measurement. Corrections are tracked classically in a Pauli
+    frame rather than applied as physical gates.
 
     Commuting measurements assigned to one merged round are serialized here
     for readability. This builder does not reproduce the paper's hardware-level

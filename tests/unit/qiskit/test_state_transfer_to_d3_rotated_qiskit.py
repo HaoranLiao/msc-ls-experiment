@@ -113,6 +113,64 @@ def _parsed_surface_fault_shots(
     ]
 
 
+def _parsed_surface_x_fault_shots_at_transfer_stage(
+    *,
+    stage: str,
+    surface_site: str = "a",
+    shots: int = 32,
+) -> list[dict[str, object]]:
+    """Inject target X immediately before or after a named merge boundary."""
+    circuit = d3t.build_steane_to_rotated_d3_lattice_surgery_circuit(
+        injected_state="0",
+        include_cultivation=False,
+        surface_readout_basis="Z",
+        add_barriers=True,
+    )
+    surface_qubit = next(register for register in circuit.qregs if register.name == surface_site)[0]
+
+    if stage == "after_initialization":
+        insertion_position = next(
+            position + 1
+            for position, instruction in enumerate(circuit.data)
+            if instruction.operation.name == "barrier"
+            and instruction.operation.label == "initialize rotated d3 |+_L>"
+        )
+    elif stage == "before_final_merge_parity":
+        insertion_position = next(
+            position + 1
+            for position, instruction in enumerate(circuit.data)
+            if instruction.operation.name == "barrier"
+            and instruction.operation.label == "merged interval round 2"
+        )
+    elif stage == "after_final_merge_parity":
+        merge_bits = set(next(register for register in circuit.cregs if register.name == "ls_zz"))
+        insertion_position = (
+            max(
+                position
+                for position, instruction in enumerate(circuit.data)
+                if instruction.operation.name == "measure"
+                and instruction.clbits[0] in merge_bits
+            )
+            + 1
+        )
+    else:
+        raise ValueError(f"unsupported transfer stage: {stage}")
+
+    circuit.data.insert(
+        insertion_position,
+        CircuitInstruction(XGate(), (surface_qubit,), ()),
+    )
+    counts = AerSimulator(method="stabilizer").run(circuit, shots=shots).result().get_counts()
+    return [
+        d3t.parse_transfer_measurements(
+            bitstring,
+            include_cultivation=False,
+            surface_readout_basis="Z",
+        )
+        for bitstring in counts
+    ]
+
+
 # ===========================================================================
 # SET 1: Circuit labels and paper-facing d=3 adaptation check schedule
 # ===========================================================================
@@ -414,6 +472,64 @@ class TestLogicalTransferCorrectness:
             )
             == 0
             for item in measurements_by_outcome
+        )
+
+    def test_joint_decoder_absorbs_x_fault_before_first_merge_parity(self) -> None:
+        measurements_by_outcome = _parsed_surface_x_fault_shots_at_transfer_stage(
+            stage="after_initialization",
+        )
+
+        assert all(analysis.transfer_acceptance_succeeds(item) for item in measurements_by_outcome)
+        assert all(
+            item["joint_transfer_decode_result"].surface_qec_logical_x_byproduct == 0
+            for item in measurements_by_outcome
+        )
+        assert all(
+            analysis.corrected_surface_logical_readout(item, basis="Z") == 0
+            for item in measurements_by_outcome
+        )
+
+    def test_joint_decoder_uses_final_merge_parity_to_locate_x_fault(self) -> None:
+        before_parity = _parsed_surface_x_fault_shots_at_transfer_stage(
+            stage="before_final_merge_parity",
+        )
+        after_parity = _parsed_surface_x_fault_shots_at_transfer_stage(
+            stage="after_final_merge_parity",
+        )
+
+        # Both faults produce the same round-3 surface-Z detector. Only the
+        # earlier fault also changes the final merged-boundary record.
+        assert all(
+            item["merged_surface_syndrome_deltas"][2]["z"]["Z_abde"] == 1
+            for item in before_parity + after_parity
+        )
+        assert all(
+            item["joint_transfer_decode_result"].merged_boundary_delta_history[1]["Z1a"]
+            == 1
+            for item in before_parity
+        )
+        assert all(
+            item["joint_transfer_decode_result"].merged_boundary_delta_history[1]["Z1a"]
+            == 0
+            for item in after_parity
+        )
+        assert all(
+            item["joint_transfer_decode_result"].surface_qec_logical_x_byproduct == 0
+            for item in before_parity
+        )
+        assert all(
+            item["joint_transfer_decode_result"].surface_qec_logical_x_byproduct == 1
+            for item in after_parity
+        )
+
+        # The pre-parity case is intentionally rejected because the repeated
+        # boundary measurements disagree. The accepted post-parity case is
+        # corrected by a distinct surface-QEC X-frame update.
+        assert not any(analysis.transfer_acceptance_succeeds(item) for item in before_parity)
+        assert all(analysis.transfer_acceptance_succeeds(item) for item in after_parity)
+        assert all(
+            analysis.corrected_surface_logical_readout(item, basis="Z") == 0
+            for item in after_parity
         )
 
     def test_joint_temporal_decoder_identifies_measurement_fault(self) -> None:
