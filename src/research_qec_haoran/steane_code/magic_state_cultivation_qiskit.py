@@ -8,7 +8,6 @@ from research_qec_haoran.steane_code.state_injection_qiskit import (
     InjectedStateName,
     append_patch_steane_state_injection_encoder_crumble_sequences,
 )
-from research_qec_haoran.utils.circuit import apply_ty, apply_ty_dagger
 from research_qec_haoran.utils.normalize import qiskit_bit_value
 
 # =============================================================================
@@ -254,14 +253,14 @@ def append_hadamard_axis_projection_round(
     skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
 ) -> None:
-    """Append one H_L projection / cultivation round.
+    """Append one H_XY projection / cultivation round.
 
     See SITE_LAYOUT_DOC for the 11-site labeling.
 
     This routine implements the Google paper Fig.1 panel-C cultivation sequence:
 
     1. Prepare the four helper sites in |+>.
-    2. Apply T_y = RY(pi/4) to all seven data sites.
+    2. Apply T to all seven data sites to rotate H_XY onto X.
     3. Apply the 4-CNOT fold layer.
     4. Apply the 3-CNOT fold layer.
     5. Apply the 2-CNOT fold layer.
@@ -273,7 +272,7 @@ def append_hadamard_axis_projection_round(
     11. Apply the inverse 3-CNOT layer.
     12. Apply the inverse 4-CNOT layer.
     13. Measure helper sites 1, 2, 6, 7 in the X basis.
-    14. Apply T_y^dagger = RY(-pi/4) to all seven data sites.
+    14. Apply T^dagger to all seven data sites.
 
     Parameters
     ----------
@@ -308,13 +307,13 @@ def append_hadamard_axis_projection_round(
     if add_barriers:
         circuit.barrier(label="prepare helpers")
 
-    # Step 2 data rotations. The figure labels these as T gates,
-    # but in this cultivation context they are Ty = RY(pi/4).
+    # Step 2 data rotations. Transversal T rotates H_XY onto the folded
+    # X measurement axis; the fold CNOT network is unchanged.
     for data_site in DATA_SITES:
-        apply_ty(circuit, q[data_site])
+        circuit.t(q[data_site])
 
     if add_barriers:
-        circuit.barrier(label="Ty on data")
+        circuit.barrier(label="T on data")
 
     # Steps 3--6: fold.
     append_fold_network(
@@ -355,10 +354,10 @@ def append_hadamard_axis_projection_round(
 
     # Step 14: undo the single-qubit basis rotation on the data.
     for data_site in DATA_SITES:
-        apply_ty_dagger(circuit, q[data_site])
+        circuit.tdg(q[data_site])
 
     if add_barriers:
-        circuit.barrier(label="Ty dagger on data")
+        circuit.barrier(label="T dagger on data")
 
 
 # =============================================================================
@@ -370,14 +369,14 @@ def append_steane_injection_with_h_cultivation(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
-    injected_state: InjectedStateName = "H",
+    injected_state: InjectedStateName = "T",
     encoder_classical_bits: Sequence,
     cultivation_classical_bits: Sequence[Sequence],
     add_barriers: bool = True,
     skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
 ) -> None:
-    """Append Steane injection + H_L cultivation rounds to an existing circuit.
+    """Append Steane injection + H_XY cultivation rounds to an existing circuit.
 
     Parameters
     ----------
