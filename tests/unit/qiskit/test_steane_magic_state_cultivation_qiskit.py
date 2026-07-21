@@ -33,7 +33,7 @@ NOISY_TEST_SEED = 20251218
 
 # States to test for cultivation — minimal representative subset.
 CULTIVATION_TEST_STATES: list[InjectedStateName] = [
-    "H",
+    "Ty",
     "1",
     "+",
     "Y+",
@@ -42,25 +42,26 @@ CULTIVATION_TEST_STATES: list[InjectedStateName] = [
 
 
 def _expected_acceptance_probability(state: InjectedStateName) -> float:
-    """Return P(accept) = |⟨H|ψ⟩|² for the given injected state.
+    """Return P(accept) = |⟨T|ψ⟩|² for the given injected state.
 
-    |H⟩ = cos(π/8)|0⟩ + sin(π/8)|1⟩ is the +1 eigenstate of Hadamard.
+    |T⟩ = T|+⟩ is the +1 eigenstate of H_XY = (X + Y) / √2.
     """
+
     cos_pi8 = math.cos(math.pi / 8)
     sin_pi8 = math.sin(math.pi / 8)
-    probs: dict[str, float] = {
-        "H": 1.0,
-        "0": cos_pi8**2,
-        "1": sin_pi8**2,
-        "+": (1 + math.sin(math.pi / 4)) / 2,  # = cos²(π/8)
-        "-": (1 - math.sin(math.pi / 4)) / 2,  # = sin²(π/8)
-        "Y+": 0.5,
-        "Y-": 0.5,
-        "i": 0.5,
-        "-i": 0.5,
-        "S": 0.5,
-        "T": 0.75,
-        "Tdg": 0.75,
+    probs: dict[InjectedStateName, float] = {
+        "0": 0.5,
+        "1": 0.5,
+        "+": cos_pi8**2,
+        "-": sin_pi8**2,
+        "Y+": cos_pi8**2,
+        "Y-": sin_pi8**2,
+        "i": cos_pi8**2,
+        "-i": sin_pi8**2,
+        "S": cos_pi8**2,
+        "T": 1.0,
+        "Tdg": 0.5,
+        "Ty": 0.75,
     }
     return probs[state]
 
@@ -71,7 +72,7 @@ def _expected_acceptance_probability(state: InjectedStateName) -> float:
 
 
 def _make_cultivation_circuit(
-    injected_state: InjectedStateName = "H",
+    injected_state: InjectedStateName = "T",
     n_rounds: int = 1,
     add_barriers: bool = False,
     skip_cx_1_4: bool = False,
@@ -191,12 +192,12 @@ def _compute_success_rate(counts: dict[str, int], n_cult_bits: int = 5) -> float
 
 
 class TestPostselectedLogicalExpectation:
-    """After cultivation + postselection, the state is |H_L⟩ regardless of input."""
+    """Postselection projects onto the logical H_XY +1 state."""
 
     @pytest.mark.parametrize("state", CULTIVATION_TEST_STATES)
     @pytest.mark.parametrize("basis", ["Z", "X"])
-    def test_expectation_matches_h_state(self, state: InjectedStateName, basis: str) -> None:
-        """⟨Z_L⟩ = ⟨X_L⟩ = 1/√2 after successful cultivation for any input."""
+    def test_expectation_matches_t_state(self, state: InjectedStateName, basis: str) -> None:
+        """Accepted shots have the logical Pauli expectations of T|+⟩."""
         circuit = _build_cultivation_with_logical_measurement(state, basis)
         sim = AerSimulator()
         counts = sim.run(circuit, shots=NUM_SHOTS).result().get_counts()
@@ -206,17 +207,18 @@ class TestPostselectedLogicalExpectation:
         # Must have at least some accepted shots
         assert n_accepted > 0, f"No accepted shots for state={state!r}, basis={basis}"
 
-        # Statistical tolerance: ~4σ where σ = sqrt((1 - ev²) / n_accepted)
-        # For ev ≈ 1/√2: var per shot ≈ 0.5, σ ≈ sqrt(0.5/n_accepted)
-        tolerance = 4 * math.sqrt(0.5 / n_accepted) + 0.01
-        assert expectation == pytest.approx(INV_SQRT2, abs=tolerance), (
+        # Statistical tolerance: ~4σ where σ = sqrt((1 - ev²) / n_accepted).
+        # For T|+⟩, ⟨Z_L⟩ = 0 and ⟨X_L⟩ = 1/√2.
+        expected = 0.0 if basis == "Z" else INV_SQRT2
+        tolerance = 4 * math.sqrt((1.0 - expected**2) / n_accepted) + 0.01
+        assert expectation == pytest.approx(expected, abs=tolerance), (
             f"State {state!r}, basis {basis}: ⟨{basis}_L⟩ = {expectation:.4f}, "
-            f"expected {INV_SQRT2:.4f} (n_accepted={n_accepted})"
+            f"expected {expected:.4f} after H_XY cultivation (n_accepted={n_accepted})"
         )
 
     @pytest.mark.parametrize("state", CULTIVATION_TEST_STATES)
     def test_success_rate(self, state: InjectedStateName) -> None:
-        """Acceptance rate matches |⟨H|ψ⟩|² for each injected state."""
+        """Acceptance rate matches |⟨T|ψ⟩|² for each injected state."""
         # Use the cultivation-only circuit (no logical measurement needed)
         circuit = _make_cultivation_circuit(injected_state=state)
         sim = AerSimulator()
@@ -225,10 +227,10 @@ class TestPostselectedLogicalExpectation:
         measured_rate = _compute_success_rate(counts, n_cult_bits=5)
         expected_rate = _expected_acceptance_probability(state)
 
-        # For |H⟩ input, acceptance must be exactly 1.0
-        if state == "H":
+        # For |T⟩ input, acceptance must be exactly 1.0.
+        if state == "T":
             assert measured_rate == 1.0, (
-                f"H-state acceptance should be 1.0, got {measured_rate:.4f}"
+                f"T-state acceptance should be 1.0, got {measured_rate:.4f}"
             )
         else:
             # Statistical tolerance for binomial proportion: ~4σ
@@ -247,7 +249,7 @@ class TestPostselectedLogicalExpectation:
 class TestStabilizerSyndromesAfterCultivation:
     """In noiseless setting, stabilizers remain +1 after successful cultivation."""
 
-    @pytest.mark.parametrize("state", ["H", "0", "+", "T"])
+    @pytest.mark.parametrize("state", ["Ty", "0", "+", "T"])
     def test_all_stabilizers_trivial(self, state: InjectedStateName) -> None:
         """All 6 stabilizer measurements yield 0 (eigenvalue +1) after cultivation."""
         circuit = _make_cultivation_circuit(injected_state=state)
@@ -263,9 +265,9 @@ class TestStabilizerSyndromesAfterCultivation:
             add_barriers=False,
         )
 
-        # For "H", single shot deterministically accepts; use 1 shot.
+        # A T-state input deterministically accepts; use 1 shot.
         # For others, use enough shots to guarantee at least one acceptance.
-        n_shots = 1 if state == "H" else 50
+        n_shots = 1 if state == "T" else 50
         sim = AerSimulator()
         counts = sim.run(circuit, shots=n_shots).result().get_counts()
 
@@ -314,7 +316,7 @@ def _build_multi_round_cultivation_circuit(
     n_rounds: int,
     basis: str,
     *,
-    injected_state: InjectedStateName = "H",
+    injected_state: InjectedStateName = "T",
 ) -> QuantumCircuit:
     """Build: encoder → n_rounds cultivation → destructive logical measurement.
 
@@ -364,32 +366,33 @@ def _postselect_multi_round(
 
 
 class TestNoisyCultivationImprovesWithRounds:
-    """With depolarizing noise, postselected cultivation preserves logical |H_L⟩ fidelity.
+    """With depolarizing noise, postselected cultivation preserves logical |T_L⟩ fidelity.
 
     Under circuit-level depolarizing noise, the cultivation check acts as an
-    error-detection step: shots where noise flipped the logical H eigenvalue
+    error-detection step: shots where noise flipped the logical H_XY eigenvalue
     are preferentially rejected. We verify:
-    1. With |H⟩ injection and noise, postselected expectation values remain
-       close to the ideal 1/√2 for both Z_L and X_L.
+    1. With |T⟩ injection and noise, postselected X_L remains close to 1/√2
+       and Z_L remains close to zero.
     2. Without postselection (noisy encoder + direct measurement), the
        expectation deviates more from ideal than with postselected cultivation.
-    3. More rounds → higher fidelity (lower |⟨O_L⟩ − 1/√2|) and lower
+    3. More rounds preserve a near-ideal X_L expectation and lower the
        acceptance rate (higher discard fraction).
     """
 
     ROUNDS_TO_TEST = [1, 2, 3]
 
-    @pytest.mark.parametrize("basis", ["Z"])
+    @pytest.mark.parametrize("basis", ["X", "Z"])
     def test_postselected_fidelity_near_ideal(self, basis: str) -> None:
-        """After noisy cultivation + postselection, ⟨Z_L⟩ and ⟨X_L⟩ ≈ 1/√2."""
+        """Check the postselected logical X and Z expectations of |T_L⟩."""
         noise_model = _build_noisy_noise_model()
         sim = AerSimulator(noise_model=noise_model, seed_simulator=NOISY_TEST_SEED)
+        expected = INV_SQRT2 if basis == "X" else 0.0
 
         for n_rounds in self.ROUNDS_TO_TEST:
             circuit = _build_multi_round_cultivation_circuit(
                 n_rounds,
                 basis,
-                injected_state="H",
+                injected_state="T",
             )
             counts = sim.run(circuit, shots=NUM_SHOTS).result().get_counts()
             expectation, n_accepted = _postselect_multi_round(counts, n_rounds)
@@ -399,18 +402,17 @@ class TestNoisyCultivationImprovesWithRounds:
                 f"basis={basis}. Consider reducing noise or increasing shots."
             )
 
-            # With low noise and postselection, the expectation should be
-            # close to 1/√2. Allow ~4σ statistical error + small systematic.
-            stat_err = math.sqrt(0.5 / n_accepted)
+            # Allow ~4σ statistical error plus a small systematic noise budget.
+            stat_err = math.sqrt((1.0 - expected**2) / n_accepted)
             tolerance = 4 * stat_err + 0.03  # 3% systematic budget for noise
-            assert expectation == pytest.approx(INV_SQRT2, abs=tolerance), (
+            assert expectation == pytest.approx(expected, abs=tolerance), (
                 f"Rounds={n_rounds}, basis={basis}: ⟨{basis}_L⟩ = {expectation:.4f}, "
-                f"expected ≈ {INV_SQRT2:.4f} (n_accepted={n_accepted}, tol={tolerance:.4f})"
+                f"expected ≈ {expected:.4f} (n_accepted={n_accepted}, tol={tolerance:.4f})"
             )
 
     @pytest.mark.parametrize("basis", ["X"])
-    def test_more_rounds_improves_fidelity_and_increases_discard(self, basis: str) -> None:
-        """More cultivation rounds → better fidelity and higher discard rate."""
+    def test_more_rounds_preserves_fidelity_and_increases_discard(self, basis: str) -> None:
+        """More rounds preserve the X_L expectation and increase discard."""
         noise_model = _build_noisy_noise_model()
         sim = AerSimulator(noise_model=noise_model, seed_simulator=NOISY_TEST_SEED)
 
@@ -422,7 +424,7 @@ class TestNoisyCultivationImprovesWithRounds:
             circuit = _build_multi_round_cultivation_circuit(
                 n_rounds,
                 basis,
-                injected_state="H",
+                injected_state="T",
             )
             counts = sim.run(circuit, shots=n_shots).result().get_counts()
             expectation, n_accepted = _postselect_multi_round(counts, n_rounds)
@@ -435,10 +437,10 @@ class TestNoisyCultivationImprovesWithRounds:
         errors_by_round = list(zip(self.ROUNDS_TO_TEST, errors, strict=True))
         rates_by_round = list(zip(self.ROUNDS_TO_TEST, acceptance_rates, strict=True))
 
-        # Fidelity should improve (error decreases) with more rounds.
-        # Allow small statistical slack — require error_last <= error_first + margin.
+        # Extra noisy rounds add faults as well as checks, so allow bounded
+        # degradation rather than requiring strict monotonic improvement.
         assert errors[-1] <= errors[-2] + 0.03, (
-            f"Basis {basis}: fidelity did not improve with more rounds. "
+            f"Basis {basis}: fidelity degraded too much with more rounds. "
             f"Errors by round: {errors_by_round}"
         )
         print(f"Errors by round: {errors_by_round}")
@@ -463,7 +465,7 @@ class TestNoisyCultivationImprovesWithRounds:
         append_patch_steane_state_injection_encoder_crumble_sequences(
             raw_circuit,
             patch_qubits=list(qreg),
-            injected_state="H",
+            injected_state="T",
             add_barriers=False,
         )
         support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
@@ -488,7 +490,7 @@ class TestNoisyCultivationImprovesWithRounds:
         raw_error = abs(raw_expectation - INV_SQRT2)
 
         # --- Cultivation with postselection ---
-        circuit = _build_multi_round_cultivation_circuit(1, basis, injected_state="H")
+        circuit = _build_multi_round_cultivation_circuit(1, basis, injected_state="T")
         cult_counts = sim.run(circuit, shots=NUM_SHOTS).result().get_counts()
         cult_expectation, n_accepted = _postselect_multi_round(cult_counts, 1)
         cult_error = abs(cult_expectation - INV_SQRT2)
