@@ -4,7 +4,7 @@ Verification is by logical expectation values: after injecting a correctable
 fault, measuring the syndrome, and decoding via the Pauli frame, the
 frame-corrected ⟨Z_L⟩ and ⟨X_L⟩ must match the original encoded state.
 This works for any injected state — including non-eigenstates like |T_L⟩
-and |H_L⟩ — and checks both logical operators simultaneously.
+and |Ty_L⟩ — and checks both logical operators simultaneously.
 """
 
 from __future__ import annotations
@@ -46,8 +46,8 @@ _SYNDROME_BIT_LABELS = SYNDROME_BIT_LABELS
 _inv_sqrt2 = 1.0 / math.sqrt(2)
 _EXPECTED: dict[str, tuple[float, float]] = {
     "0": (1.0, 0.0),
-    "H": (_inv_sqrt2, _inv_sqrt2),
     "T": (0.0, _inv_sqrt2),
+    "Ty": (_inv_sqrt2, _inv_sqrt2),
 }
 
 _TEST_STATES: list[InjectedStateName] = list(_EXPECTED.keys())
