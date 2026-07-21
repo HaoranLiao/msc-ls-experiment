@@ -266,6 +266,7 @@ def transfer_classical_register_specs(
         )
     specs.extend(
         [
+            ClassicalRegisterSpec("surface_init_z", spec.z_labels),
             ClassicalRegisterSpec(
                 "ls_zz",
                 round_labels(tuple(name for name, _, _ in spec.merged_boundary_checks)),
@@ -487,7 +488,9 @@ def build_lattice_surgery_circuit(
     1. Encode ``injected_state`` on the 11-site Steane patch with the routed
        Crumble encoder and measure its helper-qubit acceptance bits.
     2. Optionally apply the Steane logical-H_XY cultivation projection.
-    3. Prepare every target surface-data qubit in ``|+>``.
+    3. Prepare every target surface-data qubit in ``|+>`` and measure every
+       surface Z stabilizer once, projecting the target into logical
+       ``|+_L>`` and establishing the pre-merge Z-syndrome reference.
     4. Perform exactly three merged rounds. Every round measures the mixed
        boundary-Z checks, every compatible surface Z check, and every
        compatible surface X check. The paper-defined Steane verification
@@ -534,10 +537,10 @@ def build_lattice_surgery_circuit(
     The three merged rounds contain temporal surface-code syndrome extraction,
     not in-circuit decoding. After circuit execution,
     ``parse_transfer_measurements`` establishes the known X-check preparation
-    boundary, uses the first nondeterministic Z-check round as its reference,
-    and jointly decodes the resulting three X-detector layers and two
-    Z-detector layers with ``TemporalRotatedDecoder``. Corrections are tracked
-    classically in a Pauli frame rather than applied as physical gates.
+    boundary, uses the pre-merge Z-stabilizer measurements as the Z-check
+    reference, and jointly decodes the resulting three X-detector layers and
+    three Z-detector layers with ``TemporalRotatedDecoder``. Corrections are
+    tracked classically in a Pauli frame rather than applied as physical gates.
 
     Commuting measurements assigned to one merged round are serialized here
     for readability. This builder does not reproduce the paper's hardware-level
@@ -583,8 +586,9 @@ def build_lattice_surgery_circuit(
             add_barriers=add_barriers,
         )
 
-    # Prepare the target in |+>. During merged round 1, compatible X checks have
-    # known +1 values while nondeterministic Z checks establish their references.
+    # Prepare the target in logical |+_L>. The product |+> state fixes every X
+    # check to +1; measuring every Z stabilizer projects into the surface-code
+    # space and establishes the Z reference before lattice surgery begins.
     surface_qubits = surface_data_qubits(qregs, spec.surface_order)
     spec.surface_code_operations.prepare_plus(
         circuit,
@@ -592,6 +596,18 @@ def build_lattice_surgery_circuit(
         add_barriers=add_barriers,
         barrier_label=f"prepare {spec.name} |+> product state",
     )
+    spec.surface_code_operations.append_z_stabilizer_measurements(
+        circuit,
+        surface_qubits=surface_qubits,
+        z_ancillas=[qregs.surface_z_ancillas[label.lower()][0] for label in spec.z_labels],
+        classical_bits=list(cregs["surface_init_z"]),
+        round_label=f"initialize {spec.name} |+_L>",
+        stabilizer_names=spec.z_labels,
+        prepare_ancillas=True,
+        add_barriers=False,
+    )
+    if add_barriers:
+        circuit.barrier(label=f"initialize {spec.name} |+_L>")
 
     # Run merged-code rounds, including the two paper-defined Steane check groups.
     merged_zz_bits = list(cregs["ls_zz"])

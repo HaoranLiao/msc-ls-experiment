@@ -150,9 +150,9 @@ class TestTransferCircuitLayout:
             "zz_1a",
             "zz_35bc",
         }
-        assert circuit.cregs[2].name == "ls_zz"
+        ls_zz_register = next(register for register in circuit.cregs if register.name == "ls_zz")
         # Three rounds, two merged-boundary checks per round.
-        assert circuit.cregs[2].size == 6
+        assert ls_zz_register.size == 6
         assert {
             label for _, steane_support, _ in d3t.MERGED_BOUNDARY_CHECKS for label in steane_support
         } == set(common.HIRANO_STEANE_LOGICAL_Z)
@@ -195,10 +195,12 @@ class TestTransferCircuitLayout:
                 and instruction.clbits[0] in register_bits[register_name]
             ]
 
+        surface_init_z = measurement_positions("surface_init_z")
         merged = measurement_positions("ls_zz")
         steane = measurement_positions("steane_verify")
         demolition = measurement_positions("steane_x")
 
+        assert max(surface_init_z) < min(merged)
         assert max(merged[:2]) < min(steane[:5]) < max(steane[:5]) < min(merged[2:4])
         assert max(merged[2:4]) < min(steane[5:]) < max(steane[5:]) < min(merged[4:])
         assert max(merged[4:]) < min(demolition)
@@ -240,6 +242,7 @@ class TestTransferMeasurementParsing:
 
         assert set(measurements["registers"]) == {
             "enc_helpers",
+            "surface_init_z",
             "ls_zz",
             "merged_surface_z",
             "merged_surface_x",
@@ -249,6 +252,12 @@ class TestTransferMeasurementParsing:
             "surface_logical_z",
         }
         assert measurements["registers"]["surface_logical_z"]["labels"] == ("a", "b", "c")
+        assert measurements["registers"]["surface_init_z"]["labels"] == (
+            "Z_abde",
+            "Z_cf",
+            "Z_dg",
+            "Z_efhi",
+        )
         assert (
             measurements["registers"]["steane_verify"]["labels"]
             == common.STEANE_LS_VERIFICATION_LABELS
@@ -286,7 +295,9 @@ class TestTransferMeasurementParsing:
         assert len(measurements["merged_surface_z_rounds"]) == 3
         assert len(measurements["merged_surface_x_rounds"]) == 3
         assert len(measurements["merged_surface_syndrome_deltas"]) == 3
-        assert measurements["merged_surface_syndrome_deltas"][0]["z"] == {}
+        assert set(measurements["merged_surface_syndrome_deltas"][0]["z"]) == set(
+            d3t.TRANSFER_SPEC.z_labels
+        )
         assert all(
             bit == 0
             for deltas in measurements["merged_surface_syndrome_deltas"]
@@ -309,11 +320,11 @@ class TestTransferMeasurementParsing:
         z_delta_count = sum(len(layer["z"]) for layer in deltas)
         x_delta_count = sum(len(layer["x"]) for layer in deltas)
 
-        # Three known-X detector layers plus two Z change-detector layers.
+        # Three known-X detector layers plus three Z change-detector layers.
         assert x_delta_count == 3 * len(d3t.TRANSFER_SPEC.merged_x_labels)
-        assert z_delta_count == 2 * len(d3t.TRANSFER_SPEC.z_labels)
-        assert x_delta_count + z_delta_count == 17
-        assert deltas[0]["z"] == {}
+        assert z_delta_count == 3 * len(d3t.TRANSFER_SPEC.z_labels)
+        assert x_delta_count + z_delta_count == 21
+        assert set(deltas[0]["z"]) == set(d3t.TRANSFER_SPEC.z_labels)
 
     def test_parser_rejects_register_chunks_with_wrong_width(self) -> None:
         with pytest.raises(ValueError, match="labels"):

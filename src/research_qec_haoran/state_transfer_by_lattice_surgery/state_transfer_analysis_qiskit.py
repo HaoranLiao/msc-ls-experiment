@@ -64,6 +64,7 @@ def parse_transfer_measurements(
     def register_bits(name: str) -> dict[str, int]:
         return register_chunks[name]["bits"]
 
+    surface_init_z_bits = register_bits("surface_init_z")
     merged_z_bits = register_bits("merged_surface_z")
     merged_x_bits = register_bits("merged_surface_x")
     merged_zz_bits = register_bits("ls_zz")
@@ -71,6 +72,7 @@ def parse_transfer_measurements(
     parsed: dict[str, object] = {
         "registers": register_chunks,
         "enc_helpers": register_bits("enc_helpers"),
+        "surface_init_z": surface_init_z_bits,
         "surface_x_recovery": register_bits("surface_x_recovery"),
         "steane_x": register_bits("steane_x"),
         "steane_verification": verification_bits,
@@ -200,11 +202,11 @@ def merged_surface_syndrome_deltas(
     """Return change-detected surface-code deltas measured during the merge.
 
     These are the compatible surface stabilizers extracted while the Steane and
-    surface patches are connected by merged-boundary Z checks. Because the
-    surface data start in a product `|+>` state, compatible X checks have known
-    +1 values and produce detectors from round 1. Z checks are initially
-    nondeterministic: round 1 establishes their reference and rounds 2--3
-    produce change detectors, exactly as in the paper's circuit.
+    surface patches are connected by merged-boundary Z checks. The product
+    `|+>` preparation gives compatible X checks known +1 values, so all three
+    merged X rounds produce detectors. A separate pre-merge Z-stabilizer
+    measurement prepares logical `|+_L>` and establishes the nondeterministic
+    Z reference, so all three merged Z rounds also produce change detectors.
 
     Top-edge X checks that do not commute with active merged-boundary Z checks
     are intentionally absent here and recovered only after Steane demolition.
@@ -213,19 +215,19 @@ def merged_surface_syndrome_deltas(
     x_frame.record_many({label: 0 for label in merged_surface_x_labels})
 
     z_frame = StabilizerFrame()
+    z_frame.record_many(
+        {
+            label: measurements["surface_init_z"][label]
+            for label in merged_surface_z_labels
+        }
+    )
     deltas: list[dict[str, dict[str, int]]] = []
-    for round_index, (merged_z, merged_x) in enumerate(
-        zip(
-            measurements["merged_surface_z_rounds"],
-            measurements["merged_surface_x_rounds"],
-            strict=True,
-        )
+    for merged_z, merged_x in zip(
+        measurements["merged_surface_z_rounds"],
+        measurements["merged_surface_x_rounds"],
+        strict=True,
     ):
-        if round_index == 0:
-            z_frame.record_many(merged_z)
-            z_deltas = {}
-        else:
-            z_deltas = z_frame.advance(merged_z)
+        z_deltas = z_frame.advance(merged_z)
         x_deltas = x_frame.compare_many(merged_x, update=True)
         deltas.append(
             {
@@ -246,9 +248,10 @@ def merged_surface_qec_recovery(
     """Jointly decode all surface detector layers measured during the merge.
 
     Compatible X checks have a known preparation boundary and therefore three
-    detector layers. Nondeterministic Z checks use round 1 as their reference
-    and therefore have two layers. Timelike matching edges distinguish repeated
-    measurement faults from persistent data errors.
+    detector layers. Nondeterministic Z checks use the pre-merge initialization
+    measurement as their reference and therefore also have three layers.
+    Timelike matching edges distinguish repeated measurement faults from
+    persistent data errors.
     """
     deltas_by_round = measurements["merged_surface_syndrome_deltas"]
     measured_z_labels = tuple(

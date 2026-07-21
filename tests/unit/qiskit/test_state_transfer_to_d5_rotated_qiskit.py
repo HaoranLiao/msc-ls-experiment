@@ -112,8 +112,8 @@ class TestD5TransferCircuitLayout:
             "zz_35bc",
             "zz_de",
         }
-        assert circuit.cregs[1].name == "ls_zz"
-        assert circuit.cregs[1].size == 9
+        ls_zz_register = next(register for register in circuit.cregs if register.name == "ls_zz")
+        assert ls_zz_register.size == 9
         assert {
             label for _, steane_support, _ in d5t.MERGED_BOUNDARY_CHECKS for label in steane_support
         } == set(common.HIRANO_STEANE_LOGICAL_Z)
@@ -151,10 +151,12 @@ class TestD5TransferCircuitLayout:
                 and instruction.clbits[0] in register_bits[register_name]
             ]
 
+        surface_init_z = measurement_positions("surface_init_z")
         merged = measurement_positions("ls_zz")
         steane = measurement_positions("steane_verify")
         demolition = measurement_positions("steane_x")
 
+        assert max(surface_init_z) < min(merged)
         assert max(merged[:3]) < min(steane[:5]) < max(steane[:5]) < min(merged[3:6])
         assert max(merged[3:6]) < min(steane[5:]) < max(steane[5:]) < min(merged[6:])
         assert max(merged[6:]) < min(demolition)
@@ -230,6 +232,7 @@ class TestD5TransferMeasurementParsing:
 
         assert set(measurements["registers"]) == {
             "enc_helpers",
+            "surface_init_z",
             "ls_zz",
             "merged_surface_z",
             "merged_surface_x",
@@ -239,6 +242,7 @@ class TestD5TransferMeasurementParsing:
             "surface_logical_z",
         }
         assert measurements["registers"]["surface_x_recovery"]["labels"] == ("X_ab", "X_cd")
+        assert measurements["registers"]["surface_init_z"]["labels"] == d5t.TRANSFER_SPEC.z_labels
         assert measurements["registers"]["surface_logical_z"]["labels"] == (
             "a",
             "b",
@@ -284,7 +288,9 @@ class TestD5TransferMeasurementParsing:
         assert len(measurements["merged_surface_z_rounds"]) == 3
         assert len(measurements["merged_surface_x_rounds"]) == 3
         assert len(measurements["merged_surface_syndrome_deltas"]) == 3
-        assert measurements["merged_surface_syndrome_deltas"][0]["z"] == {}
+        assert set(measurements["merged_surface_syndrome_deltas"][0]["z"]) == set(
+            d5t.TRANSFER_SPEC.z_labels
+        )
         assert all(
             bit == 0
             for deltas in measurements["merged_surface_syndrome_deltas"]
@@ -292,7 +298,7 @@ class TestD5TransferMeasurementParsing:
             for bit in deltas[basis].values()
         )
 
-    def test_surface_delta_history_has_papers_54_detectors(self) -> None:
+    def test_surface_delta_history_has_papers_66_merge_detectors(self) -> None:
         measurements = _one_parsed_shot(
             injected_state="0",
             surface_readout_basis=None,
@@ -302,12 +308,12 @@ class TestD5TransferMeasurementParsing:
         z_delta_count = sum(len(layer["z"]) for layer in deltas)
         x_delta_count = sum(len(layer["x"]) for layer in deltas)
 
-        # 10 compatible X checks have known +1 references in all three rounds;
-        # 12 nondeterministic Z checks produce changes only in rounds 2 and 3.
+        # The pre-merge |+_L> initialization supplies the Z reference, so all
+        # three merged rounds contribute both compatible-X and Z detectors.
         assert x_delta_count == 3 * len(d5t.TRANSFER_SPEC.merged_x_labels)
-        assert z_delta_count == 2 * len(d5t.TRANSFER_SPEC.z_labels)
-        assert x_delta_count + z_delta_count == 54
-        assert deltas[0]["z"] == {}
+        assert z_delta_count == 3 * len(d5t.TRANSFER_SPEC.z_labels)
+        assert x_delta_count + z_delta_count == 66
+        assert set(deltas[0]["z"]) == set(d5t.TRANSFER_SPEC.z_labels)
 
 
 # ===========================================================================
