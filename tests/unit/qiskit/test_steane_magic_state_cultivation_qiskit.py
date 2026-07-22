@@ -14,6 +14,7 @@ from magic_state_cultivation.steane_code.magic_state_cultivation_qiskit import (
     postselect_success_counts,
 )
 from magic_state_cultivation.steane_code.state_injection_qiskit import (
+    PATCH_DATA_SITES,
     PATCH_DEFAULT_LOGICAL_X,
     PATCH_DEFAULT_LOGICAL_Z,
     InjectedStateName,
@@ -121,6 +122,44 @@ def _build_cultivation_with_logical_measurement(
         circuit,
         basis,
         patch_qubits=list(circuit.qregs[0]),
+        support=support,
+        classical_bits=list(logical_creg),
+        destructive=True,
+    )
+
+    return circuit
+
+
+def _build_cultivation_with_logical_y_measurement(
+    state: InjectedStateName,
+) -> QuantumCircuit:
+    """Build: encoder → cultivation → transversal S → destructive X_L measurement.
+
+    ⟨X_L⟩ and ⟨Z_L⟩ are identical for |T⟩ and |Tdg⟩, so only ⟨Y_L⟩ pins the
+    cultivated state to |T⟩. Transversal S implements logical S† on the Steane
+    code (S^{⊗7} maps X_L → −Y_L, the logical-S† action), so measuring ⟨X_L⟩ of
+    the S-rotated state returns ⟨Y_L⟩ of the cultivated state:
+    ⟨S†_L ψ| X_L |S†_L ψ⟩ = ⟨ψ| S_L X_L S†_L |ψ⟩ = ⟨ψ| Y_L |ψ⟩.
+
+    The classical-bit layout matches
+    :func:`_build_cultivation_with_logical_measurement` (bits 0–3 encoder,
+    4–8 cultivation, 9–11 logical), so
+    :func:`_postselect_and_compute_expectation` applies unchanged.
+    """
+    circuit = _make_cultivation_circuit(injected_state=state)
+
+    # Transversal S on all seven data sites = logical S† (rotates Y_L → X_L).
+    qubits = list(circuit.qregs[0])
+    for site in PATCH_DATA_SITES:
+        circuit.s(qubits[site])
+
+    support = PATCH_DEFAULT_LOGICAL_X
+    logical_creg = ClassicalRegister(len(support), "logical")
+    circuit.add_register(logical_creg)
+    append_patch_logical_measurement(
+        circuit,
+        "X",
+        patch_qubits=qubits,
         support=support,
         classical_bits=list(logical_creg),
         destructive=True,
@@ -239,6 +278,40 @@ class TestPostselectedLogicalExpectation:
             assert measured_rate == pytest.approx(expected_rate, abs=tolerance), (
                 f"State {state!r}: acceptance = {measured_rate:.4f}, expected = {expected_rate:.4f}"
             )
+
+
+# =============================================================================
+# Test Set 1b: Logical ⟨Y_L⟩ pins the cultivated state to |T⟩ (not |Tdg⟩)
+# =============================================================================
+
+
+class TestCultivatedLogicalYExpectation:
+    """Cultivation projects onto the +1 eigenstate of logical H_XY = |T⟩.
+
+    ⟨X_L⟩ and ⟨Z_L⟩ cannot distinguish |T⟩ from |Tdg⟩ (both give 1/√2 and 0);
+    ⟨Y_L⟩ can (|T⟩ → +1/√2, |Tdg⟩ → −1/√2). Because the projection is rank-1
+    on the logical qubit, every accepted shot is |T⟩ regardless of the injected
+    state, so ⟨Y_L⟩ = +1/√2 for all of them.
+    """
+
+    @pytest.mark.parametrize("state", ["T", "+", "Y+", "Ty"])
+    def test_cultivated_y_expectation_is_plus(self, state: InjectedStateName) -> None:
+        """Accepted shots have ⟨Y_L⟩ = +1/√2 (|T⟩), not −1/√2 (|Tdg⟩)."""
+        circuit = _build_cultivation_with_logical_y_measurement(state)
+        sim = AerSimulator()
+        counts = sim.run(circuit, shots=NUM_SHOTS).result().get_counts()
+
+        expectation, n_accepted = _postselect_and_compute_expectation(counts)
+
+        assert n_accepted > 0, f"No accepted shots for state={state!r}"
+
+        # Statistical tolerance: ~4σ where σ = sqrt((1 - ev²) / n_accepted).
+        tolerance = 4 * math.sqrt((1.0 - INV_SQRT2**2) / n_accepted) + 0.01
+        assert expectation == pytest.approx(INV_SQRT2, abs=tolerance), (
+            f"State {state!r}: cultivated ⟨Y_L⟩ = {expectation:.4f}, expected "
+            f"+1/√2 = {INV_SQRT2:.4f} (|T⟩). A value near −1/√2 would mean the "
+            f"round projects onto |Tdg⟩ (n_accepted={n_accepted})."
+        )
 
 
 # =============================================================================
