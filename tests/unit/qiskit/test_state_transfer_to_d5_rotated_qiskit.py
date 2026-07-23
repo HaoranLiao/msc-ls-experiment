@@ -250,6 +250,13 @@ class TestD5TransferMeasurementParsing:
             "d",
             "e",
         )
+        recovery = measurements["merged_surface_qec_recovery"]
+        assert measurements["merged_surface_logical_x_byproduct"] == (
+            len(recovery.x_error_sites & frozenset(d5t.TRANSFER_SPEC.logical_z)) % 2
+        )
+        assert measurements["merged_surface_logical_z_byproduct"] == (
+            len(recovery.z_error_sites & frozenset(d5t.TRANSFER_SPEC.logical_x)) % 2
+        )
         assert all("Zde" in round_bits for round_bits in measurements["merged_zz_rounds"])
 
     def test_transfer_acceptance_predicates_accept_noiseless_basis_state(self) -> None:
@@ -315,42 +322,30 @@ class TestD5TransferMeasurementParsing:
         assert x_delta_count + z_delta_count == 66
         assert set(deltas[0]["z"]) == set(d5t.TRANSFER_SPEC.z_labels)
 
-    def test_joint_decoder_uses_d5_merge_record_to_locate_final_round_x_fault(
+    def test_restored_top_x_checks_complete_post_transfer_stabilizer_frame(
         self,
     ) -> None:
         measurements = _one_parsed_shot(
             injected_state="0",
             surface_readout_basis=None,
         )
+        frame = measurements["post_transfer_surface_stabilizer_frame"]
 
-        # X_a immediately after the final parity measurement changes the last
-        # Z_abfg result but none of the already-recorded boundary outcomes.
-        measurements["merged_surface_z_rounds"][2]["Z_abfg"] ^= 1
-        measurements["merged_surface_syndrome_deltas"] = (
-            analysis.merged_surface_syndrome_deltas(
-                measurements,
-                merged_surface_z_labels=d5t.TRANSFER_SPEC.z_labels,
-                merged_surface_x_labels=d5t.TRANSFER_SPEC.merged_x_labels,
-            )
+        assert set(frame.as_dict()) == set(d5t.TRANSFER_SPEC.z_labels) | set(
+            d5t.TRANSFER_SPEC.x_labels
         )
-        after_parity = analysis.joint_transfer_decode(
-            measurements,
-            spec=d5t.TRANSFER_SPEC,
+        assert all(
+            frame.current(label) == measurements["merged_surface_z_rounds"][-1][label]
+            for label in d5t.TRANSFER_SPEC.z_labels
         )
-
-        # Moving the same inferred X_a fault to before the final parity adds
-        # the corresponding Z1a change detector and removes the output frame
-        # correction, because that error is absorbed into teleportation.
-        measurements["merged_zz_rounds"][2]["Z1a"] ^= 1
-        before_parity = analysis.joint_transfer_decode(
-            measurements,
-            spec=d5t.TRANSFER_SPEC,
+        assert all(
+            frame.current(label) == measurements["merged_surface_x_rounds"][-1][label]
+            for label in d5t.TRANSFER_SPEC.merged_x_labels
         )
-
-        assert after_parity.surface_qec_logical_x_byproduct == 1
-        assert after_parity.merged_boundary_delta_history[1]["Z1a"] == 0
-        assert before_parity.surface_qec_logical_x_byproduct == 0
-        assert before_parity.merged_boundary_delta_history[1]["Z1a"] == 1
+        assert all(
+            frame.current(label) == measurements["surface_x_recovery"][label]
+            for label in d5t.TRANSFER_SPEC.top_x_recovery_labels
+        )
 
 
 # ===========================================================================

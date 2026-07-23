@@ -113,64 +113,6 @@ def _parsed_surface_fault_shots(
     ]
 
 
-def _parsed_surface_x_fault_shots_at_transfer_stage(
-    *,
-    stage: str,
-    surface_site: str = "a",
-    shots: int = 32,
-) -> list[dict[str, object]]:
-    """Inject target X immediately before or after a named merge boundary."""
-    circuit = d3t.build_steane_to_rotated_d3_lattice_surgery_circuit(
-        injected_state="0",
-        include_cultivation=False,
-        surface_readout_basis="Z",
-        add_barriers=True,
-    )
-    surface_qubit = next(register for register in circuit.qregs if register.name == surface_site)[0]
-
-    if stage == "after_initialization":
-        insertion_position = next(
-            position + 1
-            for position, instruction in enumerate(circuit.data)
-            if instruction.operation.name == "barrier"
-            and instruction.operation.label == "initialize rotated d3 |+_L>"
-        )
-    elif stage == "before_final_merge_parity":
-        insertion_position = next(
-            position + 1
-            for position, instruction in enumerate(circuit.data)
-            if instruction.operation.name == "barrier"
-            and instruction.operation.label == "merged interval round 2"
-        )
-    elif stage == "after_final_merge_parity":
-        merge_bits = set(next(register for register in circuit.cregs if register.name == "ls_zz"))
-        insertion_position = (
-            max(
-                position
-                for position, instruction in enumerate(circuit.data)
-                if instruction.operation.name == "measure"
-                and instruction.clbits[0] in merge_bits
-            )
-            + 1
-        )
-    else:
-        raise ValueError(f"unsupported transfer stage: {stage}")
-
-    circuit.data.insert(
-        insertion_position,
-        CircuitInstruction(XGate(), (surface_qubit,), ()),
-    )
-    counts = AerSimulator(method="stabilizer").run(circuit, shots=shots).result().get_counts()
-    return [
-        d3t.parse_transfer_measurements(
-            bitstring,
-            include_cultivation=False,
-            surface_readout_basis="Z",
-        )
-        for bitstring in counts
-    ]
-
-
 # ===========================================================================
 # SET 1: Circuit labels and paper-facing d=3 adaptation check schedule
 # ===========================================================================
@@ -222,6 +164,13 @@ class TestTransferCircuitLayout:
 
     def test_paper_style_steane_checks_and_logical_x_are_declared(self) -> None:
         assert common.HIRANO_STEANE_LOGICAL_X == ("1", "4", "6")
+        assert common.STEANE_LS_VERIFICATION_STABILIZER_INDICES == {
+            "Z0145": 1,
+            "Z0235": 2,
+            "X0235": 2,
+            "Z0246": 0,
+            "X0246": 0,
+        }
         assert common.STEANE_LS_VERIFICATION_ROUNDS == (
             ("Z0145", "Z0235", "X0235", "Z0246", "X0246"),
             ("Z0145", "Z0235", "Z0246"),
@@ -320,6 +269,15 @@ class TestTransferMeasurementParsing:
             measurements["registers"]["steane_verify"]["labels"]
             == common.STEANE_LS_VERIFICATION_LABELS
         )
+        assert "joint_transfer_decode_result" not in measurements
+        assert "post_transfer_surface_stabilizer_frame" in measurements
+        recovery = measurements["merged_surface_qec_recovery"]
+        assert measurements["merged_surface_logical_x_byproduct"] == (
+            len(recovery.x_error_sites & frozenset(d3t.TRANSFER_SPEC.logical_z)) % 2
+        )
+        assert measurements["merged_surface_logical_z_byproduct"] == (
+            len(recovery.z_error_sites & frozenset(d3t.TRANSFER_SPEC.logical_x)) % 2
+        )
         assert measurements["steane_verification_rounds"] == [
             {"Z0145": 0, "Z0235": 0, "X0235": 0, "Z0246": 0, "X0246": 0},
             {"Z0145": 0, "Z0235": 0, "Z0246": 0},
@@ -342,6 +300,46 @@ class TestTransferMeasurementParsing:
         assert analysis.x_verification_succeeds(measurements)
         assert measurements["x_verification_succeeds"]
         assert analysis.transfer_acceptance_succeeds(measurements)
+
+    def test_equal_round_parities_do_not_hide_unstable_boundary_checks(self) -> None:
+        measurements = _one_parsed_shot(
+            injected_state="0",
+            include_cultivation=False,
+            surface_readout_basis=None,
+        )
+        measurements["merged_zz_rounds"][1]["Z1a"] ^= 1
+        measurements["merged_zz_rounds"][1]["Z35bc"] ^= 1
+
+        assert not analysis.merged_boundary_checks_stable(measurements)
+        assert not analysis.transfer_acceptance_succeeds(measurements)
+        with pytest.raises(ValueError, match="individually stable"):
+            analysis.merged_boundary_logical_zz_outcome(measurements)
+
+    def test_common_boundary_values_define_logical_zz_outcome(self) -> None:
+        measurements = _one_parsed_shot(
+            injected_state="0",
+            include_cultivation=False,
+            surface_readout_basis=None,
+        )
+        common_values = measurements["merged_zz_rounds"][-1]
+
+        assert analysis.merged_boundary_checks_stable(measurements)
+        assert analysis.merged_boundary_logical_zz_outcome(measurements) == (
+            sum(common_values.values()) % 2
+        )
+
+    def test_temporal_x_correction_is_a_separate_pauli_frame_update(self) -> None:
+        measurements = _one_parsed_shot(
+            injected_state="0",
+            include_cultivation=False,
+            surface_readout_basis=None,
+        )
+        original_frame = analysis.transfer_pauli_frame(measurements)
+        measurements["merged_surface_logical_x_byproduct"] ^= 1
+        toggled_frame = analysis.transfer_pauli_frame(measurements)
+
+        assert toggled_frame.has_x_flip("surface") != original_frame.has_x_flip("surface")
+        assert toggled_frame.has_z_flip("surface") == original_frame.has_z_flip("surface")
 
     def test_merged_interval_surface_syndrome_rounds_have_noiseless_deltas(self) -> None:
         measurements = _one_parsed_shot(
@@ -366,6 +364,27 @@ class TestTransferMeasurementParsing:
     def test_merged_interval_surface_syndrome_schedule_is_explicit(self) -> None:
         assert d3t.TRANSFER_SPEC.z_labels == ("Z_abde", "Z_cf", "Z_dg", "Z_efhi")
         assert d3t.TRANSFER_SPEC.merged_x_labels == ("X_bcef", "X_degh", "X_hi")
+
+    def test_restored_top_x_check_completes_post_transfer_stabilizer_frame(self) -> None:
+        measurements = _one_parsed_shot(
+            injected_state="0",
+            include_cultivation=False,
+            surface_readout_basis=None,
+        )
+        frame = measurements["post_transfer_surface_stabilizer_frame"]
+
+        assert set(frame.as_dict()) == set(d3t.TRANSFER_SPEC.z_labels) | set(
+            d3t.TRANSFER_SPEC.x_labels
+        )
+        assert all(
+            frame.current(label) == measurements["merged_surface_z_rounds"][-1][label]
+            for label in d3t.TRANSFER_SPEC.z_labels
+        )
+        assert all(
+            frame.current(label) == measurements["merged_surface_x_rounds"][-1][label]
+            for label in d3t.TRANSFER_SPEC.merged_x_labels
+        )
+        assert frame.current("X_ab") == measurements["surface_x_recovery"]["X_ab"]
 
     def test_surface_delta_history_has_paper_detector_boundary(self) -> None:
         measurements = _one_parsed_shot(
@@ -474,65 +493,7 @@ class TestLogicalTransferCorrectness:
             for item in measurements_by_outcome
         )
 
-    def test_joint_decoder_absorbs_x_fault_before_first_merge_parity(self) -> None:
-        measurements_by_outcome = _parsed_surface_x_fault_shots_at_transfer_stage(
-            stage="after_initialization",
-        )
-
-        assert all(analysis.transfer_acceptance_succeeds(item) for item in measurements_by_outcome)
-        assert all(
-            item["joint_transfer_decode_result"].surface_qec_logical_x_byproduct == 0
-            for item in measurements_by_outcome
-        )
-        assert all(
-            analysis.corrected_surface_logical_readout(item, basis="Z") == 0
-            for item in measurements_by_outcome
-        )
-
-    def test_joint_decoder_uses_final_merge_parity_to_locate_x_fault(self) -> None:
-        before_parity = _parsed_surface_x_fault_shots_at_transfer_stage(
-            stage="before_final_merge_parity",
-        )
-        after_parity = _parsed_surface_x_fault_shots_at_transfer_stage(
-            stage="after_final_merge_parity",
-        )
-
-        # Both faults produce the same round-3 surface-Z detector. Only the
-        # earlier fault also changes the final merged-boundary record.
-        assert all(
-            item["merged_surface_syndrome_deltas"][2]["z"]["Z_abde"] == 1
-            for item in before_parity + after_parity
-        )
-        assert all(
-            item["joint_transfer_decode_result"].merged_boundary_delta_history[1]["Z1a"]
-            == 1
-            for item in before_parity
-        )
-        assert all(
-            item["joint_transfer_decode_result"].merged_boundary_delta_history[1]["Z1a"]
-            == 0
-            for item in after_parity
-        )
-        assert all(
-            item["joint_transfer_decode_result"].surface_qec_logical_x_byproduct == 0
-            for item in before_parity
-        )
-        assert all(
-            item["joint_transfer_decode_result"].surface_qec_logical_x_byproduct == 1
-            for item in after_parity
-        )
-
-        # The pre-parity case is intentionally rejected because the repeated
-        # boundary measurements disagree. The accepted post-parity case is
-        # corrected by a distinct surface-QEC X-frame update.
-        assert not any(analysis.transfer_acceptance_succeeds(item) for item in before_parity)
-        assert all(analysis.transfer_acceptance_succeeds(item) for item in after_parity)
-        assert all(
-            analysis.corrected_surface_logical_readout(item, basis="Z") == 0
-            for item in after_parity
-        )
-
-    def test_joint_temporal_decoder_identifies_measurement_fault(self) -> None:
+    def test_temporal_decoder_identifies_measurement_fault(self) -> None:
         measurements = _one_parsed_shot(
             injected_state="+",
             include_cultivation=False,

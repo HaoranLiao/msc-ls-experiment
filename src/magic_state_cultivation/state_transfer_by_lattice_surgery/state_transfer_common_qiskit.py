@@ -42,12 +42,12 @@ HIRANO_STEANE_GEOMETRIC_ORDER: tuple[str, ...] = ("6", "4", "0", "2", "1", "5", 
 HIRANO_STEANE_LOGICAL_X: tuple[str, ...] = ("1", "4", "6")
 HIRANO_STEANE_LOGICAL_Z: tuple[str, ...] = ("1", "5", "3")
 
-STEANE_LS_VERIFICATION_CHECKS: dict[str, tuple[str, tuple[str, ...]]] = {
-    "Z0145": ("Z", ("0", "1", "4", "5")),
-    "Z0235": ("Z", ("0", "2", "3", "5")),
-    "X0235": ("X", ("0", "2", "3", "5")),
-    "Z0246": ("Z", ("0", "2", "4", "6")),
-    "X0246": ("X", ("0", "2", "4", "6")),
+STEANE_LS_VERIFICATION_STABILIZER_INDICES: dict[str, int] = {
+    "Z0145": 1,
+    "Z0235": 2,
+    "X0235": 2,
+    "Z0246": 0,
+    "X0246": 0,
 }
 STEANE_LS_VERIFICATION_ROUNDS: tuple[tuple[str, ...], ...] = (
     ("Z0145", "Z0235", "X0235", "Z0246", "X0246"),
@@ -58,13 +58,6 @@ STEANE_LS_VERIFICATION_LABELS: tuple[str, ...] = tuple(
     for round_index, round_checks in enumerate(STEANE_LS_VERIFICATION_ROUNDS)
     for check_name in round_checks
 )
-STEANE_LS_VERIFICATION_ANCILLA_HELPER: dict[str, str] = {
-    "Z0145": "h6",
-    "Z0235": "h7",
-    "X0235": "h7",
-    "Z0246": "h2",
-    "X0246": "h2",
-}
 FINAL_X_VERIFICATION_CHECKS: dict[str, tuple[str, ...]] = {
     "X0235": ("0", "2", "3", "5"),
     "X0246": ("0", "2", "4", "6"),
@@ -137,7 +130,7 @@ class SurfaceCodeOperations:
     sites without adding transfer-level wrappers around the surface modules.
     """
 
-    prepare_plus: CircuitAppender
+    prepare_product_plus: CircuitAppender
     append_z_stabilizer_measurements: CircuitAppender
     append_x_stabilizer_measurements: CircuitAppender
     append_logical_measurement: CircuitAppender
@@ -381,18 +374,15 @@ def append_steane_lattice_surgery_verification_round(
 
     patch_qubits = hirano_labeled_patch_qubits(registers)
     for check_name, classical_bit in zip(round_checks, classical_bits, strict=True):
-        basis, support = STEANE_LS_VERIFICATION_CHECKS[check_name]
-        helper_label = STEANE_LS_VERIFICATION_ANCILLA_HELPER[check_name]
-        ancilla = registers.steane_helpers[helper_label][0]
-        circuit.reset(ancilla)
-        steane.append_patch_logical_measurement(
+        steane.append_patch_stabilizer_measurement(
             circuit,
-            basis,
             patch_qubits=patch_qubits,
-            support=tuple(HIRANO_LABEL_TO_GOOGLE_SITE[label] for label in support),
-            ancilla_qubit=ancilla,
             classical_bits=[classical_bit],
-            destructive=False,
+            basis=check_name[0].lower(),
+            stabilizer_indices=(
+                STEANE_LS_VERIFICATION_STABILIZER_INDICES[check_name],
+            ),
+            add_barriers=False,
         )
 
     if add_barriers:
@@ -538,10 +528,11 @@ def build_lattice_surgery_circuit(
     not in-circuit decoding. After circuit execution,
     ``parse_transfer_measurements`` establishes the known X-check preparation
     boundary, uses the pre-merge Z-stabilizer measurements as the Z-check
-    reference, and decodes the resulting detector layers. Its transfer-specific
-    joint decoder combines the repeated merged-boundary records with the three
-    Z-detector layers to distinguish X errors before versus after the final
-    logical parity measurement. Corrections are tracked classically in a Pauli
+    reference, and decodes the resulting surface detector layers with
+    ``TemporalRotatedDecoder``. Repeated merged-boundary changes are strict
+    postselection failures, not decoder input. After demolition, the restored
+    top-edge X values complete the surface stabilizer reference for future
+    fixed-patch continuation. Corrections are tracked classically in a Pauli
     frame rather than applied as physical gates.
 
     Commuting measurements assigned to one merged round are serialized here
@@ -592,7 +583,7 @@ def build_lattice_surgery_circuit(
     # check to +1; measuring every Z stabilizer projects into the surface-code
     # space and establishes the Z reference before lattice surgery begins.
     surface_qubits = surface_data_qubits(qregs, spec.surface_order)
-    spec.surface_code_operations.prepare_plus(
+    spec.surface_code_operations.prepare_product_plus(
         circuit,
         qubits=surface_qubits,
         add_barriers=add_barriers,
