@@ -34,6 +34,7 @@ def parse_transfer_measurements(
     *,
     spec: SurfaceCodeTransferSpec,
     include_cultivation: bool = True,
+    include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
 ) -> dict[str, object]:
     """Parse and interpret one fixed-protocol transfer shot.
@@ -41,12 +42,15 @@ def parse_transfer_measurements(
     The returned ``registers`` entry preserves each raw Qiskit count-key chunk,
     its semantic labels, and its parsed bits. The other entries expose the
     paper's three merged rounds, Steane checks, demolition outcomes, recovered
-    top-edge X checks, surface detector deltas, decoded recoveries, and the
-    complete post-transfer surface stabilizer reference.
+    top-edge X checks, surface detector histories, decoded merge recoveries,
+    and the complete post-transfer surface stabilizer reference.
     """
     specs = transfer_classical_register_specs(
         spec,
         include_cultivation=include_cultivation,
+        include_post_transfer_stabilizer_rounds=(
+            include_post_transfer_stabilizer_rounds
+        ),
         surface_readout_basis=surface_readout_basis,
     )
     labels_by_register = [(register.name, register.labels) for register in specs]
@@ -105,16 +109,48 @@ def parse_transfer_measurements(
     }
     if include_cultivation:
         parsed["cultivation"] = register_bits("cult")
+    if include_post_transfer_stabilizer_rounds:
+        post_transfer_z_bits = register_bits("post_transfer_surface_z")
+        post_transfer_x_bits = register_bits("post_transfer_surface_x")
+        parsed["post_transfer_surface_z_rounds"] = [
+            {
+                label: post_transfer_z_bits[f"round{round_index + 1}_{label}"]
+                for label in spec.z_labels
+            }
+            for round_index in range(spec.distance)
+        ]
+        parsed["post_transfer_surface_x_rounds"] = [
+            {
+                label: post_transfer_x_bits[f"round{round_index + 1}_{label}"]
+                for label in spec.x_labels
+            }
+            for round_index in range(spec.distance)
+        ]
     if surface_readout_basis is not None:
         parsed["surface_logical_readout"] = register_bits(
             f"surface_logical_{surface_readout_basis.lower()}"
         )
 
-    parsed["merged_surface_syndrome_deltas"] = merged_surface_syndrome_deltas(
-        parsed,
-        merged_surface_z_labels=spec.z_labels,
-        merged_surface_x_labels=spec.merged_x_labels,
+    parsed["merged_surface_syndrome_delta_history"] = (
+        merged_surface_syndrome_delta_history(
+            parsed,
+            merged_surface_z_labels=spec.z_labels,
+            merged_surface_x_labels=spec.merged_x_labels,
+        )
     )
+    parsed["post_transfer_surface_stabilizer_frame"] = (
+        post_transfer_surface_stabilizer_frame(
+            parsed,
+            spec=spec,
+        )
+    )
+    if include_post_transfer_stabilizer_rounds:
+        parsed["post_transfer_surface_syndrome_delta_history"] = (
+            post_transfer_surface_syndrome_delta_history(
+                parsed,
+                initial_frame=parsed["post_transfer_surface_stabilizer_frame"],
+            )
+        )
     parsed["final_x_verification_checks"] = final_x_verification_checks(parsed)
     parsed["x_verification_succeeds"] = x_verification_succeeds(parsed)
     recovery = merged_surface_qec_recovery(
@@ -131,12 +167,6 @@ def parse_transfer_measurements(
     parsed["merged_surface_logical_z_byproduct"] = len(
         recovery.z_error_sites & frozenset(spec.logical_x)
     ) % 2
-    parsed["post_transfer_surface_stabilizer_frame"] = (
-        post_transfer_surface_stabilizer_frame(
-            parsed,
-            spec=spec,
-        )
-    )
     return parsed
 
 
@@ -181,13 +211,14 @@ def merged_boundary_logical_zz_outcome(measurements: dict[str, object]) -> int:
 
     Every individual boundary check must be identical in all three merge
     rounds. Unstable histories are postselection failures and are never
-    interpreted as a teleportation outcome. On a stable history, the parity of
-    any round is the common lattice-surgery ``Z_L Z_L`` result.
+    interpreted as a teleportation outcome. A Qiskit measurement bit ``b``
+    represents eigenvalue ``(-1)^b``; multiplying the stable boundary-check
+    eigenvalues therefore means taking the XOR of their bits.
     """
     if not merged_boundary_checks_stable(measurements):
         raise ValueError("Merged-boundary checks are not individually stable.")
-    common_boundary_values = measurements["merged_zz_rounds"][-1]
-    return sum(common_boundary_values.values()) % 2
+    stable_boundary_bits = measurements["merged_zz_rounds"][0]
+    return parity(stable_boundary_bits, tuple(stable_boundary_bits))
 
 
 def merged_boundary_checks_stable(
@@ -195,9 +226,19 @@ def merged_boundary_checks_stable(
 ) -> bool:
     """Return whether every repeated merged-boundary check is time-stable."""
     rounds = measurements["merged_zz_rounds"]
-    return all(
-        len({round_bits[check_name] for round_bits in rounds}) == 1 for check_name in rounds[0]
-    )
+    if not rounds:
+        return False
+
+    check_names = tuple(rounds[0])
+    if any(set(round_bits) != set(check_names) for round_bits in rounds[1:]):
+        return False
+
+    for check_name in check_names:
+        first_value = rounds[0][check_name]
+        for round_bits in rounds[1:]:
+            if round_bits[check_name] != first_value:
+                return False
+    return True
 
 
 def steane_logical_x_outcome(measurements: dict[str, object]) -> int:
@@ -236,13 +277,13 @@ def steane_verification_succeeds(measurements: dict[str, object]) -> bool:
     return all(bit == 0 for bit in measurements["steane_verification"].values())
 
 
-def merged_surface_syndrome_deltas(
+def merged_surface_syndrome_delta_history(
     measurements: dict[str, object],
     *,
     merged_surface_z_labels: Sequence[str],
     merged_surface_x_labels: Sequence[str],
 ) -> list[dict[str, dict[str, int]]]:
-    """Return change-detected surface-code deltas measured during the merge.
+    """Return the change-detected surface-code history measured during merge.
 
     These are the compatible surface stabilizers extracted while the Steane and
     surface patches are connected by merged-boundary Z checks. The product
@@ -264,21 +305,52 @@ def merged_surface_syndrome_deltas(
             for label in merged_surface_z_labels
         }
     )
-    deltas: list[dict[str, dict[str, int]]] = []
+    delta_history: list[dict[str, dict[str, int]]] = []
     for merged_z, merged_x in zip(
         measurements["merged_surface_z_rounds"],
         measurements["merged_surface_x_rounds"],
         strict=True,
     ):
-        z_deltas = z_frame.advance(merged_z)
-        x_deltas = x_frame.compare_many(merged_x, update=True)
-        deltas.append(
+        z_delta_layer = z_frame.advance(merged_z)
+        x_delta_layer = x_frame.compare_many(merged_x, update=True)
+        delta_history.append(
             {
-                "z": dict(z_deltas),
-                "x": {label: x_deltas[label] for label in merged_surface_x_labels},
+                "z": dict(z_delta_layer),
+                "x": {
+                    label: x_delta_layer[label]
+                    for label in merged_surface_x_labels
+                },
             }
         )
-    return deltas
+    return delta_history
+
+
+def post_transfer_surface_syndrome_delta_history(
+    measurements: dict[str, object],
+    *,
+    initial_frame: StabilizerFrame,
+) -> list[dict[str, dict[str, int]]]:
+    """Return full-check delta layers after the transfer boundary.
+
+    The restored top-edge checks and final compatible merge-round values form
+    the initial reference. Each optional full surface-code round advances that
+    reference in both CSS sectors.
+    """
+    frame = StabilizerFrame()
+    frame.record_many(initial_frame.as_dict())
+    delta_history: list[dict[str, dict[str, int]]] = []
+    for z_round, x_round in zip(
+        measurements["post_transfer_surface_z_rounds"],
+        measurements["post_transfer_surface_x_rounds"],
+        strict=True,
+    ):
+        delta_history.append(
+            {
+                "z": frame.advance(z_round),
+                "x": frame.advance(x_round),
+            }
+        )
+    return delta_history
 
 
 def merged_surface_qec_recovery(
@@ -296,12 +368,16 @@ def merged_surface_qec_recovery(
     Timelike matching edges distinguish repeated measurement faults from
     persistent data errors.
     """
-    deltas_by_round = measurements["merged_surface_syndrome_deltas"]
+    delta_history = measurements["merged_surface_syndrome_delta_history"]
     measured_z_labels = tuple(
-        label for label in z_stabilizers if any(label in deltas["z"] for deltas in deltas_by_round)
+        label
+        for label in z_stabilizers
+        if any(label in delta_layer["z"] for delta_layer in delta_history)
     )
     measured_x_labels = tuple(
-        label for label in x_stabilizers if any(label in deltas["x"] for deltas in deltas_by_round)
+        label
+        for label in x_stabilizers
+        if any(label in delta_layer["x"] for delta_layer in delta_history)
     )
     decoder = TemporalRotatedDecoder(
         data_qubits=surface_order,
@@ -309,8 +385,10 @@ def merged_surface_qec_recovery(
         x_stabilizers={label: x_stabilizers[label] for label in measured_x_labels},
     )
     return decoder.decode(
-        z_delta_history=[deltas["z"] for deltas in deltas_by_round if deltas["z"]],
-        x_delta_history=[deltas["x"] for deltas in deltas_by_round],
+        z_delta_history=[
+            delta_layer["z"] for delta_layer in delta_history if delta_layer["z"]
+        ],
+        x_delta_history=[delta_layer["x"] for delta_layer in delta_history],
     )
 
 
@@ -373,9 +451,7 @@ def transfer_pauli_frame(
     # Teleportation X byproduct from the logical Z_L Z_L measurement.
     frame.update_x("surface", bool(merged_boundary_logical_zz_outcome(measurements)))
 
-    # Surface-QEC X correction decoded from surface-Z-check history. Keep this
-    # update separate from the teleportation X byproduct even though the frame
-    # ultimately composes the two modulo two.
+    # Surface-QEC X correction decoded from surface-Z-check history.
     frame.update_x(
         "surface",
         bool(measurements["merged_surface_logical_x_byproduct"]),
@@ -412,7 +488,7 @@ def corrected_surface_logical_readout(
     This helper applies the transfer byproducts inferred from the same shot.
     """
     raw_bit = raw_surface_logical_readout(measurements)
-    frame = transfer_pauli_frame(measurements)
+    pauli_frame = transfer_pauli_frame(measurements)
     if basis.upper() == "X":
-        return frame.interpret_x_readout("surface", raw_bit)
-    return frame.interpret_z_readout("surface", raw_bit)
+        return pauli_frame.interpret_x_readout("surface", raw_bit)
+    return pauli_frame.interpret_z_readout("surface", raw_bit)

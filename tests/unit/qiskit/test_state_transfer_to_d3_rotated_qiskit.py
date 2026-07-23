@@ -33,6 +33,10 @@ from magic_state_cultivation.state_transfer_by_lattice_surgery import (
 def _one_parsed_shot(**circuit_kwargs):
     parse_kwargs = {
         "include_cultivation": circuit_kwargs.get("include_cultivation", True),
+        "include_post_transfer_stabilizer_rounds": circuit_kwargs.get(
+            "include_post_transfer_stabilizer_rounds",
+            False,
+        ),
         "surface_readout_basis": circuit_kwargs.get("surface_readout_basis"),
     }
     circuit = d3t.build_steane_to_rotated_d3_lattice_surgery_circuit(
@@ -219,8 +223,59 @@ class TestTransferCircuitLayout:
             add_barriers=False,
         )
 
-        assert "surface_post_z" not in {register.name for register in circuit.cregs}
-        assert "surface_post_x" not in {register.name for register in circuit.cregs}
+        assert "post_transfer_surface_z" not in {
+            register.name for register in circuit.cregs
+        }
+        assert "post_transfer_surface_x" not in {
+            register.name for register in circuit.cregs
+        }
+
+    def test_optional_post_transfer_stage_appends_three_full_rounds_before_readout(
+        self,
+    ) -> None:
+        circuit = d3t.build_steane_to_rotated_d3_lattice_surgery_circuit(
+            injected_state="0",
+            include_cultivation=False,
+            include_post_transfer_stabilizer_rounds=True,
+            surface_readout_basis="Z",
+            add_barriers=False,
+        )
+        registers = {register.name: register for register in circuit.cregs}
+        post_z_bits = set(registers["post_transfer_surface_z"])
+        post_x_bits = set(registers["post_transfer_surface_x"])
+        logical_bits = set(registers["surface_logical_z"])
+        post_measurements = [
+            position
+            for position, instruction in enumerate(circuit.data)
+            if instruction.operation.name == "measure"
+            and instruction.clbits[0] in post_z_bits | post_x_bits
+        ]
+        logical_measurements = [
+            position
+            for position, instruction in enumerate(circuit.data)
+            if instruction.operation.name == "measure"
+            and instruction.clbits[0] in logical_bits
+        ]
+
+        assert registers["post_transfer_surface_z"].size == (
+            d3t.TRANSFER_SPEC.distance * len(d3t.TRANSFER_SPEC.z_labels)
+        )
+        assert registers["post_transfer_surface_x"].size == (
+            d3t.TRANSFER_SPEC.distance * len(d3t.TRANSFER_SPEC.x_labels)
+        )
+        assert max(post_measurements) < min(logical_measurements)
+
+        measurements = _one_parsed_shot(
+            injected_state="0",
+            include_cultivation=False,
+            include_post_transfer_stabilizer_rounds=True,
+            surface_readout_basis="Z",
+        )
+        assert len(measurements["post_transfer_surface_z_rounds"]) == 3
+        assert len(measurements["post_transfer_surface_x_rounds"]) == 3
+        assert len(
+            measurements["post_transfer_surface_syndrome_delta_history"]
+        ) == 3
 
     def test_top_x_recovery_is_unconditional(self) -> None:
         circuit = d3t.build_steane_to_rotated_d3_lattice_surgery_circuit(
@@ -350,15 +405,15 @@ class TestTransferMeasurementParsing:
 
         assert len(measurements["merged_surface_z_rounds"]) == 3
         assert len(measurements["merged_surface_x_rounds"]) == 3
-        assert len(measurements["merged_surface_syndrome_deltas"]) == 3
-        assert set(measurements["merged_surface_syndrome_deltas"][0]["z"]) == set(
+        assert len(measurements["merged_surface_syndrome_delta_history"]) == 3
+        assert set(measurements["merged_surface_syndrome_delta_history"][0]["z"]) == set(
             d3t.TRANSFER_SPEC.z_labels
         )
         assert all(
             bit == 0
-            for deltas in measurements["merged_surface_syndrome_deltas"]
+            for delta_layer in measurements["merged_surface_syndrome_delta_history"]
             for basis in ("z", "x")
-            for bit in deltas[basis].values()
+            for bit in delta_layer[basis].values()
         )
 
     def test_merged_interval_surface_syndrome_schedule_is_explicit(self) -> None:
@@ -393,15 +448,15 @@ class TestTransferMeasurementParsing:
             surface_readout_basis=None,
         )
 
-        deltas = measurements["merged_surface_syndrome_deltas"]
-        z_delta_count = sum(len(layer["z"]) for layer in deltas)
-        x_delta_count = sum(len(layer["x"]) for layer in deltas)
+        delta_history = measurements["merged_surface_syndrome_delta_history"]
+        z_delta_count = sum(len(layer["z"]) for layer in delta_history)
+        x_delta_count = sum(len(layer["x"]) for layer in delta_history)
 
         # Three known-X detector layers plus three Z change-detector layers.
         assert x_delta_count == 3 * len(d3t.TRANSFER_SPEC.merged_x_labels)
         assert z_delta_count == 3 * len(d3t.TRANSFER_SPEC.z_labels)
         assert x_delta_count + z_delta_count == 21
-        assert set(deltas[0]["z"]) == set(d3t.TRANSFER_SPEC.z_labels)
+        assert set(delta_history[0]["z"]) == set(d3t.TRANSFER_SPEC.z_labels)
 
     def test_parser_rejects_register_chunks_with_wrong_width(self) -> None:
         with pytest.raises(ValueError, match="labels"):
@@ -500,10 +555,12 @@ class TestLogicalTransferCorrectness:
             surface_readout_basis=None,
         )
         measurements["merged_surface_x_rounds"][1]["X_bcef"] ^= 1
-        measurements["merged_surface_syndrome_deltas"] = analysis.merged_surface_syndrome_deltas(
-            measurements,
-            merged_surface_z_labels=d3t.TRANSFER_SPEC.z_labels,
-            merged_surface_x_labels=d3t.TRANSFER_SPEC.merged_x_labels,
+        measurements["merged_surface_syndrome_delta_history"] = (
+            analysis.merged_surface_syndrome_delta_history(
+                measurements,
+                merged_surface_z_labels=d3t.TRANSFER_SPEC.z_labels,
+                merged_surface_x_labels=d3t.TRANSFER_SPEC.merged_x_labels,
+            )
         )
 
         recovery = analysis.merged_surface_qec_recovery(

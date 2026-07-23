@@ -31,6 +31,10 @@ def _one_parsed_shot(**circuit_kwargs):
     build_kwargs = {"include_cultivation": False, **circuit_kwargs}
     parse_kwargs = {
         "include_cultivation": build_kwargs.get("include_cultivation", False),
+        "include_post_transfer_stabilizer_rounds": build_kwargs.get(
+            "include_post_transfer_stabilizer_rounds",
+            False,
+        ),
         "surface_readout_basis": build_kwargs.get("surface_readout_basis"),
     }
     circuit = d5t.build_steane_to_rotated_d5_lattice_surgery_circuit(
@@ -168,8 +172,45 @@ class TestD5TransferCircuitLayout:
             add_barriers=False,
         )
 
-        assert "surface_post_z" not in {register.name for register in circuit.cregs}
-        assert "surface_post_x" not in {register.name for register in circuit.cregs}
+        assert "post_transfer_surface_z" not in {
+            register.name for register in circuit.cregs
+        }
+        assert "post_transfer_surface_x" not in {
+            register.name for register in circuit.cregs
+        }
+
+    def test_optional_post_transfer_stage_allocates_five_full_rounds(self) -> None:
+        circuit = d5t.build_steane_to_rotated_d5_lattice_surgery_circuit(
+            injected_state="0",
+            include_cultivation=False,
+            include_post_transfer_stabilizer_rounds=True,
+            surface_readout_basis="X",
+            add_barriers=False,
+        )
+        registers = {register.name: register for register in circuit.cregs}
+        post_z_bits = set(registers["post_transfer_surface_z"])
+        post_x_bits = set(registers["post_transfer_surface_x"])
+        logical_bits = set(registers["surface_logical_x"])
+        post_measurements = [
+            position
+            for position, instruction in enumerate(circuit.data)
+            if instruction.operation.name == "measure"
+            and instruction.clbits[0] in post_z_bits | post_x_bits
+        ]
+        logical_measurements = [
+            position
+            for position, instruction in enumerate(circuit.data)
+            if instruction.operation.name == "measure"
+            and instruction.clbits[0] in logical_bits
+        ]
+
+        assert registers["post_transfer_surface_z"].size == (
+            d5t.TRANSFER_SPEC.distance * len(d5t.TRANSFER_SPEC.z_labels)
+        )
+        assert registers["post_transfer_surface_x"].size == (
+            d5t.TRANSFER_SPEC.distance * len(d5t.TRANSFER_SPEC.x_labels)
+        )
+        assert max(post_measurements) < min(logical_measurements)
 
     def test_top_x_recovery_is_unconditional(self) -> None:
         circuit = d5t.build_steane_to_rotated_d5_lattice_surgery_circuit(
@@ -294,15 +335,15 @@ class TestD5TransferMeasurementParsing:
 
         assert len(measurements["merged_surface_z_rounds"]) == 3
         assert len(measurements["merged_surface_x_rounds"]) == 3
-        assert len(measurements["merged_surface_syndrome_deltas"]) == 3
-        assert set(measurements["merged_surface_syndrome_deltas"][0]["z"]) == set(
+        assert len(measurements["merged_surface_syndrome_delta_history"]) == 3
+        assert set(measurements["merged_surface_syndrome_delta_history"][0]["z"]) == set(
             d5t.TRANSFER_SPEC.z_labels
         )
         assert all(
             bit == 0
-            for deltas in measurements["merged_surface_syndrome_deltas"]
+            for delta_layer in measurements["merged_surface_syndrome_delta_history"]
             for basis in ("z", "x")
-            for bit in deltas[basis].values()
+            for bit in delta_layer[basis].values()
         )
 
     def test_surface_delta_history_has_papers_66_merge_detectors(self) -> None:
@@ -311,16 +352,16 @@ class TestD5TransferMeasurementParsing:
             surface_readout_basis=None,
         )
 
-        deltas = measurements["merged_surface_syndrome_deltas"]
-        z_delta_count = sum(len(layer["z"]) for layer in deltas)
-        x_delta_count = sum(len(layer["x"]) for layer in deltas)
+        delta_history = measurements["merged_surface_syndrome_delta_history"]
+        z_delta_count = sum(len(layer["z"]) for layer in delta_history)
+        x_delta_count = sum(len(layer["x"]) for layer in delta_history)
 
         # The pre-merge |+_L> initialization supplies the Z reference, so all
         # three merged rounds contribute both compatible-X and Z detectors.
         assert x_delta_count == 3 * len(d5t.TRANSFER_SPEC.merged_x_labels)
         assert z_delta_count == 3 * len(d5t.TRANSFER_SPEC.z_labels)
         assert x_delta_count + z_delta_count == 66
-        assert set(deltas[0]["z"]) == set(d5t.TRANSFER_SPEC.z_labels)
+        assert set(delta_history[0]["z"]) == set(d5t.TRANSFER_SPEC.z_labels)
 
     def test_restored_top_x_checks_complete_post_transfer_stabilizer_frame(
         self,

@@ -34,6 +34,7 @@ MERGED_BOUNDARY_CHECKS: tuple[common.MergedBoundaryCheck, ...] = (
 
 TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
     name="rotated d3",
+    distance=3,
     surface_order=tuple(d3.SURFACE_ORDER),
     logical_x=tuple(d3.DEFAULT_LOGICAL_X),
     logical_z=tuple(d3.DEFAULT_LOGICAL_Z),
@@ -45,6 +46,7 @@ TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
         prepare_product_plus=d3.prepare_product_plus,
         append_z_stabilizer_measurements=d3.append_z_stabilizer_measurements,
         append_x_stabilizer_measurements=d3.append_x_stabilizer_measurements,
+        append_stabilizer_round=d3.append_stabilizer_round,
         append_logical_measurement=d3.append_logical_measurement,
     ),
 )
@@ -54,6 +56,7 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     *,
     injected_state: InjectedStateName | tuple[complex, complex] = "T",
     include_cultivation: bool = True,
+    include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
@@ -81,6 +84,9 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
         Whether to append the logical-H_XY cultivation projection and its
         postselection measurements. Disable this only for transfer tests or an
         input that has already been cultivated.
+    include_post_transfer_stabilizer_rounds
+        Whether to append three full d3 surface-stabilizer rounds after the
+        transfer and before any logical readout.
     surface_readout_basis
         Optional ``"X"`` or ``"Z"`` basis for a destructive analysis
         measurement of the standard d3 logical support after top-edge
@@ -100,13 +106,16 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     The d3 boundary is an adaptation for compact simulation and testing; the
     paper explicitly depicts the d5 target. Full protocol-stage semantics,
     including the three temporal syndrome-extraction rounds and intentional
-    omission of post-transfer QEC, are documented by
-    ``common.build_lattice_surgery_circuit``.
+    optional fixed-patch continuation, are documented by
+    ``common.append_lattice_surgery_circuit``.
     """
-    return common.build_lattice_surgery_circuit(
+    return common.append_lattice_surgery_circuit(
         TRANSFER_SPEC,
         injected_state=injected_state,
         include_cultivation=include_cultivation,
+        include_post_transfer_stabilizer_rounds=(
+            include_post_transfer_stabilizer_rounds
+        ),
         surface_readout_basis=surface_readout_basis,
         add_barriers=add_barriers,
     )
@@ -116,6 +125,7 @@ def parse_transfer_measurements(
     bitstring: str,
     *,
     include_cultivation: bool = True,
+    include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
 ) -> dict[str, object]:
     """Parse one d3 transfer count key into labeled protocol fields."""
@@ -123,5 +133,8 @@ def parse_transfer_measurements(
         bitstring,
         spec=TRANSFER_SPEC,
         include_cultivation=include_cultivation,
+        include_post_transfer_stabilizer_rounds=(
+            include_post_transfer_stabilizer_rounds
+        ),
         surface_readout_basis=surface_readout_basis,
     )
