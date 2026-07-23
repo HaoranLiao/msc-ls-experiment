@@ -30,7 +30,7 @@ from magic_state_cultivation.steane_code.state_injection_qiskit import (
     append_patch_steane_state_injection_encoder,
     append_patch_steane_state_injection_encoder_crumble_sequences,
     append_stabilizer_measurement,
-    build_steane_state_injection_encoder,
+    append_steane_state_injection_encoder,
 )
 from magic_state_cultivation.utils.circuit import (
     ibm_backend,
@@ -104,7 +104,13 @@ def _measure_logical_expectation_destructive(
     support: tuple[int, ...],
 ) -> float:
     """Encode |state_L⟩ and compute ⟨basis_L⟩ via statevector simulator."""
-    encoder = build_steane_state_injection_encoder(injected_state=state, add_barriers=False)
+    encoder = QuantumCircuit(NUM_DATA_QUBITS)
+    append_steane_state_injection_encoder(
+        encoder,
+        data_qubits=list(range(NUM_DATA_QUBITS)),
+        injected_state=state,
+        add_barriers=False,
+    )
     encoder.save_expectation_value(
         SparsePauliOp(_logical_pauli_label(support, basis, NUM_DATA_QUBITS)),
         list(range(NUM_DATA_QUBITS)),
@@ -153,11 +159,14 @@ def _measure_logical_expectation_non_destructive(
     append_logical_measurement, and compute ⟨Z⟩ on the ancilla via
     save_expectation_value.
     """
-    encoder = build_steane_state_injection_encoder(injected_state=state, add_barriers=False)
-
     # 7 data + 1 ancilla + 1 classical bit.
     circuit = QuantumCircuit(NUM_DATA_QUBITS + 1, 1)
-    circuit.compose(encoder, qubits=list(range(NUM_DATA_QUBITS)), inplace=True)
+    append_steane_state_injection_encoder(
+        circuit,
+        data_qubits=list(range(NUM_DATA_QUBITS)),
+        injected_state=state,
+        add_barriers=False,
+    )
 
     anc = NUM_DATA_QUBITS
     append_logical_measurement(
@@ -213,11 +222,14 @@ def test_logical_x_via_measurement_circuit(state: InjectedStateName) -> None:
 def test_all_stabilizers_plus_one(state: InjectedStateName) -> None:
     """Verify all 6 syndrome ancillas give ⟨Z⟩ = +1 using append_stabilizer_measurement."""
 
-    encoder = build_steane_state_injection_encoder(injected_state=state, add_barriers=False)
-
     n_ancilla = 6
     circuit = QuantumCircuit(NUM_DATA_QUBITS + n_ancilla, n_ancilla)
-    circuit.compose(encoder, qubits=list(range(NUM_DATA_QUBITS)), inplace=True)
+    append_steane_state_injection_encoder(
+        circuit,
+        data_qubits=list(range(NUM_DATA_QUBITS)),
+        injected_state=state,
+        add_barriers=False,
+    )
 
     append_stabilizer_measurement(
         circuit,
@@ -923,3 +935,71 @@ def test_patch_crumble_encoder_two_qubit_depth_preserved_on_ibm_miami() -> None:
         f"after transpilation to ibm_miami — expected no increase for a "
         f"nearest-neighbor schedule on a square-lattice device"
     )
+
+# ============================================================================
+# Other tests
+# ============================================================================
+
+@pytest.mark.parametrize(
+    ("angle", "equivalent_state"),
+    [
+        (0.0, "+"),
+        (math.pi / 4, "T"),
+        (math.pi / 2, "Y+"),
+        (-math.pi / 4, "Tdg"),
+        (-math.pi / 2, "Y-"),
+        (math.pi, "-"),
+    ],
+)
+def test_patch_injection_azimuth_angle_matches_named_state(
+    angle: float, equivalent_state: InjectedStateName
+) -> None:
+    """injection_azimuth_angle=θ injects Rz(θ)|+⟩, matching the equivalent named state.
+
+    Rz(θ)|+⟩ = (|0⟩ + e^{iθ}|1⟩)/√2 sweeps the equator (XY plane): Rz(0)|+⟩=|+⟩,
+    Rz(π/4)|+⟩=|T⟩, Rz(π/2)|+⟩=|Y+⟩, Rz(-π/4)|+⟩=|Tdg⟩, Rz(-π/2)|+⟩=|Y-⟩, and
+    Rz(π)|+⟩=|-⟩, so the encoded 11-site state must be identical (up to global
+    phase) to the corresponding named injection.
+
+    The Crumble and abstract encoders both prepare the unique Steane codeword for
+    the injected state, so all four encoded statevectors (angle/named × patch_crumble/
+    patch_abstract) must agree up to global phase.
+    """
+
+    def _encode(encoder, *, injected_state=None, injection_azimuth_angle=None) -> Statevector:
+        circuit = QuantumCircuit(NUM_PATCH_QUBITS)
+        encoder(
+            circuit,
+            patch_qubits=list(range(NUM_PATCH_QUBITS)),
+            injected_state=injected_state,
+            injection_azimuth_angle=injection_azimuth_angle,
+            add_barriers=False,
+        )
+        return Statevector(circuit)
+
+    statevectors = {
+        "crumble_angle": _encode(
+            append_patch_steane_state_injection_encoder_crumble_sequences,
+            injection_azimuth_angle=angle,
+        ),
+        "crumble_named": _encode(
+            append_patch_steane_state_injection_encoder_crumble_sequences,
+            injected_state=equivalent_state,
+        ),
+        "abstract_angle": _encode(
+            append_patch_steane_state_injection_encoder,
+            injection_azimuth_angle=angle,
+        ),
+        "abstract_named": _encode(
+            append_patch_steane_state_injection_encoder,
+            injected_state=equivalent_state,
+        ),
+    }
+
+    reference_name, reference_sv = next(iter(statevectors.items()))
+    for name, sv in statevectors.items():
+        assert reference_sv.equiv(sv), (
+            f"{name} statevector disagrees with {reference_name}: "
+            f"injection_azimuth_angle={angle} should encode the same state as "
+            f"injected_state={equivalent_state!r} for both encoders"
+        )

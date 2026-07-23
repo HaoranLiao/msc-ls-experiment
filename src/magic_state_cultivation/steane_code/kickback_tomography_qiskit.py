@@ -179,8 +179,9 @@ def _final_stabilizer_bit_count(mode: FinalStabilizerMode) -> int:
 
 
 def build_kickback_tomography_experiment(
-    injected_state: InjectedStateName = "T",
+    injected_state: InjectedStateName | None = None,
     *,
+    injection_azimuth_angle: float | None = None,
     include_preparation_cultivation: bool = True,
     qec_cycle_indices: Iterable[int] = KT_DEFAULT_QEC_CYCLE_INDICES,
     final_stabilizer_basis: FinalStabilizerMode = "x",
@@ -204,8 +205,17 @@ def build_kickback_tomography_experiment(
     Fig. 3. ``"z"`` selects the equivalent CSS basis, ``"both"`` measures all
     six stabilizers, and ``"none"`` omits the final check.
 
+    When ``injection_azimuth_angle`` is given, inject ``Rz(injection_azimuth_angle)|+⟩`` instead
+    of the named ``injected_state`` — an equatorial state sweep where
+    ``angle=π/4`` reproduces ``|T⟩``.
+
     Every cultivation and KT round measures ``H_XY = (X + Y) / sqrt(2)``.
     """
+
+    if injected_state is not None and injection_azimuth_angle is not None:
+        raise ValueError(
+            "injected_state and injection_azimuth_angle are mutually exclusive; supply at most one."
+        )
 
     qec_indices = _normalise_qec_cycle_indices(qec_cycle_indices)
 
@@ -239,6 +249,7 @@ def build_kickback_tomography_experiment(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
+        injection_azimuth_angle=injection_azimuth_angle,
         add_barriers=add_barriers,
     )
 
