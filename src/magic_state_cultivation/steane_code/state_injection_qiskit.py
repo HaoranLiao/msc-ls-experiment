@@ -648,6 +648,7 @@ def append_patch_stabilizer_measurement(
     patch_qubits: Sequence,
     classical_bits: Sequence,
     basis: PatchStabilizerBasis = "both",
+    stabilizer_indices: Sequence[int] | None = None,
     add_barriers: bool = True,
 ) -> None:
     """Append non-destructive stabilizer measurements on the 11-site patch.
@@ -663,12 +664,17 @@ def append_patch_stabilizer_measurement(
     patch_qubits
         Eleven qubits indexed by the 11-site patch labels.
     classical_bits
-        Three classical bits for one stabilizer basis or six for ``"both"``.
-        In ``"both"`` mode, bits 0–2 hold X-stabilizer outcomes and bits 3–5
-        hold Z-stabilizer outcomes.
+        One bit per selected stabilizer for a single basis, or two bits per
+        selected stabilizer for ``"both"``. In ``"both"`` mode, the first
+        group holds X-stabilizer outcomes and the second holds Z-stabilizer
+        outcomes.
     basis
         Stabilizer basis to measure. The default ``"both"`` preserves the
         original full-syndrome behavior.
+    stabilizer_indices
+        Ordered subset of the three patch stabilizers to measure. ``None``
+        measures all three in canonical order. This selection changes neither
+        the stabilizer supports nor their associated helper ancillas.
     add_barriers
         Whether to insert a barrier between X and Z stabilizer rounds.
     """
@@ -677,37 +683,56 @@ def append_patch_stabilizer_measurement(
     if basis not in {"x", "z", "both"}:
         raise ValueError("basis must be 'x', 'z', or 'both'.")
 
-    required_bits = 6 if basis == "both" else 3
+    if stabilizer_indices is None:
+        selected_indices = tuple(range(len(PATCH_X_STABILIZERS)))
+    else:
+        selected_indices = tuple(stabilizer_indices)
+    if not selected_indices:
+        raise ValueError("stabilizer_indices must select at least one stabilizer.")
+    if len(set(selected_indices)) != len(selected_indices) or any(
+        not 0 <= index < len(PATCH_X_STABILIZERS) for index in selected_indices
+    ):
+        raise ValueError("stabilizer_indices must contain distinct indices in [0, 2].")
+
+    required_bits = len(selected_indices) * (2 if basis == "both" else 1)
     if len(classical_bits) < required_bits:
         raise ValueError(f"classical_bits must contain at least {required_bits} bits.")
 
     pq = list(patch_qubits)
     cb = list(classical_bits)
     anc_sites = PATCH_STABILIZER_ANCILLA_SITES
+    selected_ancilla_sites = tuple(anc_sites[index] for index in selected_indices)
 
     if basis in {"x", "both"}:
         # X-stabilizer measurement: ancilla in |+⟩, CX(anc→data), H, measure.
-        for site in anc_sites:
+        for site in selected_ancilla_sites:
             circuit.reset(pq[site])
-        for i, support in enumerate(PATCH_X_STABILIZERS):
-            circuit.h(pq[anc_sites[i]])
+        for output_index, stabilizer_index in enumerate(selected_indices):
+            ancilla_site = anc_sites[stabilizer_index]
+            support = PATCH_X_STABILIZERS[stabilizer_index]
+            circuit.h(pq[ancilla_site])
             for site in support:
-                circuit.cx(pq[anc_sites[i]], pq[site])
-            circuit.h(pq[anc_sites[i]])
-            circuit.measure(pq[anc_sites[i]], cb[i])
+                circuit.cx(pq[ancilla_site], pq[site])
+            circuit.h(pq[ancilla_site])
+            circuit.measure(pq[ancilla_site], cb[output_index])
 
     if basis == "both" and add_barriers:
         circuit.barrier()
 
     if basis in {"z", "both"}:
         # Z-stabilizer measurement: ancilla in |0⟩, CX(data→anc), measure.
-        for site in anc_sites:
+        for site in selected_ancilla_sites:
             circuit.reset(pq[site])
-        classical_offset = 3 if basis == "both" else 0
-        for i, support in enumerate(PATCH_Z_STABILIZERS):
+        classical_offset = len(selected_indices) if basis == "both" else 0
+        for output_index, stabilizer_index in enumerate(selected_indices):
+            ancilla_site = anc_sites[stabilizer_index]
+            support = PATCH_Z_STABILIZERS[stabilizer_index]
             for site in support:
-                circuit.cx(pq[site], pq[anc_sites[i]])
-            circuit.measure(pq[anc_sites[i]], cb[classical_offset + i])
+                circuit.cx(pq[site], pq[ancilla_site])
+            circuit.measure(
+                pq[ancilla_site],
+                cb[classical_offset + output_index],
+            )
 
 
 # ---------------------------------------------------------------------------

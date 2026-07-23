@@ -611,6 +611,35 @@ def test_patch_single_basis_stabilizer_measurement(basis: str) -> None:
     assert counts == {"000": 1}
 
 
+@pytest.mark.parametrize("basis", ["x", "z"])
+def test_patch_selected_stabilizer_measurement(basis: str) -> None:
+    """The patch helper measures only the requested ordered stabilizer subset."""
+
+    circuit = QuantumCircuit(NUM_PATCH_QUBITS, 2)
+    append_patch_steane_state_injection_encoder_crumble_sequences(
+        circuit,
+        patch_qubits=list(range(NUM_PATCH_QUBITS)),
+        injected_state="Ty",
+        add_barriers=False,
+    )
+    measurement_start = len(circuit.data)
+    append_patch_stabilizer_measurement(
+        circuit,
+        patch_qubits=list(range(NUM_PATCH_QUBITS)),
+        classical_bits=list(range(2)),
+        basis=basis,
+        stabilizer_indices=(0, 2),
+        add_barriers=False,
+    )
+
+    appended_instructions = circuit.data[measurement_start:]
+    assert all(circuit.qubits[6] not in instruction.qubits for instruction in appended_instructions)
+    assert sum(
+        instruction.operation.name == "measure" for instruction in appended_instructions
+    ) == 2
+    assert AerSimulator().run(circuit, shots=1).result().get_counts() == {"00": 1}
+
+
 @pytest.mark.parametrize("encoder", PATCH_ENCODERS)
 @pytest.mark.parametrize("state", ALL_STATES)
 def test_patch_stabilizer_expectation_values(state: InjectedStateName, encoder: str) -> None:
