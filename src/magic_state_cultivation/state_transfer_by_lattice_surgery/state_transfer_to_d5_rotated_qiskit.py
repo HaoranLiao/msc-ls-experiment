@@ -36,6 +36,7 @@ MERGED_BOUNDARY_CHECKS: tuple[common.MergedBoundaryCheck, ...] = (
 
 TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
     name="rotated d5",
+    distance=5,
     surface_order=tuple(d5.SURFACE_ORDER),
     logical_x=tuple(d5.DEFAULT_LOGICAL_X),
     logical_z=tuple(d5.DEFAULT_LOGICAL_Z),
@@ -44,9 +45,10 @@ TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
     merged_boundary_checks=MERGED_BOUNDARY_CHECKS,
     top_x_recovery_labels=("X_ab", "X_cd"),
     surface_code_operations=common.SurfaceCodeOperations(
-        prepare_plus=d5.prepare_product_plus,
+        prepare_product_plus=d5.prepare_product_plus,
         append_z_stabilizer_measurements=d5.append_z_stabilizer_measurements,
         append_x_stabilizer_measurements=d5.append_x_stabilizer_measurements,
+        append_stabilizer_round=d5.append_stabilizer_round,
         append_logical_measurement=d5.append_logical_measurement,
     ),
 )
@@ -56,6 +58,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     *,
     injected_state: InjectedStateName | tuple[complex, complex] = "T",
     include_cultivation: bool = True,
+    include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
@@ -83,6 +86,9 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
         Whether to append the logical-H_XY cultivation projection and its
         postselection measurements. Disable this only for transfer tests or an
         input that has already been cultivated.
+    include_post_transfer_stabilizer_rounds
+        Whether to append five full d5 surface-stabilizer rounds after the
+        transfer and before any logical readout.
     surface_readout_basis
         Optional ``"X"`` or ``"Z"`` basis for a destructive analysis
         measurement of the standard d5 logical support after top-edge
@@ -98,16 +104,18 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
 
     Notes
     -----
-    The optional terminal readout is an analysis aid and is not part of Figure
-    6. Ordinary post-transfer surface QEC is also intentionally absent; the
-    paper performs later stabilizing rounds after code expansion. Full shared
-    protocol semantics are documented by
-    ``common.build_lattice_surgery_circuit``.
+    The optional fixed-patch stabilizer rounds and terminal readout are analysis
+    aids and are not part of Figure 6. The paper instead performs later
+    stabilizing rounds after code expansion. Full shared protocol semantics are
+    documented by ``common.append_lattice_surgery_circuit``.
     """
-    return common.build_lattice_surgery_circuit(
+    return common.append_lattice_surgery_circuit(
         TRANSFER_SPEC,
         injected_state=injected_state,
         include_cultivation=include_cultivation,
+        include_post_transfer_stabilizer_rounds=(
+            include_post_transfer_stabilizer_rounds
+        ),
         surface_readout_basis=surface_readout_basis,
         add_barriers=add_barriers,
     )
@@ -117,6 +125,7 @@ def parse_transfer_measurements(
     bitstring: str,
     *,
     include_cultivation: bool = True,
+    include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
 ) -> dict[str, object]:
     """Parse one d5 transfer count key into labeled protocol fields."""
@@ -124,5 +133,8 @@ def parse_transfer_measurements(
         bitstring,
         spec=TRANSFER_SPEC,
         include_cultivation=include_cultivation,
+        include_post_transfer_stabilizer_rounds=(
+            include_post_transfer_stabilizer_rounds
+        ),
         surface_readout_basis=surface_readout_basis,
     )

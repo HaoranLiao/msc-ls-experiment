@@ -31,6 +31,7 @@ from magic_state_cultivation.steane_code import (
 from magic_state_cultivation.steane_code import (
     state_injection_qiskit as steane,
 )
+from magic_state_cultivation.surface_code.post_transfer import rotated_post_transfer
 
 SurfaceReadoutBasis = Literal["X", "Z"]
 LATTICE_SURGERY_ROUNDS = 3
@@ -42,12 +43,12 @@ HIRANO_STEANE_GEOMETRIC_ORDER: tuple[str, ...] = ("6", "4", "0", "2", "1", "5", 
 HIRANO_STEANE_LOGICAL_X: tuple[str, ...] = ("1", "4", "6")
 HIRANO_STEANE_LOGICAL_Z: tuple[str, ...] = ("1", "5", "3")
 
-STEANE_LS_VERIFICATION_CHECKS: dict[str, tuple[str, tuple[str, ...]]] = {
-    "Z0145": ("Z", ("0", "1", "4", "5")),
-    "Z0235": ("Z", ("0", "2", "3", "5")),
-    "X0235": ("X", ("0", "2", "3", "5")),
-    "Z0246": ("Z", ("0", "2", "4", "6")),
-    "X0246": ("X", ("0", "2", "4", "6")),
+STEANE_LS_VERIFICATION_STABILIZER_INDICES: dict[str, int] = {
+    "Z0145": 1,
+    "Z0235": 2,
+    "X0235": 2,
+    "Z0246": 0,
+    "X0246": 0,
 }
 STEANE_LS_VERIFICATION_ROUNDS: tuple[tuple[str, ...], ...] = (
     ("Z0145", "Z0235", "X0235", "Z0246", "X0246"),
@@ -58,13 +59,6 @@ STEANE_LS_VERIFICATION_LABELS: tuple[str, ...] = tuple(
     for round_index, round_checks in enumerate(STEANE_LS_VERIFICATION_ROUNDS)
     for check_name in round_checks
 )
-STEANE_LS_VERIFICATION_ANCILLA_HELPER: dict[str, str] = {
-    "Z0145": "h6",
-    "Z0235": "h7",
-    "X0235": "h7",
-    "Z0246": "h2",
-    "X0246": "h2",
-}
 FINAL_X_VERIFICATION_CHECKS: dict[str, tuple[str, ...]] = {
     "X0235": ("0", "2", "3", "5"),
     "X0246": ("0", "2", "4", "6"),
@@ -137,9 +131,10 @@ class SurfaceCodeOperations:
     sites without adding transfer-level wrappers around the surface modules.
     """
 
-    prepare_plus: CircuitAppender
+    prepare_product_plus: CircuitAppender
     append_z_stabilizer_measurements: CircuitAppender
     append_x_stabilizer_measurements: CircuitAppender
+    append_stabilizer_round: CircuitAppender
     append_logical_measurement: CircuitAppender
 
 
@@ -159,6 +154,7 @@ class SurfaceCodeTransferSpec:
     """
 
     name: str
+    distance: int
     surface_order: tuple[str, ...]
     logical_x: tuple[str, ...]
     logical_z: tuple[str, ...]
@@ -249,6 +245,7 @@ def transfer_classical_register_specs(
     *,
     include_cultivation: bool,
     surface_readout_basis: SurfaceReadoutBasis | None,
+    include_post_transfer_stabilizer_rounds: bool = False,
 ) -> list[ClassicalRegisterSpec]:
     """Return the classical registers for the fixed paper transfer sequence."""
     specs: list[ClassicalRegisterSpec] = [
@@ -278,6 +275,25 @@ def transfer_classical_register_specs(
             ClassicalRegisterSpec("surface_x_recovery", spec.top_x_recovery_labels),
         ]
     )
+    if include_post_transfer_stabilizer_rounds:
+        specs.extend(
+            [
+                ClassicalRegisterSpec(
+                    "post_transfer_surface_z",
+                    rotated_post_transfer.repeated_round_labels(
+                        spec.z_labels,
+                        rounds=spec.distance,
+                    ),
+                ),
+                ClassicalRegisterSpec(
+                    "post_transfer_surface_x",
+                    rotated_post_transfer.repeated_round_labels(
+                        spec.x_labels,
+                        rounds=spec.distance,
+                    ),
+                ),
+            ]
+        )
     if surface_readout_basis is not None:
         support = spec.logical_x if surface_readout_basis.upper() == "X" else spec.logical_z
         specs.append(
@@ -381,18 +397,15 @@ def append_steane_lattice_surgery_verification_round(
 
     patch_qubits = hirano_labeled_patch_qubits(registers)
     for check_name, classical_bit in zip(round_checks, classical_bits, strict=True):
-        basis, support = STEANE_LS_VERIFICATION_CHECKS[check_name]
-        helper_label = STEANE_LS_VERIFICATION_ANCILLA_HELPER[check_name]
-        ancilla = registers.steane_helpers[helper_label][0]
-        circuit.reset(ancilla)
-        steane.append_patch_logical_measurement(
+        steane.append_patch_stabilizer_measurement(
             circuit,
-            basis,
             patch_qubits=patch_qubits,
-            support=tuple(HIRANO_LABEL_TO_GOOGLE_SITE[label] for label in support),
-            ancilla_qubit=ancilla,
             classical_bits=[classical_bit],
-            destructive=False,
+            basis=check_name[0].lower(),
+            stabilizer_indices=(
+                STEANE_LS_VERIFICATION_STABILIZER_INDICES[check_name],
+            ),
+            add_barriers=False,
         )
 
     if add_barriers:
@@ -470,15 +483,16 @@ def append_surface_top_x_recovery_measurements(
     )
 
 
-def build_lattice_surgery_circuit(
+def append_lattice_surgery_circuit(
     spec: SurfaceCodeTransferSpec,
     *,
     injected_state: steane.InjectedStateName | tuple[complex, complex] = "T",
     include_cultivation: bool = True,
+    include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
-    """Build the complete observable-level Steane-to-surface transfer circuit.
+    """Append the complete transfer sequence to a newly allocated circuit.
 
     The circuit implements the fixed-patch lattice-surgery sequence from
     Section III A of Hirano et al., specialized by ``spec`` to a rotated d=3
@@ -497,7 +511,8 @@ def build_lattice_surgery_circuit(
        groups are additionally measured in rounds 1 and 2.
     5. Demolish the Steane data in X after round 3 and recover the surface
        top-edge X checks that were withheld during the merge.
-    6. Optionally append a destructive surface logical readout for analysis.
+    6. Optionally append ``distance`` full surface-stabilizer rounds.
+    7. Optionally append a destructive surface logical readout for analysis.
 
     Parameters
     ----------
@@ -513,6 +528,9 @@ def build_lattice_surgery_circuit(
         Whether to append the logical-H_XY projection and its classical
         postselection register. Disable this only for transfer plumbing tests
         or when the input has already been cultivated.
+    include_post_transfer_stabilizer_rounds
+        Whether to append ``spec.distance`` full surface X/Z stabilizer rounds
+        after top-edge recovery and before any logical readout.
     surface_readout_basis
         Optional ``"X"`` or ``"Z"`` analysis basis. ``None`` returns the
         transfer circuit immediately after top-edge recovery, matching the
@@ -527,9 +545,10 @@ def build_lattice_surgery_circuit(
     Returns
     -------
     QuantumCircuit
-        A register-owning Qiskit circuit containing the requested transfer and
-        optional terminal analysis measurement. Its classical registers are
-        described by ``transfer_classical_register_specs`` and interpreted by
+        A register-owning Qiskit circuit containing the requested transfer,
+        optional post-transfer stabilization, and optional terminal analysis
+        measurement. Its classical registers are described by
+        ``transfer_classical_register_specs`` and interpreted by
         ``state_transfer_analysis_qiskit.parse_transfer_measurements``.
 
     Notes
@@ -538,22 +557,27 @@ def build_lattice_surgery_circuit(
     not in-circuit decoding. After circuit execution,
     ``parse_transfer_measurements`` establishes the known X-check preparation
     boundary, uses the pre-merge Z-stabilizer measurements as the Z-check
-    reference, and decodes the resulting detector layers. Its transfer-specific
-    joint decoder combines the repeated merged-boundary records with the three
-    Z-detector layers to distinguish X errors before versus after the final
-    logical parity measurement. Corrections are tracked classically in a Pauli
+    reference, and decodes the resulting surface detector layers with
+    ``TemporalRotatedDecoder``. Repeated merged-boundary changes are strict
+    postselection failures, not decoder input. After demolition, the restored
+    top-edge X values complete the surface stabilizer reference for future
+    fixed-patch continuation. Corrections are tracked classically in a Pauli
     frame rather than applied as physical gates.
 
     Commuting measurements assigned to one merged round are serialized here
-    for readability. This builder does not reproduce the paper's hardware-level
-    superdense gate interleaving, circuit-level detector error model, later
-    code expansion, or post-expansion surface-code stabilization rounds.
+    for readability. This appender does not reproduce the paper's hardware-level
+    superdense gate interleaving, circuit-level detector error model, or later
+    code expansion. Optional fixed-patch stabilization is delegated to
+    ``surface_code.post_transfer.rotated_post_transfer``.
     """
     qregs = build_transfer_qregs(spec)
     classical_specs = transfer_classical_register_specs(
         spec,
         include_cultivation=include_cultivation,
         surface_readout_basis=surface_readout_basis,
+        include_post_transfer_stabilizer_rounds=(
+            include_post_transfer_stabilizer_rounds
+        ),
     )
     cregs = {
         register_spec.name: ClassicalRegister(len(register_spec.labels), register_spec.name)
@@ -592,7 +616,7 @@ def build_lattice_surgery_circuit(
     # check to +1; measuring every Z stabilizer projects into the surface-code
     # space and establishes the Z reference before lattice surgery begins.
     surface_qubits = surface_data_qubits(qregs, spec.surface_order)
-    spec.surface_code_operations.prepare_plus(
+    spec.surface_code_operations.prepare_product_plus(
         circuit,
         qubits=surface_qubits,
         add_barriers=add_barriers,
@@ -671,21 +695,42 @@ def build_lattice_surgery_circuit(
         add_barriers=add_barriers,
     )
 
-    if surface_readout_basis is None:
-        return circuit
-
-    normalized_basis = surface_readout_basis.upper()
-    readout_register_name = f"surface_logical_{surface_readout_basis.lower()}"
-    support = spec.logical_x if normalized_basis == "X" else spec.logical_z
-
-    spec.surface_code_operations.append_logical_measurement(
+    rotated_post_transfer.append_rotated_post_transfer(
         circuit,
-        normalized_basis,
         surface_qubits=surface_data_qubits(qregs, spec.surface_order),
-        support=support,
-        classical_bits=list(cregs[readout_register_name]),
-        destructive=True,
+        z_ancillas=[
+            qregs.surface_z_ancillas[label.lower()][0] for label in spec.z_labels
+        ],
+        x_ancillas=[
+            qregs.surface_x_ancillas[label.lower()][0] for label in spec.x_labels
+        ],
+        z_classical_bits=(
+            list(cregs["post_transfer_surface_z"])
+            if include_post_transfer_stabilizer_rounds
+            else ()
+        ),
+        x_classical_bits=(
+            list(cregs["post_transfer_surface_x"])
+            if include_post_transfer_stabilizer_rounds
+            else ()
+        ),
+        stabilizer_rounds=(
+            spec.distance if include_post_transfer_stabilizer_rounds else 0
+        ),
+        append_stabilizer_round=(
+            spec.surface_code_operations.append_stabilizer_round
+        ),
+        logical_readout_basis=surface_readout_basis,
+        logical_x=spec.logical_x,
+        logical_z=spec.logical_z,
+        logical_classical_bits=(
+            list(cregs[f"surface_logical_{surface_readout_basis.lower()}"])
+            if surface_readout_basis is not None
+            else ()
+        ),
+        append_logical_measurement=(
+            spec.surface_code_operations.append_logical_measurement
+        ),
+        add_barriers=add_barriers,
     )
-    if add_barriers:
-        circuit.barrier(label=f"destructive logical {normalized_basis}_{''.join(support)}")
     return circuit
