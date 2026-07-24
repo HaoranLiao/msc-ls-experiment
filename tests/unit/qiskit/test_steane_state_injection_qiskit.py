@@ -45,22 +45,22 @@ TOLERANCE = 1e-10
 
 def _expected_logical_expectation_values(
     state: InjectedStateName,
-) -> tuple[float, float]:
-    """Return (⟨Z_L⟩, ⟨X_L⟩) for the given injected state."""
+) -> tuple[float, float, float]:
+    """Return (⟨Z_L⟩, ⟨X_L⟩, ⟨Y_L⟩) for the given injected state."""
     inv_sqrt2 = 1.0 / math.sqrt(2)
-    expectations: dict[str, tuple[float, float]] = {
-        "0": (1.0, 0.0),
-        "1": (-1.0, 0.0),
-        "+": (0.0, 1.0),
-        "-": (0.0, -1.0),
-        "i": (0.0, 0.0),
-        "-i": (0.0, 0.0),
-        "Y+": (0.0, 0.0),
-        "Y-": (0.0, 0.0),
-        "S": (0.0, 0.0),
-        "T": (0.0, inv_sqrt2),
-        "Tdg": (0.0, inv_sqrt2),
-        "Ty": (inv_sqrt2, inv_sqrt2),
+    expectations: dict[str, tuple[float, float, float]] = {
+        "0": (1.0, 0.0, 0.0),
+        "1": (-1.0, 0.0, 0.0),
+        "+": (0.0, 1.0, 0.0),
+        "-": (0.0, -1.0, 0.0),
+        "i": (0.0, 0.0, 1.0),
+        "-i": (0.0, 0.0, -1.0),
+        "Y+": (0.0, 0.0, 1.0),
+        "Y-": (0.0, 0.0, -1.0),
+        "S": (0.0, 0.0, 1.0),
+        "T": (0.0, inv_sqrt2, inv_sqrt2),
+        "Tdg": (0.0, inv_sqrt2, -inv_sqrt2),
+        "Ty": (inv_sqrt2, inv_sqrt2, 0.0),
     }
     return expectations[state]
 
@@ -80,7 +80,6 @@ ALL_STATES: list[InjectedStateName] = [
     "Ty",
 ]
 
-
 # --------------------------------------
 # Destructive logical expectation values
 # --------------------------------------
@@ -98,6 +97,20 @@ def _logical_pauli_label(support: tuple[int, ...], pauli: str, n_qubits: int) ->
     return "".join(reversed(chars))
 
 
+def _logical_pauli_observable(
+    support: tuple[int, ...],
+    pauli: str,
+    n_qubits: int,
+) -> SparsePauliOp:
+    """Build the signed logical Pauli observable on a Steane support."""
+    observable = SparsePauliOp(_logical_pauli_label(support, pauli, n_qubits))
+    if pauli == "Y" and len(support) % 4 == 3:
+        # For Y_L = i X_L Z_L on a weight-3 common X/Z support,
+        # Y_L = -prod(Y_j).
+        observable = -observable
+    return observable
+
+
 def _measure_logical_expectation_destructive(
     state: InjectedStateName,
     basis: str,
@@ -112,7 +125,7 @@ def _measure_logical_expectation_destructive(
         add_barriers=False,
     )
     encoder.save_expectation_value(
-        SparsePauliOp(_logical_pauli_label(support, basis, NUM_DATA_QUBITS)),
+        _logical_pauli_observable(support, basis, NUM_DATA_QUBITS),
         list(range(NUM_DATA_QUBITS)),
         label="ev",
     )
@@ -125,7 +138,7 @@ def _measure_logical_expectation_destructive(
 @pytest.mark.parametrize("state", ALL_STATES)
 def test_logical_z_expectation(state: InjectedStateName) -> None:
     """Verify ⟨Z_L⟩ matches the expected value for all weight-3 representatives."""
-    expected_z, _ = _expected_logical_expectation_values(state)
+    expected_z, _, _ = _expected_logical_expectation_values(state)
     for rep in LOGICAL_Z_REPRESENTATIVES:
         measured_z = _measure_logical_expectation_destructive(state, "Z", support=rep)
         assert measured_z == pytest.approx(expected_z, abs=TOLERANCE), (
@@ -136,11 +149,22 @@ def test_logical_z_expectation(state: InjectedStateName) -> None:
 @pytest.mark.parametrize("state", ALL_STATES)
 def test_logical_x_expectation(state: InjectedStateName) -> None:
     """Verify ⟨X_L⟩ matches the expected value for all weight-3 representatives."""
-    _, expected_x = _expected_logical_expectation_values(state)
+    _, expected_x, _ = _expected_logical_expectation_values(state)
     for rep in LOGICAL_X_REPRESENTATIVES:
         measured_x = _measure_logical_expectation_destructive(state, "X", support=rep)
         assert measured_x == pytest.approx(expected_x, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: ⟨X_L⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
+        )
+
+
+@pytest.mark.parametrize("state", ALL_STATES)
+def test_logical_y_expectation(state: InjectedStateName) -> None:
+    """Verify ⟨Y_L⟩ matches the expected value for all weight-3 representatives."""
+    _, _, expected_y = _expected_logical_expectation_values(state)
+    for rep in LOGICAL_X_REPRESENTATIVES:
+        measured_y = _measure_logical_expectation_destructive(state, "Y", support=rep)
+        assert measured_y == pytest.approx(expected_y, abs=TOLERANCE), (
+            f"State {state!r}, support {rep}: ⟨Y_L⟩ expected {expected_y:.4f}, got {measured_y:.4f}"
         )
 
 
@@ -179,6 +203,12 @@ def _measure_logical_expectation_non_destructive(
         destructive=False,
     )
 
+    if basis == "Y":
+        # Statevector cannot apply Store, and remove_final_measurements leaves
+        # it behind. Remove it here and apply its sign below.
+        assert circuit.data[-1].operation.name == "store"
+        circuit.data.pop()
+
     # Remove measurements so we can use save_expectation_value.
     circuit.remove_final_measurements(inplace=True)
 
@@ -186,13 +216,14 @@ def _measure_logical_expectation_non_destructive(
 
     simulator = AerSimulator(method="statevector")
     result = simulator.run(circuit).result()
-    return result.data()["ev"].real
+    expectation = result.data()["ev"].real
+    return -expectation if basis == "Y" else expectation
 
 
 @pytest.mark.parametrize("state", ALL_STATES)
 def test_logical_z_via_measurement_circuit(state: InjectedStateName) -> None:
     """Verify ⟨Z_anc⟩ after non-destructive Z_L circuit equals ⟨Z_L⟩ for all representatives."""
-    expected_z, _ = _expected_logical_expectation_values(state)
+    expected_z, _, _ = _expected_logical_expectation_values(state)
     for rep in LOGICAL_Z_REPRESENTATIVES:
         measured_z = _measure_logical_expectation_non_destructive(state, "Z", support=rep)
         assert measured_z == pytest.approx(expected_z, abs=TOLERANCE), (
@@ -204,12 +235,24 @@ def test_logical_z_via_measurement_circuit(state: InjectedStateName) -> None:
 @pytest.mark.parametrize("state", ALL_STATES)
 def test_logical_x_via_measurement_circuit(state: InjectedStateName) -> None:
     """Verify ⟨Z_anc⟩ after non-destructive X_L circuit equals ⟨X_L⟩ for all representatives."""
-    _, expected_x = _expected_logical_expectation_values(state)
+    _, expected_x, _ = _expected_logical_expectation_values(state)
     for rep in LOGICAL_X_REPRESENTATIVES:
         measured_x = _measure_logical_expectation_non_destructive(state, "X", support=rep)
         assert measured_x == pytest.approx(expected_x, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: "
             f"⟨Z_anc⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
+        )
+
+
+@pytest.mark.parametrize("state", ALL_STATES)
+def test_logical_y_via_measurement_circuit(state: InjectedStateName) -> None:
+    """Verify ⟨Z_anc⟩ after non-destructive Y_L circuit equals ⟨Y_L⟩ for all representatives."""
+    _, _, expected_y = _expected_logical_expectation_values(state)
+    for rep in LOGICAL_X_REPRESENTATIVES:
+        measured_y = _measure_logical_expectation_non_destructive(state, "Y", support=rep)
+        assert measured_y == pytest.approx(expected_y, abs=TOLERANCE), (
+            f"State {state!r}, support {rep}: "
+            f"⟨Z_anc⟩ expected {expected_y:.4f}, got {measured_y:.4f}"
         )
 
 
@@ -367,7 +410,7 @@ def _patch_measure_logical_expectation_destructive(
     )
 
     circuit.save_expectation_value(
-        SparsePauliOp(_logical_pauli_label(support, basis, NUM_PATCH_QUBITS)),
+        _logical_pauli_observable(support, basis, NUM_PATCH_QUBITS),
         list(range(NUM_PATCH_QUBITS)),
         label="ev",
     )
@@ -381,7 +424,7 @@ def _patch_measure_logical_expectation_destructive(
 @pytest.mark.parametrize("state", ALL_STATES)
 def test_patch_logical_z_expectation(state: InjectedStateName, encoder: str) -> None:
     """Verify ⟨Z_L⟩ on 11-site patch for all mapped representatives."""
-    expected_z, _ = _expected_logical_expectation_values(state)
+    expected_z, _, _ = _expected_logical_expectation_values(state)
     for rep in PATCH_LOGICAL_Z_REPRESENTATIVES:
         measured_z = _patch_measure_logical_expectation_destructive(
             state,
@@ -398,7 +441,7 @@ def test_patch_logical_z_expectation(state: InjectedStateName, encoder: str) -> 
 @pytest.mark.parametrize("state", ALL_STATES)
 def test_patch_logical_x_expectation(state: InjectedStateName, encoder: str) -> None:
     """Verify ⟨X_L⟩ on 11-site patch for all mapped representatives."""
-    _, expected_x = _expected_logical_expectation_values(state)
+    _, expected_x, _ = _expected_logical_expectation_values(state)
     for rep in PATCH_LOGICAL_X_REPRESENTATIVES:
         measured_x = _patch_measure_logical_expectation_destructive(
             state,
@@ -408,6 +451,23 @@ def test_patch_logical_x_expectation(state: InjectedStateName, encoder: str) -> 
         )
         assert measured_x == pytest.approx(expected_x, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: ⟨X_L⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
+        )
+
+
+@pytest.mark.parametrize("encoder", PATCH_ENCODERS)
+@pytest.mark.parametrize("state", ALL_STATES)
+def test_patch_logical_y_expectation(state: InjectedStateName, encoder: str) -> None:
+    """Verify ⟨Y_L⟩ on 11-site patch for all mapped representatives."""
+    _, _, expected_y = _expected_logical_expectation_values(state)
+    for rep in PATCH_LOGICAL_X_REPRESENTATIVES:
+        measured_y = _patch_measure_logical_expectation_destructive(
+            state,
+            "Y",
+            support=rep,
+            encoder=encoder,
+        )
+        assert measured_y == pytest.approx(expected_y, abs=TOLERANCE), (
+            f"State {state!r}, support {rep}: ⟨Y_L⟩ expected {expected_y:.4f}, got {measured_y:.4f}"
         )
 
 
@@ -445,18 +505,25 @@ def _patch_measure_logical_expectation_non_destructive(
         destructive=False,
     )
 
+    if basis == "Y":
+        # Statevector cannot apply Store, and remove_final_measurements leaves
+        # it behind. Remove it here and apply its sign below.
+        assert circuit.data[-1].operation.name == "store"
+        circuit.data.pop()
+
     # Remove measurements so Statevector can be computed.
     circuit.remove_final_measurements(inplace=True)
 
     sv = Statevector(circuit)
-    return sv.expectation_value(SparsePauliOp("Z"), [anc_qubit]).real
+    expectation = sv.expectation_value(SparsePauliOp("Z"), [anc_qubit]).real
+    return -expectation if basis == "Y" else expectation
 
 
 @pytest.mark.parametrize("encoder", PATCH_ENCODERS)
 @pytest.mark.parametrize("state", ALL_STATES)
 def test_patch_logical_z_via_measurement_circuit(state: InjectedStateName, encoder: str) -> None:
     """Verify ⟨Z_anc⟩ after non-destructive Z_L on patch for all representatives."""
-    expected_z, _ = _expected_logical_expectation_values(state)
+    expected_z, _, _ = _expected_logical_expectation_values(state)
     for rep in PATCH_LOGICAL_Z_REPRESENTATIVES:
         measured_z = _patch_measure_logical_expectation_non_destructive(
             state,
@@ -474,7 +541,7 @@ def test_patch_logical_z_via_measurement_circuit(state: InjectedStateName, encod
 @pytest.mark.parametrize("state", ALL_STATES)
 def test_patch_logical_x_via_measurement_circuit(state: InjectedStateName, encoder: str) -> None:
     """Verify ⟨Z_anc⟩ after non-destructive X_L on patch for all representatives."""
-    _, expected_x = _expected_logical_expectation_values(state)
+    _, expected_x, _ = _expected_logical_expectation_values(state)
     for rep in PATCH_LOGICAL_X_REPRESENTATIVES:
         measured_x = _patch_measure_logical_expectation_non_destructive(
             state,
@@ -485,6 +552,27 @@ def test_patch_logical_x_via_measurement_circuit(state: InjectedStateName, encod
         assert measured_x == pytest.approx(expected_x, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: "
             f"⟨Z_anc⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
+        )
+
+
+@pytest.mark.parametrize("encoder", PATCH_ENCODERS)
+@pytest.mark.parametrize("state", ALL_STATES)
+def test_patch_logical_y_via_measurement_circuit(
+    state: InjectedStateName,
+    encoder: str,
+) -> None:
+    """Verify ⟨Z_anc⟩ after non-destructive Y_L on patch for all representatives."""
+    _, _, expected_y = _expected_logical_expectation_values(state)
+    for rep in PATCH_LOGICAL_X_REPRESENTATIVES:
+        measured_y = _patch_measure_logical_expectation_non_destructive(
+            state,
+            "Y",
+            support=rep,
+            encoder=encoder,
+        )
+        assert measured_y == pytest.approx(expected_y, abs=TOLERANCE), (
+            f"State {state!r}, support {rep}: "
+            f"⟨Z_anc⟩ expected {expected_y:.4f}, got {measured_y:.4f}"
         )
 
 

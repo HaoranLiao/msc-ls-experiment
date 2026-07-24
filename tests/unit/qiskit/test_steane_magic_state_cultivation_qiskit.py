@@ -195,7 +195,7 @@ class TestPostselectedLogicalExpectation:
     """Postselection projects onto the logical H_XY +1 state."""
 
     @pytest.mark.parametrize("state", CULTIVATION_TEST_STATES)
-    @pytest.mark.parametrize("basis", ["Z", "X"])
+    @pytest.mark.parametrize("basis", ["Z", "X", "Y"])
     def test_expectation_matches_t_state(self, state: InjectedStateName, basis: str) -> None:
         """Accepted shots have the logical Pauli expectations of T|+⟩."""
         circuit = _build_cultivation_with_logical_measurement(state, basis)
@@ -208,7 +208,7 @@ class TestPostselectedLogicalExpectation:
         assert n_accepted > 0, f"No accepted shots for state={state!r}, basis={basis}"
 
         # Statistical tolerance: ~4σ where σ = sqrt((1 - ev²) / n_accepted).
-        # For T|+⟩, ⟨Z_L⟩ = 0 and ⟨X_L⟩ = 1/√2.
+        # For T|+⟩, ⟨Z_L⟩ = 0 and ⟨X_L⟩ = ⟨Y_L⟩ = 1/√2.
         expected = 0.0 if basis == "Z" else INV_SQRT2
         tolerance = 4 * math.sqrt((1.0 - expected**2) / n_accepted) + 0.01
         assert expectation == pytest.approx(expected, abs=tolerance), (
@@ -381,12 +381,12 @@ class TestNoisyCultivationImprovesWithRounds:
 
     ROUNDS_TO_TEST = [1, 2, 3]
 
-    @pytest.mark.parametrize("basis", ["X", "Z"])
+    @pytest.mark.parametrize("basis", ["X", "Y", "Z"])
     def test_postselected_fidelity_near_ideal(self, basis: str) -> None:
-        """Check the postselected logical X and Z expectations of |T_L⟩."""
+        """Check the postselected logical X, Y, and Z expectations of |T_L⟩."""
         noise_model = _build_noisy_noise_model()
         sim = AerSimulator(noise_model=noise_model, seed_simulator=NOISY_TEST_SEED)
-        expected = INV_SQRT2 if basis == "X" else 0.0
+        expected = INV_SQRT2 if basis in {"X", "Y"} else 0.0
 
         for n_rounds in self.ROUNDS_TO_TEST:
             circuit = _build_multi_round_cultivation_circuit(

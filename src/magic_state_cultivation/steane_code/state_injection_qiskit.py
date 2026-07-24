@@ -5,8 +5,10 @@ from typing import Literal
 
 from qiskit import QuantumCircuit
 from qiskit.circuit import Qubit
+from qiskit.circuit.classical import expr
 
 from magic_state_cultivation.utils.circuit import apply_ty
+from magic_state_cultivation.utils.normalize import normalize_pauli_char
 
 InjectedStateName = Literal["0", "1", "+", "-", "i", "-i", "Y+", "Y-", "S", "T", "Tdg", "Ty"]
 PatchCrumbleGateName = Literal["h", "cz"]
@@ -271,6 +273,35 @@ def append_stabilizer_measurement(
         circuit.measure(aq[3 + i], cb[3 + i])
 
 
+def _normalize_logical_measurement_basis(basis: str) -> str:
+    """Return an X/Y/Z logical-measurement basis in canonical upper case."""
+    normalized_basis = normalize_pauli_char(basis)
+    if normalized_basis not in {"X", "Y", "Z"}:
+        raise ValueError("basis must be one of 'X', 'Y', or 'Z'.")
+    return normalized_basis
+
+
+def _logical_y_parity_is_inverted(support: tuple[int, ...]) -> bool:
+    """Return whether measuring the physical Y string reverses logical Y.
+
+    The CSS-self-dual Steane code uses the same support for X_L and Z_L. For
+    an odd support of weight w,
+
+        prod(Y_j) = i**(w - 1) Y_L,  where Y_L = i X_L Z_L.
+
+    Thus every weight-3 Steane representative obeys prod(Y_j) = -Y_L.
+    """
+    if len(support) % 2 == 0:
+        raise ValueError("Y logical support must have odd weight.")
+    return len(support) % 4 == 3
+
+
+def _append_classical_bit_flip(circuit: QuantumCircuit, classical_bit) -> None:
+    """Flip a measured classical bit during circuit execution."""
+    clbit = circuit.clbits[classical_bit] if isinstance(classical_bit, int) else classical_bit
+    circuit.store(clbit, expr.bit_not(clbit))
+
+
 def append_logical_measurement(
     circuit: QuantumCircuit,
     basis: str = "Z",
@@ -288,12 +319,13 @@ def append_logical_measurement(
     circuit
         Circuit being modified.
     basis
-        Which logical to measure: ``"Z"`` for Z_L or ``"X"`` for X_L.
+        Which logical Pauli to measure: ``"X"``, ``"Y"``, or ``"Z"``.
     data_qubits
         Seven qubits holding the encoded Steane-code state (ordered 0–6).
     support
         Abstract qubit indices (0–6) for the logical representative. Defaults
-        to ``DEFAULT_LOGICAL_Z`` or ``DEFAULT_LOGICAL_X``.
+        to ``DEFAULT_LOGICAL_Z`` for Z, or ``DEFAULT_LOGICAL_X`` for X and Y.
+        For simplicity, a Y support must be a common X_L and Z_L representative.
     ancilla_qubit
         For non-destructive measurement, the ancilla qubit to use. Required
         when ``destructive=False``.
@@ -306,11 +338,18 @@ def append_logical_measurement(
     """
     if len(data_qubits) < 7:
         raise ValueError("data_qubits must contain at least 7 qubits.")
+    basis = _normalize_logical_measurement_basis(basis)
+    if basis == "Y":
+        assert set(DEFAULT_LOGICAL_X) == set(DEFAULT_LOGICAL_Z)
     if support is None:
         support = DEFAULT_LOGICAL_Z if basis == "Z" else DEFAULT_LOGICAL_X
 
     dq = list(data_qubits)
     cb = list(classical_bits)
+
+    # Correct the sign of weight-3 Y strings so parity 0 continues to denote
+    # the +1 logical eigenvalue, just as it does for X_L and Z_L.
+    invert_y_parity = basis == "Y" and _logical_y_parity_is_inverted(support)
 
     if destructive:
         if len(cb) < len(support):
@@ -321,8 +360,18 @@ def append_logical_measurement(
         if basis == "X":
             for abstract_q in support:
                 circuit.h(dq[abstract_q])
+        elif basis == "Y":
+            for abstract_q in support:
+                # Sdg then H rotates a Y-basis measurement into the
+                # computational basis.
+                circuit.sdg(dq[abstract_q])
+                circuit.h(dq[abstract_q])
         for i, abstract_q in enumerate(support):
             circuit.measure(dq[abstract_q], cb[i])
+        if invert_y_parity:
+            # For weight three, Y_L = -prod(Y_j). Flip one stored bit after
+            # measurement so its parity directly reports the Y_L outcome.
+            _append_classical_bit_flip(circuit, cb[0])
     else:
         if ancilla_qubit is None:
             raise ValueError("ancilla_qubit is required for non-destructive measurement.")
@@ -334,12 +383,22 @@ def append_logical_measurement(
             for abstract_q in support:
                 circuit.cx(dq[abstract_q], ancilla_qubit)
             circuit.measure(ancilla_qubit, cb[0])
-        else:
+        elif basis == "X":
             circuit.h(ancilla_qubit)
             for abstract_q in support:
                 circuit.cx(ancilla_qubit, dq[abstract_q])
             circuit.h(ancilla_qubit)
             circuit.measure(ancilla_qubit, cb[0])
+        else:
+            circuit.h(ancilla_qubit)
+            for abstract_q in support:
+                circuit.cy(ancilla_qubit, dq[abstract_q])
+            circuit.h(ancilla_qubit)
+            circuit.measure(ancilla_qubit, cb[0])
+            if invert_y_parity:
+                # The ancilla measured prod(Y_j); flip its stored result so
+                # the classical bit directly reports Y_L.
+                _append_classical_bit_flip(circuit, cb[0])
 
 
 # =============================================================================
@@ -757,12 +816,13 @@ def append_patch_logical_measurement(
     circuit
         Circuit being modified.
     basis
-        Which logical to measure: ``"Z"`` for Z_L or ``"X"`` for X_L.
+        Which logical Pauli to measure: ``"X"``, ``"Y"``, or ``"Z"``.
     patch_qubits
         Eleven qubits indexed by the 11-site patch labels.
     support
         Patch-site indices for the logical representative. Defaults to
-        ``PATCH_DEFAULT_LOGICAL_Z`` or ``PATCH_DEFAULT_LOGICAL_X``.
+        ``PATCH_DEFAULT_LOGICAL_Z`` for Z, or ``PATCH_DEFAULT_LOGICAL_X`` for X and Y.
+        For simplicity, a Y support must be a common X_L and Z_L representative.
     ancilla_qubit
         For non-destructive measurement, the ancilla qubit to use. Required
         when ``destructive=False``.
@@ -775,11 +835,17 @@ def append_patch_logical_measurement(
     """
     if len(patch_qubits) < 11:
         raise ValueError("patch_qubits must contain at least 11 qubits.")
+    basis = _normalize_logical_measurement_basis(basis)
+    if basis == "Y":
+        assert set(PATCH_DEFAULT_LOGICAL_X) == set(PATCH_DEFAULT_LOGICAL_Z)
     if support is None:
         support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
 
     pq = list(patch_qubits)
     cb = list(classical_bits)
+
+    # Keep parity 0 aligned with the +1 logical eigenvalue.
+    invert_y_parity = basis == "Y" and _logical_y_parity_is_inverted(support)
 
     if destructive:
         if len(cb) < len(support):
@@ -790,8 +856,18 @@ def append_patch_logical_measurement(
         if basis == "X":
             for site in support:
                 circuit.h(pq[site])
+        elif basis == "Y":
+            for site in support:
+                # Sdg then H rotates a Y-basis measurement into the
+                # computational basis.
+                circuit.sdg(pq[site])
+                circuit.h(pq[site])
         for i, site in enumerate(support):
             circuit.measure(pq[site], cb[i])
+        if invert_y_parity:
+            # For weight three, Y_L = -prod(Y_j). Flip one stored bit after
+            # measurement so its parity directly reports the Y_L outcome.
+            _append_classical_bit_flip(circuit, cb[0])
     else:
         if ancilla_qubit is None:
             raise ValueError("ancilla_qubit is required for non-destructive measurement.")
@@ -803,9 +879,19 @@ def append_patch_logical_measurement(
             for site in support:
                 circuit.cx(pq[site], ancilla_qubit)
             circuit.measure(ancilla_qubit, cb[0])
-        else:
+        elif basis == "X":
             circuit.h(ancilla_qubit)
             for site in support:
                 circuit.cx(ancilla_qubit, pq[site])
             circuit.h(ancilla_qubit)
             circuit.measure(ancilla_qubit, cb[0])
+        else:
+            circuit.h(ancilla_qubit)
+            for site in support:
+                circuit.cy(ancilla_qubit, pq[site])
+            circuit.h(ancilla_qubit)
+            circuit.measure(ancilla_qubit, cb[0])
+            if invert_y_parity:
+                # The ancilla measured prod(Y_j); flip its stored result so
+                # the classical bit directly reports Y_L.
+                _append_classical_bit_flip(circuit, cb[0])
