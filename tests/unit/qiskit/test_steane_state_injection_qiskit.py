@@ -80,6 +80,21 @@ ALL_STATES: list[InjectedStateName] = [
     "Ty",
 ]
 
+LOGICAL_EXPECTATION_INDEX = {"Z": 0, "X": 1, "Y": 2}
+
+LOGICAL_BASIS_CASES = [
+    pytest.param("Z", LOGICAL_Z_REPRESENTATIVES, id="Z"),
+    pytest.param("X", LOGICAL_X_REPRESENTATIVES, id="X"),
+    # Steane self-duality gives Y_L the same common X_L/Z_L supports.
+    pytest.param("Y", LOGICAL_X_REPRESENTATIVES, id="Y"),
+]
+
+PATCH_LOGICAL_BASIS_CASES = [
+    pytest.param("Z", PATCH_LOGICAL_Z_REPRESENTATIVES, id="Z"),
+    pytest.param("X", PATCH_LOGICAL_X_REPRESENTATIVES, id="X"),
+    pytest.param("Y", PATCH_LOGICAL_X_REPRESENTATIVES, id="Y"),
+]
+
 # --------------------------------------
 # Destructive logical expectation values
 # --------------------------------------
@@ -135,36 +150,20 @@ def _measure_logical_expectation_destructive(
     return result.data()["ev"].real
 
 
+@pytest.mark.parametrize(("basis", "representatives"), LOGICAL_BASIS_CASES)
 @pytest.mark.parametrize("state", ALL_STATES)
-def test_logical_z_expectation(state: InjectedStateName) -> None:
-    """Verify ⟨Z_L⟩ matches the expected value for all weight-3 representatives."""
-    expected_z, _, _ = _expected_logical_expectation_values(state)
-    for rep in LOGICAL_Z_REPRESENTATIVES:
-        measured_z = _measure_logical_expectation_destructive(state, "Z", support=rep)
-        assert measured_z == pytest.approx(expected_z, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: ⟨Z_L⟩ expected {expected_z:.4f}, got {measured_z:.4f}"
-        )
-
-
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_logical_x_expectation(state: InjectedStateName) -> None:
-    """Verify ⟨X_L⟩ matches the expected value for all weight-3 representatives."""
-    _, expected_x, _ = _expected_logical_expectation_values(state)
-    for rep in LOGICAL_X_REPRESENTATIVES:
-        measured_x = _measure_logical_expectation_destructive(state, "X", support=rep)
-        assert measured_x == pytest.approx(expected_x, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: ⟨X_L⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
-        )
-
-
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_logical_y_expectation(state: InjectedStateName) -> None:
-    """Verify ⟨Y_L⟩ matches the expected value for all weight-3 representatives."""
-    _, _, expected_y = _expected_logical_expectation_values(state)
-    for rep in LOGICAL_X_REPRESENTATIVES:
-        measured_y = _measure_logical_expectation_destructive(state, "Y", support=rep)
-        assert measured_y == pytest.approx(expected_y, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: ⟨Y_L⟩ expected {expected_y:.4f}, got {measured_y:.4f}"
+def test_logical_expectation(
+    state: InjectedStateName,
+    basis: str,
+    representatives: tuple[tuple[int, ...], ...],
+) -> None:
+    """Verify ⟨P_L⟩ for every state, Pauli basis, and weight-3 representative."""
+    expected = _expected_logical_expectation_values(state)[LOGICAL_EXPECTATION_INDEX[basis]]
+    for rep in representatives:
+        measured = _measure_logical_expectation_destructive(state, basis, support=rep)
+        assert measured == pytest.approx(expected, abs=TOLERANCE), (
+            f"State {state!r}, support {rep}: "
+            f"⟨{basis}_L⟩ expected {expected:.4f}, got {measured:.4f}"
         )
 
 
@@ -220,39 +219,20 @@ def _measure_logical_expectation_non_destructive(
     return -expectation if basis == "Y" else expectation
 
 
+@pytest.mark.parametrize(("basis", "representatives"), LOGICAL_BASIS_CASES)
 @pytest.mark.parametrize("state", ALL_STATES)
-def test_logical_z_via_measurement_circuit(state: InjectedStateName) -> None:
-    """Verify ⟨Z_anc⟩ after non-destructive Z_L circuit equals ⟨Z_L⟩ for all representatives."""
-    expected_z, _, _ = _expected_logical_expectation_values(state)
-    for rep in LOGICAL_Z_REPRESENTATIVES:
-        measured_z = _measure_logical_expectation_non_destructive(state, "Z", support=rep)
-        assert measured_z == pytest.approx(expected_z, abs=TOLERANCE), (
+def test_logical_via_measurement_circuit(
+    state: InjectedStateName,
+    basis: str,
+    representatives: tuple[tuple[int, ...], ...],
+) -> None:
+    """Verify ancilla readout equals ⟨P_L⟩ for every logical Pauli representative."""
+    expected = _expected_logical_expectation_values(state)[LOGICAL_EXPECTATION_INDEX[basis]]
+    for rep in representatives:
+        measured = _measure_logical_expectation_non_destructive(state, basis, support=rep)
+        assert measured == pytest.approx(expected, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: "
-            f"⟨Z_anc⟩ expected {expected_z:.4f}, got {measured_z:.4f}"
-        )
-
-
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_logical_x_via_measurement_circuit(state: InjectedStateName) -> None:
-    """Verify ⟨Z_anc⟩ after non-destructive X_L circuit equals ⟨X_L⟩ for all representatives."""
-    _, expected_x, _ = _expected_logical_expectation_values(state)
-    for rep in LOGICAL_X_REPRESENTATIVES:
-        measured_x = _measure_logical_expectation_non_destructive(state, "X", support=rep)
-        assert measured_x == pytest.approx(expected_x, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: "
-            f"⟨Z_anc⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
-        )
-
-
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_logical_y_via_measurement_circuit(state: InjectedStateName) -> None:
-    """Verify ⟨Z_anc⟩ after non-destructive Y_L circuit equals ⟨Y_L⟩ for all representatives."""
-    _, _, expected_y = _expected_logical_expectation_values(state)
-    for rep in LOGICAL_X_REPRESENTATIVES:
-        measured_y = _measure_logical_expectation_non_destructive(state, "Y", support=rep)
-        assert measured_y == pytest.approx(expected_y, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: "
-            f"⟨Z_anc⟩ expected {expected_y:.4f}, got {measured_y:.4f}"
+            f"⟨Z_anc⟩ expected {expected:.4f}, got {measured:.4f}"
         )
 
 
@@ -305,11 +285,22 @@ def test_all_stabilizers_plus_one(state: InjectedStateName) -> None:
 # ----------------------------------------
 
 
-def test_logical_representatives_are_x7_times_stabilizer() -> None:
-    """Verify each X_L representative equals X^7 times a stabilizer group element."""
+@pytest.mark.parametrize(
+    ("basis", "stabilizers", "representatives"),
+    [
+        pytest.param("X", X_STABILIZERS, LOGICAL_X_REPRESENTATIVES, id="X"),
+        pytest.param("Z", Z_STABILIZERS, LOGICAL_Z_REPRESENTATIVES, id="Z"),
+    ],
+)
+def test_logical_representatives_are_weight_seven_times_stabilizer(
+    basis: str,
+    stabilizers: tuple[tuple[int, ...], ...],
+    representatives: tuple[tuple[int, ...], ...],
+) -> None:
+    """Verify each logical representative equals P^7 times a stabilizer."""
     from itertools import combinations
 
-    stab_supports = [set(s) for s in X_STABILIZERS]
+    stab_supports = [set(s) for s in stabilizers]
 
     # Generate all 8 elements of the stabilizer group (as sets of qubit indices).
     stab_group: list[set[int]] = [set()]
@@ -322,33 +313,13 @@ def test_logical_representatives_are_x7_times_stabilizer() -> None:
 
     all_7 = set(range(7))
 
-    for rep in LOGICAL_X_REPRESENTATIVES:
+    for rep in representatives:
         rep_set = set(rep)
         found = any(all_7.symmetric_difference(g) == rep_set for g in stab_group)
-        assert found, f"X_L representative {rep} is not X^7 times any stabilizer group element"
-
-
-def test_logical_representatives_are_z7_times_stabilizer() -> None:
-    """Verify each Z_L representative equals Z^7 times a stabilizer group element."""
-    from itertools import combinations
-
-    stab_supports = [set(s) for s in Z_STABILIZERS]
-
-    # Generate all 8 elements of the stabilizer group (as sets of qubit indices).
-    stab_group: list[set[int]] = [set()]
-    for r in range(1, len(stab_supports) + 1):
-        for combo in combinations(stab_supports, r):
-            elem: set[int] = set()
-            for s in combo:
-                elem = elem.symmetric_difference(s)
-            stab_group.append(elem)
-
-    all_7 = set(range(7))
-
-    for rep in LOGICAL_Z_REPRESENTATIVES:
-        rep_set = set(rep)
-        found = any(all_7.symmetric_difference(g) == rep_set for g in stab_group)
-        assert found, f"Z_L representative {rep} is not Z^7 times any stabilizer group element"
+        assert found, (
+            f"{basis}_L representative {rep} is not "
+            f"{basis}^7 times any stabilizer group element"
+        )
 
 
 def test_steane_code_is_css_self_dual() -> None:
@@ -420,54 +391,27 @@ def _patch_measure_logical_expectation_destructive(
     return result.data()["ev"].real
 
 
+@pytest.mark.parametrize(("basis", "representatives"), PATCH_LOGICAL_BASIS_CASES)
 @pytest.mark.parametrize("encoder", PATCH_ENCODERS)
 @pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_logical_z_expectation(state: InjectedStateName, encoder: str) -> None:
-    """Verify ⟨Z_L⟩ on 11-site patch for all mapped representatives."""
-    expected_z, _, _ = _expected_logical_expectation_values(state)
-    for rep in PATCH_LOGICAL_Z_REPRESENTATIVES:
-        measured_z = _patch_measure_logical_expectation_destructive(
+def test_patch_logical_expectation(
+    state: InjectedStateName,
+    encoder: str,
+    basis: str,
+    representatives: tuple[tuple[int, ...], ...],
+) -> None:
+    """Verify ⟨P_L⟩ on both 11-site patch encoders for every representative."""
+    expected = _expected_logical_expectation_values(state)[LOGICAL_EXPECTATION_INDEX[basis]]
+    for rep in representatives:
+        measured = _patch_measure_logical_expectation_destructive(
             state,
-            "Z",
+            basis,
             support=rep,
             encoder=encoder,
         )
-        assert measured_z == pytest.approx(expected_z, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: ⟨Z_L⟩ expected {expected_z:.4f}, got {measured_z:.4f}"
-        )
-
-
-@pytest.mark.parametrize("encoder", PATCH_ENCODERS)
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_logical_x_expectation(state: InjectedStateName, encoder: str) -> None:
-    """Verify ⟨X_L⟩ on 11-site patch for all mapped representatives."""
-    _, expected_x, _ = _expected_logical_expectation_values(state)
-    for rep in PATCH_LOGICAL_X_REPRESENTATIVES:
-        measured_x = _patch_measure_logical_expectation_destructive(
-            state,
-            "X",
-            support=rep,
-            encoder=encoder,
-        )
-        assert measured_x == pytest.approx(expected_x, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: ⟨X_L⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
-        )
-
-
-@pytest.mark.parametrize("encoder", PATCH_ENCODERS)
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_logical_y_expectation(state: InjectedStateName, encoder: str) -> None:
-    """Verify ⟨Y_L⟩ on 11-site patch for all mapped representatives."""
-    _, _, expected_y = _expected_logical_expectation_values(state)
-    for rep in PATCH_LOGICAL_X_REPRESENTATIVES:
-        measured_y = _patch_measure_logical_expectation_destructive(
-            state,
-            "Y",
-            support=rep,
-            encoder=encoder,
-        )
-        assert measured_y == pytest.approx(expected_y, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: ⟨Y_L⟩ expected {expected_y:.4f}, got {measured_y:.4f}"
+        assert measured == pytest.approx(expected, abs=TOLERANCE), (
+            f"State {state!r}, support {rep}: "
+            f"⟨{basis}_L⟩ expected {expected:.4f}, got {measured:.4f}"
         )
 
 
@@ -519,60 +463,27 @@ def _patch_measure_logical_expectation_non_destructive(
     return -expectation if basis == "Y" else expectation
 
 
+@pytest.mark.parametrize(("basis", "representatives"), PATCH_LOGICAL_BASIS_CASES)
 @pytest.mark.parametrize("encoder", PATCH_ENCODERS)
 @pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_logical_z_via_measurement_circuit(state: InjectedStateName, encoder: str) -> None:
-    """Verify ⟨Z_anc⟩ after non-destructive Z_L on patch for all representatives."""
-    expected_z, _, _ = _expected_logical_expectation_values(state)
-    for rep in PATCH_LOGICAL_Z_REPRESENTATIVES:
-        measured_z = _patch_measure_logical_expectation_non_destructive(
-            state,
-            "Z",
-            support=rep,
-            encoder=encoder,
-        )
-        assert measured_z == pytest.approx(expected_z, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: "
-            f"⟨Z_anc⟩ expected {expected_z:.4f}, got {measured_z:.4f}"
-        )
-
-
-@pytest.mark.parametrize("encoder", PATCH_ENCODERS)
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_logical_x_via_measurement_circuit(state: InjectedStateName, encoder: str) -> None:
-    """Verify ⟨Z_anc⟩ after non-destructive X_L on patch for all representatives."""
-    _, expected_x, _ = _expected_logical_expectation_values(state)
-    for rep in PATCH_LOGICAL_X_REPRESENTATIVES:
-        measured_x = _patch_measure_logical_expectation_non_destructive(
-            state,
-            "X",
-            support=rep,
-            encoder=encoder,
-        )
-        assert measured_x == pytest.approx(expected_x, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: "
-            f"⟨Z_anc⟩ expected {expected_x:.4f}, got {measured_x:.4f}"
-        )
-
-
-@pytest.mark.parametrize("encoder", PATCH_ENCODERS)
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_logical_y_via_measurement_circuit(
+def test_patch_logical_via_measurement_circuit(
     state: InjectedStateName,
     encoder: str,
+    basis: str,
+    representatives: tuple[tuple[int, ...], ...],
 ) -> None:
-    """Verify ⟨Z_anc⟩ after non-destructive Y_L on patch for all representatives."""
-    _, _, expected_y = _expected_logical_expectation_values(state)
-    for rep in PATCH_LOGICAL_X_REPRESENTATIVES:
-        measured_y = _patch_measure_logical_expectation_non_destructive(
+    """Verify patch ancilla readout equals ⟨P_L⟩ for every representative."""
+    expected = _expected_logical_expectation_values(state)[LOGICAL_EXPECTATION_INDEX[basis]]
+    for rep in representatives:
+        measured = _patch_measure_logical_expectation_non_destructive(
             state,
-            "Y",
+            basis,
             support=rep,
             encoder=encoder,
         )
-        assert measured_y == pytest.approx(expected_y, abs=TOLERANCE), (
+        assert measured == pytest.approx(expected, abs=TOLERANCE), (
             f"State {state!r}, support {rep}: "
-            f"⟨Z_anc⟩ expected {expected_y:.4f}, got {measured_y:.4f}"
+            f"⟨Z_anc⟩ expected {expected:.4f}, got {measured:.4f}"
         )
 
 
@@ -581,11 +492,22 @@ def test_patch_logical_y_via_measurement_circuit(
 # ----------------------------------------------
 
 
-def test_patch_logical_representatives_are_x7_times_stabilizer() -> None:
-    """Verify each patch X_L representative equals X^7 times a patch stabilizer group element."""
+@pytest.mark.parametrize(
+    ("basis", "stabilizers", "representatives"),
+    [
+        pytest.param("X", PATCH_X_STABILIZERS, PATCH_LOGICAL_X_REPRESENTATIVES, id="X"),
+        pytest.param("Z", PATCH_Z_STABILIZERS, PATCH_LOGICAL_Z_REPRESENTATIVES, id="Z"),
+    ],
+)
+def test_patch_logical_representatives_are_weight_seven_times_stabilizer(
+    basis: str,
+    stabilizers: tuple[tuple[int, ...], ...],
+    representatives: tuple[tuple[int, ...], ...],
+) -> None:
+    """Verify each patch logical representative equals P^7 times a stabilizer."""
     from itertools import combinations
 
-    stab_supports = [set(s) for s in PATCH_X_STABILIZERS]
+    stab_supports = [set(s) for s in stabilizers]
 
     stab_group: list[set[int]] = [set()]
     for r in range(1, len(stab_supports) + 1):
@@ -597,35 +519,12 @@ def test_patch_logical_representatives_are_x7_times_stabilizer() -> None:
 
     all_data = set(PATCH_DATA_SITES)
 
-    for rep in PATCH_LOGICAL_X_REPRESENTATIVES:
+    for rep in representatives:
         rep_set = set(rep)
         found = any(all_data.symmetric_difference(g) == rep_set for g in stab_group)
         assert found, (
-            f"Patch X_L representative {rep} is not X^7 times any stabilizer group element"
-        )
-
-
-def test_patch_logical_representatives_are_z7_times_stabilizer() -> None:
-    """Verify each patch Z_L representative equals Z^7 times a patch stabilizer group element."""
-    from itertools import combinations
-
-    stab_supports = [set(s) for s in PATCH_Z_STABILIZERS]
-
-    stab_group: list[set[int]] = [set()]
-    for r in range(1, len(stab_supports) + 1):
-        for combo in combinations(stab_supports, r):
-            elem: set[int] = set()
-            for s in combo:
-                elem = elem.symmetric_difference(s)
-            stab_group.append(elem)
-
-    all_data = set(PATCH_DATA_SITES)
-
-    for rep in PATCH_LOGICAL_Z_REPRESENTATIVES:
-        rep_set = set(rep)
-        found = any(all_data.symmetric_difference(g) == rep_set for g in stab_group)
-        assert found, (
-            f"Patch Z_L representative {rep} is not Z^7 times any stabilizer group element"
+            f"Patch {basis}_L representative {rep} is not "
+            f"{basis}^7 times any stabilizer group element"
         )
 
 
