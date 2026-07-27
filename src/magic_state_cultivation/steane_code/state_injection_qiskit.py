@@ -273,14 +273,6 @@ def append_stabilizer_measurement(
         circuit.measure(aq[3 + i], cb[3 + i])
 
 
-def _normalize_logical_measurement_basis(basis: str) -> str:
-    """Return an X/Y/Z logical-measurement basis in canonical upper case."""
-    normalized_basis = normalize_pauli_char(basis)
-    if normalized_basis not in {"X", "Y", "Z"}:
-        raise ValueError("basis must be one of 'X', 'Y', or 'Z'.")
-    return normalized_basis
-
-
 def _logical_y_parity_is_inverted(support: tuple[int, ...]) -> bool:
     """Return whether measuring the physical Y string reverses logical Y.
 
@@ -338,7 +330,7 @@ def append_logical_measurement(
     """
     if len(data_qubits) < 7:
         raise ValueError("data_qubits must contain at least 7 qubits.")
-    basis = _normalize_logical_measurement_basis(basis)
+    basis = normalize_pauli_char(basis)
     if basis == "Y":
         assert set(DEFAULT_LOGICAL_X) == set(DEFAULT_LOGICAL_Z)
     if support is None:
@@ -835,7 +827,7 @@ def append_patch_logical_measurement(
     """
     if len(patch_qubits) < 11:
         raise ValueError("patch_qubits must contain at least 11 qubits.")
-    basis = _normalize_logical_measurement_basis(basis)
+    basis = normalize_pauli_char(basis)
     if basis == "Y":
         assert set(PATCH_DEFAULT_LOGICAL_X) == set(PATCH_DEFAULT_LOGICAL_Z)
     if support is None:
