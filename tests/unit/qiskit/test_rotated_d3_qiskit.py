@@ -337,9 +337,9 @@ class TestLogicalZeroPreparation:
         for i, name in enumerate(Z_STABILIZERS):
             anc_idx = NUM_DATA_QUBITS + NUM_X_ANCILLAS + i
             exp_val = sv.expectation_value(z_op, [anc_idx]).real
-            assert exp_val == pytest.approx(1.0, abs=1e-10), (
-                f"Z-stabilizer {name} ancilla has ⟨Z⟩ = {exp_val}, expected +1"
-            )
+            assert exp_val == pytest.approx(
+                1.0, abs=1e-10
+            ), f"Z-stabilizer {name} ancilla has ⟨Z⟩ = {exp_val}, expected +1"
 
 
 class TestLogicalPlusPreparation:
@@ -509,6 +509,6 @@ class TestLogicalPlusPreparation:
         for i, name in enumerate(X_STABILIZERS):
             anc_idx = NUM_DATA_QUBITS + NUM_Z_ANCILLAS + i
             exp_val = sv.expectation_value(z_op, [anc_idx]).real
-            assert exp_val == pytest.approx(1.0, abs=1e-10), (
-                f"X-stabilizer {name} ancilla has ⟨Z⟩ = {exp_val}, expected +1"
-            )
+            assert exp_val == pytest.approx(
+                1.0, abs=1e-10
+            ), f"X-stabilizer {name} ancilla has ⟨Z⟩ = {exp_val}, expected +1"

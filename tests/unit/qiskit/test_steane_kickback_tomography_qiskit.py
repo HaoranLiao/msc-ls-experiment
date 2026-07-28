@@ -8,7 +8,6 @@ import pytest
 from qiskit_aer import AerSimulator
 
 from magic_state_cultivation.steane_code.kickback_tomography_qiskit import (
-    KT_CULTIVATION_BITS_PER_ROUND,
     KT_DEFAULT_QEC_CYCLE_INDICES,
     KT_FULL_QEC_CYCLE_INDICES,
     KT_STABILIZER_BITS_PER_CYCLE,
@@ -17,6 +16,9 @@ from magic_state_cultivation.steane_code.kickback_tomography_qiskit import (
     build_kickback_tomography_experiment,
     kickback_tomography_shot_is_retained,
     summarize_kickback_tomography_counts,
+)
+from magic_state_cultivation.steane_code.magic_state_cultivation_qiskit import (
+    CULTIVATION_MEASUREMENTS_PER_ROUND,
 )
 from magic_state_cultivation.steane_code.state_injection_qiskit import InjectedStateName
 
@@ -125,7 +127,7 @@ class TestKickbackTomographyCircuitConstruction:
 
         assert circuit.num_qubits == 11
         assert circuit.num_clbits == (
-            3 * KT_CULTIVATION_BITS_PER_ROUND
+            3 * CULTIVATION_MEASUREMENTS_PER_ROUND
             + len(expected_indices) * KT_STABILIZER_BITS_PER_CYCLE
             + KT_STABILIZER_BITS_PER_CYCLE // 2
         )
@@ -181,9 +183,7 @@ class TestKickbackTomographyCountsAnalysis:
             return "".join(bits)
 
         measurement_root = layout.tomography_measurement_round.folded_root
-        measurement_root_double_check = (
-            layout.tomography_measurement_round.folded_root_double_check
-        )
+        measurement_root_double_check = layout.tomography_measurement_round.folded_root_double_check
         check_root = layout.tomography_check_round.folded_root
         check_root_double_check = layout.tomography_check_round.folded_root_double_check
         cultivation_flag = layout.tomography_measurement_round.flag_positions[0]

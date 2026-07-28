@@ -32,12 +32,12 @@ from magic_state_cultivation.steane_code.state_injection_qiskit import (
     append_stabilizer_measurement,
     append_steane_state_injection_encoder,
 )
-from magic_state_cultivation.utils.circuit import (
+from magic_state_cultivation.utils.circuit_qiskit import (
     ibm_backend,
     ibm_backend_available,
     two_qubit_depth,
 )
-from magic_state_cultivation.utils.normalize import parse_qiskit_bitstring
+from magic_state_cultivation.utils.normalize import normalize_pauli_char, parse_qiskit_bitstring
 
 NUM_DATA_QUBITS = 7
 TOLERANCE = 1e-10
@@ -275,9 +275,9 @@ def test_all_stabilizers_plus_one(state: InjectedStateName) -> None:
 
         stab_type = "X" if idx < 3 else "Z"
         stab_idx = idx if idx < 3 else idx - 3
-        assert ev == pytest.approx(1.0, abs=TOLERANCE), (
-            f"State {state!r}: {stab_type}-stabilizer {stab_idx} ⟨Z_anc⟩ expected 1.0, got {ev:.6f}"
-        )
+        assert ev == pytest.approx(
+            1.0, abs=TOLERANCE
+        ), f"State {state!r}: {stab_type}-stabilizer {stab_idx} ⟨Z_anc⟩ expected 1.0, got {ev:.6f}"
 
 
 # ----------------------------------------
@@ -569,9 +569,9 @@ def test_patch_all_stabilizers_via_ancilla_measurement(
         bit_val = int(bitstring[-(idx + 1)])
         stab_type = "X" if idx < 3 else "Z"
         stab_idx = idx if idx < 3 else idx - 3
-        assert bit_val == 0, (
-            f"State {state!r}: {stab_type}-stabilizer {stab_idx} expected 0, got {bit_val}"
-        )
+        assert (
+            bit_val == 0
+        ), f"State {state!r}: {stab_type}-stabilizer {stab_idx} expected 0, got {bit_val}"
 
 
 @pytest.mark.parametrize("basis", ["x", "z"])
@@ -621,9 +621,9 @@ def test_patch_selected_stabilizer_measurement(basis: str) -> None:
 
     appended_instructions = circuit.data[measurement_start:]
     assert all(circuit.qubits[6] not in instruction.qubits for instruction in appended_instructions)
-    assert sum(
-        instruction.operation.name == "measure" for instruction in appended_instructions
-    ) == 2
+    assert (
+        sum(instruction.operation.name == "measure" for instruction in appended_instructions) == 2
+    )
     assert AerSimulator().run(circuit, shots=1).result().get_counts() == {"00": 1}
 
 
@@ -675,12 +675,12 @@ def _expected_patch_syndrome(
     x_syn = [0, 0, 0]
     z_syn = [0, 0, 0]
     for pauli, site in faults:
-        p = pauli.upper()
+        normalized_pauli = normalize_pauli_char(pauli)
         for i, support in enumerate(PATCH_X_STABILIZERS):
-            if site in support and p in ("Z", "Y"):
+            if site in support and normalized_pauli in ("Z", "Y"):
                 x_syn[i] ^= 1
         for i, support in enumerate(PATCH_Z_STABILIZERS):
-            if site in support and p in ("X", "Y"):
+            if site in support and normalized_pauli in ("X", "Y"):
                 z_syn[i] ^= 1
     return tuple(x_syn), tuple(z_syn)
 
@@ -753,9 +753,11 @@ class TestPatchSyndromeExtraction:
     def test_no_fault_trivial(self, state: InjectedStateName, encoder: str) -> None:
         """No faults → all syndrome bits zero for any encoded state."""
         x_syn, z_syn = _build_and_run_patch_syndrome([], injected_state=state, encoder=encoder)
-        assert x_syn == (0, 0, 0) and z_syn == (0, 0, 0), (
-            f"State {state!r}: expected trivial syndrome, got X={x_syn}, Z={z_syn}"
-        )
+        assert x_syn == (0, 0, 0) and z_syn == (
+            0,
+            0,
+            0,
+        ), f"State {state!r}: expected trivial syndrome, got X={x_syn}, Z={z_syn}"
 
     @pytest.mark.parametrize("encoder", PATCH_ENCODERS)
     @pytest.mark.parametrize("state", ["0", "T", "Ty"])
@@ -874,7 +876,7 @@ def test_patch_crumble_cz_layers_are_nearest_neighbor_data_helper_edges(layer) -
 
 
 @pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_crumble_helper_sites_are_zero(state: InjectedStateName) -> None:
+def test_patch_crumble_helper_sites_expectation_value(state: InjectedStateName) -> None:
     """After Crumble encoding, all helper sites are in |0⟩ (⟨Z⟩ = +1)."""
     circuit = QuantumCircuit(NUM_PATCH_QUBITS)
     append_patch_steane_state_injection_encoder_crumble_sequences(
@@ -886,14 +888,14 @@ def test_patch_crumble_helper_sites_are_zero(state: InjectedStateName) -> None:
     sv = Statevector(circuit)
     for site in PATCH_HELPER_SITES:
         ev = sv.expectation_value(SparsePauliOp("Z"), [site]).real
-        assert ev == pytest.approx(1.0, abs=TOLERANCE), (
-            f"State {state!r}: helper site {site} ⟨Z⟩ expected 1.0, got {ev:.6f}"
-        )
+        assert ev == pytest.approx(
+            1.0, abs=TOLERANCE
+        ), f"State {state!r}: helper site {site} ⟨Z⟩ expected 1.0, got {ev:.6f}"
 
 
 @pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_crumble_helper_sites_measured_zero(state: InjectedStateName) -> None:
-    """With helper_classical_bits the helpers are measured; all outcomes are 0."""
+def test_patch_crumble_helper_sites_bit_value(state: InjectedStateName) -> None:
+    """Measured Crumble helper sites always return the all-zero outcome."""
     n_helpers = len(PATCH_HELPER_SITES)
     circuit = QuantumCircuit(NUM_PATCH_QUBITS, n_helpers)
     append_patch_steane_state_injection_encoder_crumble_sequences(
@@ -903,16 +905,9 @@ def test_patch_crumble_helper_sites_measured_zero(state: InjectedStateName) -> N
         helper_classical_bits=list(range(n_helpers)),
         add_barriers=False,
     )
-    sim = AerSimulator()
-    counts = sim.run(circuit, shots=1).result().get_counts()
-    bitstring = next(iter(counts))
-    bit_labels = tuple(f"h{i}" for i in range(n_helpers))
-    bits = parse_qiskit_bitstring(bitstring, bit_labels)
-    for i in range(n_helpers):
-        assert bits[f"h{i}"] == 0, (
-            f"State {state!r}: helper site {PATCH_HELPER_SITES[i]} measured 1, "
-            f"expected 0 for postselection"
-        )
+    shots = 1024
+    counts = AerSimulator().run(circuit, shots=shots).result().get_counts()
+    assert counts == {"0000": shots}
 
 
 @pytest.mark.skipif(
@@ -952,9 +947,11 @@ def test_patch_crumble_encoder_two_qubit_depth_preserved_on_ibm_miami() -> None:
         f"nearest-neighbor schedule on a square-lattice device"
     )
 
+
 # ============================================================================
 # Other tests
 # ============================================================================
+
 
 @pytest.mark.parametrize(
     ("angle", "equivalent_state"),

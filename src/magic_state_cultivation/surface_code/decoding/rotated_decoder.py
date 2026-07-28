@@ -289,12 +289,8 @@ class RotatedDecoder:
         stab_frame
             Stabilizer frame containing the previous raw outcomes.
         """
-        x_deltas = stab_frame.advance(
-            {name: x_raw[name] for name in self.x_stabilizer_names}
-        )
-        z_deltas = stab_frame.advance(
-            {name: z_raw[name] for name in self.z_stabilizer_names}
-        )
+        x_deltas = stab_frame.advance({name: x_raw[name] for name in self.x_stabilizer_names})
+        z_deltas = stab_frame.advance({name: z_raw[name] for name in self.z_stabilizer_names})
         return self.update_pauli_frame(
             pauli_frame=pauli_frame,
             logical_qubit_label=logical_qubit_label,

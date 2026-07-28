@@ -7,10 +7,11 @@ import math
 import pytest
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit_aer import AerSimulator
-from qiskit_aer.noise import NoiseModel, depolarizing_error
 
+from magic_state_cultivation.noise import build_noisy_aer_simulator
 from magic_state_cultivation.steane_code.magic_state_cultivation_qiskit import (
-    append_steane_injection_with_h_cultivation,
+    CULTIVATION_MEASUREMENTS_PER_ROUND,
+    append_steane_injection_and_cultivation,
     postselect_success_counts,
 )
 from magic_state_cultivation.steane_code.state_injection_qiskit import (
@@ -29,7 +30,7 @@ from magic_state_cultivation.utils.normalize import qiskit_bit_value
 
 NUM_SHOTS = 1000
 INV_SQRT2 = 1.0 / math.sqrt(2)
-NOISY_TEST_SEED = 20251218
+NOISY_TEST_SEED = 42
 
 # States to test for cultivation — minimal representative subset.
 CULTIVATION_TEST_STATES: list[InjectedStateName] = [
@@ -84,7 +85,7 @@ def _make_cultivation_circuit(
     cult_cregs = [ClassicalRegister(5, f"cult_{r}") for r in range(n_rounds)]
     circuit = QuantumCircuit(qreg, enc_creg, *cult_cregs)
 
-    append_steane_injection_with_h_cultivation(
+    append_steane_injection_and_cultivation(
         circuit,
         patch_qubits=list(qreg),
         injected_state=injected_state,
@@ -100,18 +101,24 @@ def _make_cultivation_circuit(
 def _build_cultivation_with_logical_measurement(
     state: InjectedStateName,
     basis: str,
+    *,
+    n_rounds: int = 1,
 ) -> QuantumCircuit:
-    """Build: encoder → cultivation round → destructive logical measurement.
+    """Build injection, cultivation rounds, and destructive logical readout.
 
     Uses :func:`_make_cultivation_circuit` for the encoder and
     cultivation stages, then appends a destructive logical measurement.
 
-    Returns a circuit with 11 qubits and 12 classical bits:
+    For one cultivation round, returns a circuit with 11 qubits and 12
+    classical bits:
       - bits 0–3: encoder helper checks (must be zero)
       - bits 4–8: cultivation outcomes (must be zero)
       - bits 9–11: destructive logical measurement on 3-qubit support
     """
-    circuit = _make_cultivation_circuit(injected_state=state)
+    circuit = _make_cultivation_circuit(
+        injected_state=state,
+        n_rounds=n_rounds,
+    )
 
     # Append destructive logical measurement (3 classical bits)
     support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
@@ -229,16 +236,16 @@ class TestPostselectedLogicalExpectation:
 
         # For |T⟩ input, acceptance must be exactly 1.0.
         if state == "T":
-            assert measured_rate == 1.0, (
-                f"T-state acceptance should be 1.0, got {measured_rate:.4f}"
-            )
+            assert (
+                measured_rate == 1.0
+            ), f"T-state acceptance should be 1.0, got {measured_rate:.4f}"
         else:
             # Statistical tolerance for binomial proportion: ~4σ
             sigma = math.sqrt(expected_rate * (1 - expected_rate) / NUM_SHOTS)
             tolerance = max(4 * sigma, 0.02)
-            assert measured_rate == pytest.approx(expected_rate, abs=tolerance), (
-                f"State {state!r}: acceptance = {measured_rate:.4f}, expected = {expected_rate:.4f}"
-            )
+            assert measured_rate == pytest.approx(
+                expected_rate, abs=tolerance
+            ), f"State {state!r}: acceptance = {measured_rate:.4f}, expected = {expected_rate:.4f}"
 
 
 # =============================================================================
@@ -295,58 +302,15 @@ class TestStabilizerSyndromesAfterCultivation:
 # Test Set 3: Noisy multi-round cultivation approaches ideal
 # =============================================================================
 
-NOISE_P_1Q = 0.001
-NOISE_P_2Q = 0.01
-
-
-def _build_noisy_noise_model(p_1q: float = NOISE_P_1Q, p_2q: float = NOISE_P_2Q) -> NoiseModel:
-    """Construct a depolarizing noise model for all gates."""
-    noise_model = NoiseModel()
-    # 1-qubit depolarizing on all single-qubit gates
-    error_1q = depolarizing_error(p_1q, 1)
-    for gate in ["h", "s", "sdg", "t", "tdg", "x", "z", "ry"]:
-        noise_model.add_all_qubit_quantum_error(error_1q, gate)
-    # 2-qubit depolarizing on CX
-    error_2q = depolarizing_error(p_2q, 2)
-    noise_model.add_all_qubit_quantum_error(error_2q, "cx")
-    return noise_model
-
-
-def _build_multi_round_cultivation_circuit(
-    n_rounds: int,
-    basis: str,
-    *,
-    injected_state: InjectedStateName = "T",
-) -> QuantumCircuit:
-    """Build: encoder → n_rounds cultivation → destructive logical measurement.
-
-    Uses :func:`_make_cultivation_circuit` for the encoder and
-    cultivation stages, then appends a destructive logical measurement.
-    """
-    circuit = _make_cultivation_circuit(
-        injected_state=injected_state,
-        n_rounds=n_rounds,
-    )
-
-    # Destructive logical measurement
-    support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
-    logical_creg = ClassicalRegister(len(support), "logical")
-    circuit.add_register(logical_creg)
-    append_patch_logical_measurement(
-        circuit,
-        basis,
-        patch_qubits=list(circuit.qregs[0]),
-        support=support,
-        classical_bits=list(logical_creg),
-        destructive=True,
-    )
-
-    return circuit
+NOISE_P_1Q = 0.0005
+NOISE_P_2Q = 0.005
+NOISE_MEASURE = 0.005
+NOISE_RESET = 0.005
 
 
 def _n_postselection_bits(n_rounds: int) -> int:
     """Return the number of postselection bits for n_rounds cultivation."""
-    return 4 + 5 * n_rounds  # 4 encoder helpers + 5 per round
+    return 4 + n_rounds * CULTIVATION_MEASUREMENTS_PER_ROUND
 
 
 def _postselect_multi_round(
@@ -365,7 +329,7 @@ def _postselect_multi_round(
     )
 
 
-class TestNoisyCultivationImprovesWithRounds:
+class TestNoisyCultivationWithRounds:
     """With depolarizing noise, postselected cultivation preserves logical |T_L⟩ fidelity.
 
     Under circuit-level depolarizing noise, the cultivation check acts as an
@@ -384,17 +348,23 @@ class TestNoisyCultivationImprovesWithRounds:
     @pytest.mark.parametrize("basis", ["X", "Y", "Z"])
     def test_postselected_fidelity_near_ideal(self, basis: str) -> None:
         """Check the postselected logical X, Y, and Z expectations of |T_L⟩."""
-        noise_model = _build_noisy_noise_model()
-        sim = AerSimulator(noise_model=noise_model, seed_simulator=NOISY_TEST_SEED)
         expected = INV_SQRT2 if basis in {"X", "Y"} else 0.0
 
         for n_rounds in self.ROUNDS_TO_TEST:
-            circuit = _build_multi_round_cultivation_circuit(
-                n_rounds,
+            circuit = _build_cultivation_with_logical_measurement(
+                "T",
                 basis,
-                injected_state="T",
+                n_rounds=n_rounds,
             )
-            counts = sim.run(circuit, shots=NUM_SHOTS).result().get_counts()
+            noisy_simulator = build_noisy_aer_simulator(
+                circuit,
+                p_1q=NOISE_P_1Q,
+                p_2q=NOISE_P_2Q,
+                p_measure=NOISE_MEASURE,
+                p_reset=NOISE_RESET,
+                seed_simulator=NOISY_TEST_SEED,
+            )
+            counts = noisy_simulator.run(circuit, shots=NUM_SHOTS).result().get_counts()
             expectation, n_accepted = _postselect_multi_round(counts, n_rounds)
 
             assert n_accepted > 50, (
@@ -402,9 +372,11 @@ class TestNoisyCultivationImprovesWithRounds:
                 f"basis={basis}. Consider reducing noise or increasing shots."
             )
 
-            # Allow ~4σ statistical error plus a small systematic noise budget.
-            stat_err = math.sqrt((1.0 - expected**2) / n_accepted)
-            tolerance = 4 * stat_err + 0.03  # 3% systematic budget for noise
+            # Allow four standard errors plus a 2% systematic noise budget.
+            # Estimate variance from the observed noisy ±1 outcomes rather
+            # than the ideal-state expectation.
+            statistical_error = math.sqrt((1.0 - expectation**2) / n_accepted)
+            tolerance = 4 * statistical_error + 0.02
             assert expectation == pytest.approx(expected, abs=tolerance), (
                 f"Rounds={n_rounds}, basis={basis}: ⟨{basis}_L⟩ = {expectation:.4f}, "
                 f"expected ≈ {expected:.4f} (n_accepted={n_accepted}, tol={tolerance:.4f})"
@@ -413,20 +385,25 @@ class TestNoisyCultivationImprovesWithRounds:
     @pytest.mark.parametrize("basis", ["X"])
     def test_more_rounds_preserves_fidelity_and_increases_discard(self, basis: str) -> None:
         """More rounds preserve the X_L expectation and increase discard."""
-        noise_model = _build_noisy_noise_model()
-        sim = AerSimulator(noise_model=noise_model, seed_simulator=NOISY_TEST_SEED)
-
         n_shots = 10000  # more shots to reduce statistical noise for trend test
         errors: list[float] = []
         acceptance_rates: list[float] = []
 
         for n_rounds in self.ROUNDS_TO_TEST:
-            circuit = _build_multi_round_cultivation_circuit(
-                n_rounds,
+            circuit = _build_cultivation_with_logical_measurement(
+                "T",
                 basis,
-                injected_state="T",
+                n_rounds=n_rounds,
             )
-            counts = sim.run(circuit, shots=n_shots).result().get_counts()
+            noisy_simulator = build_noisy_aer_simulator(
+                circuit,
+                p_1q=NOISE_P_1Q,
+                p_2q=NOISE_P_2Q,
+                p_measure=NOISE_MEASURE,
+                p_reset=NOISE_RESET,
+                seed_simulator=NOISY_TEST_SEED,
+            )
+            counts = noisy_simulator.run(circuit, shots=n_shots).result().get_counts()
             expectation, n_accepted = _postselect_multi_round(counts, n_rounds)
 
             assert n_accepted > 50, f"Too few accepted shots ({n_accepted}) for {n_rounds} rounds"
@@ -437,9 +414,10 @@ class TestNoisyCultivationImprovesWithRounds:
         errors_by_round = list(zip(self.ROUNDS_TO_TEST, errors, strict=True))
         rates_by_round = list(zip(self.ROUNDS_TO_TEST, acceptance_rates, strict=True))
 
-        # Extra noisy rounds add faults as well as checks, so allow bounded
-        # degradation rather than requiring strict monotonic improvement.
-        assert errors[-1] <= errors[-2] + 0.03, (
+        # Extra noisy rounds add faults as well as checks, so compare the
+        # multi-round endpoint with the one-round baseline instead of requiring
+        # strict monotonic improvement at every intermediate round.
+        assert errors[-1] <= errors[0] + 0.03, (
             f"Basis {basis}: fidelity degraded too much with more rounds. "
             f"Errors by round: {errors_by_round}"
         )
@@ -454,53 +432,86 @@ class TestNoisyCultivationImprovesWithRounds:
 
     @pytest.mark.parametrize("basis", ["X"])
     def test_cultivation_improves_over_no_postselection(self, basis: str) -> None:
-        """Postselected cultivation yields better fidelity than raw noisy encoder."""
-        noise_model = _build_noisy_noise_model()
-        sim = AerSimulator(noise_model=noise_model, seed_simulator=NOISY_TEST_SEED)
-
-        # --- Raw noisy encoder (no cultivation, just encoder → measurement) ---
+        """Cultivation improves on the noisy encoded state without postselection."""
+        # --- Uncultivated state: encoder followed directly by measurement ---
         qreg = QuantumRegister(11, "q")
         creg = ClassicalRegister(3, "c")
-        raw_circuit = QuantumCircuit(qreg, creg)
+        uncultivated_circuit = QuantumCircuit(qreg, creg)
         append_patch_steane_state_injection_encoder_crumble_sequences(
-            raw_circuit,
+            uncultivated_circuit,
             patch_qubits=list(qreg),
             injected_state="T",
             add_barriers=False,
         )
         support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
         append_patch_logical_measurement(
-            raw_circuit,
+            uncultivated_circuit,
             basis,
             patch_qubits=list(qreg),
             support=support,
             classical_bits=list(creg),
             destructive=True,
         )
-        raw_counts = sim.run(raw_circuit, shots=NUM_SHOTS).result().get_counts()
-        # Compute expectation from raw counts (no postselection)
-        raw_even = 0
-        raw_total = 0
-        for bitstring, count in raw_counts.items():
+        uncultivated_simulator = build_noisy_aer_simulator(
+            uncultivated_circuit,
+            p_1q=NOISE_P_1Q,
+            p_2q=NOISE_P_2Q,
+            p_measure=NOISE_MEASURE,
+            p_reset=NOISE_RESET,
+            seed_simulator=NOISY_TEST_SEED,
+        )
+        uncultivated_counts = (
+            uncultivated_simulator.run(
+                uncultivated_circuit,
+                shots=NUM_SHOTS,
+            )
+            .result()
+            .get_counts()
+        )
+        uncultivated_even = 0
+        uncultivated_total = 0
+        for bitstring, count in uncultivated_counts.items():
             parity = sum(qiskit_bit_value(bitstring, i) for i in range(3)) % 2
-            raw_total += count
+            uncultivated_total += count
             if parity == 0:
-                raw_even += count
-        raw_expectation = (2 * raw_even - raw_total) / raw_total
-        raw_error = abs(raw_expectation - INV_SQRT2)
+                uncultivated_even += count
+        uncultivated_expectation = (2 * uncultivated_even - uncultivated_total) / uncultivated_total
+        uncultivated_error = abs(uncultivated_expectation - INV_SQRT2)
 
         # --- Cultivation with postselection ---
-        circuit = _build_multi_round_cultivation_circuit(1, basis, injected_state="T")
-        cult_counts = sim.run(circuit, shots=NUM_SHOTS).result().get_counts()
-        cult_expectation, n_accepted = _postselect_multi_round(cult_counts, 1)
-        cult_error = abs(cult_expectation - INV_SQRT2)
+        cultivated_circuit = _build_cultivation_with_logical_measurement(
+            "T",
+            basis,
+        )
+        cultivated_simulator = build_noisy_aer_simulator(
+            cultivated_circuit,
+            p_1q=NOISE_P_1Q,
+            p_2q=NOISE_P_2Q,
+            p_measure=NOISE_MEASURE,
+            p_reset=NOISE_RESET,
+            seed_simulator=NOISY_TEST_SEED,
+        )
+        cultivated_counts = (
+            cultivated_simulator.run(
+                cultivated_circuit,
+                shots=NUM_SHOTS,
+            )
+            .result()
+            .get_counts()
+        )
+        cultivated_expectation, n_accepted = _postselect_multi_round(
+            cultivated_counts,
+            1,
+        )
+        cultivated_error = abs(cultivated_expectation - INV_SQRT2)
 
         assert n_accepted > 50, f"Too few accepted shots ({n_accepted}) for basis={basis}"
 
-        # Postselected cultivation should yield fidelity at least as good
-        # as raw encoder (and typically better since it filters detectable errors).
+        # Postselected cultivation should yield fidelity at least as good as
+        # the uncultivated encoder and typically filters detectable errors.
         # The margin allows for statistical variance in seeded noisy tests.
-        assert cult_error <= raw_error + 0.10, (
-            f"Basis {basis}: cultivation (|ev-ideal|={cult_error:.4f}) should not be "
-            f"much worse than raw encoder (|ev-ideal|={raw_error:.4f})"
+        assert cultivated_error <= uncultivated_error + 0.10, (
+            f"Basis {basis}: cultivation (|ev-ideal|={cultivated_error:.4f}) should "
+            "not be much worse than the uncultivated encoder "
+            f"(|ev-ideal|={uncultivated_error:.4f})"
         )

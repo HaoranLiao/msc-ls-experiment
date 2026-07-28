@@ -1,6 +1,6 @@
 """Shared utility helpers for the research codebase."""
 
-from magic_state_cultivation.utils.circuit import (
+from magic_state_cultivation.utils.circuit_qiskit import (
     apply_ty,
     apply_ty_dagger,
     ibm_backend_available,

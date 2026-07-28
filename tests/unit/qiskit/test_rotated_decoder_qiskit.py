@@ -134,7 +134,11 @@ class TestD3SingleFaultDecoding:
         x_deltas = {name: deltas[name] for name in X_NAMES}
 
         # Step 6: Decode.
-        return z_deltas, x_deltas, _d3_decoder().decode(z_deltas=z_deltas, x_deltas=x_deltas)
+        return (
+            z_deltas,
+            x_deltas,
+            _d3_decoder().decode(z_deltas=z_deltas, x_deltas=x_deltas),
+        )
 
     @pytest.mark.parametrize("qubit_label", d3.SURFACE_ORDER)
     @pytest.mark.parametrize("pauli", ["X", "Y", "Z"])
@@ -474,7 +478,11 @@ class TestD5SingleFaultDecoding:
         deltas = frame.compare_many(all_det, update=False)
         z_deltas = {name: deltas[name] for name in D5_Z_NAMES}
         x_deltas = {name: deltas[name] for name in D5_X_NAMES}
-        return z_deltas, x_deltas, _d5_decoder().decode(z_deltas=z_deltas, x_deltas=x_deltas)
+        return (
+            z_deltas,
+            x_deltas,
+            _d5_decoder().decode(z_deltas=z_deltas, x_deltas=x_deltas),
+        )
 
     @pytest.mark.parametrize("qubit_label", d5.SURFACE_ORDER)
     @pytest.mark.parametrize("pauli", ["X", "Y", "Z"])

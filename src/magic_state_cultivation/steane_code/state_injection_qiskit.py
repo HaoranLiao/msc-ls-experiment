@@ -5,10 +5,13 @@ from typing import Literal
 
 from qiskit import QuantumCircuit
 from qiskit.circuit import Qubit
-from qiskit.circuit.classical import expr
 
-from magic_state_cultivation.utils.circuit import apply_ty
-from magic_state_cultivation.utils.normalize import normalize_pauli_char
+from magic_state_cultivation.utils.circuit_qiskit import (
+    append_logical_measurement_on_indexed_qubits,
+    append_parity_measurement,
+    apply_ty,
+)
+from magic_state_cultivation.utils.normalize import resolve_patch_qubits
 
 InjectedStateName = Literal["0", "1", "+", "-", "i", "-i", "Y+", "Y-", "S", "T", "Tdg", "Ty"]
 PatchCrumbleGateName = Literal["h", "cz"]
@@ -174,15 +177,17 @@ def append_steane_state_injection_encoder(
         The injected physical state is prepared on ``data_qubits[0]``.
     injected_state
         The unencoded single-qubit state to inject on qubit 0. The output is
-        the corresponding encoded state in the Steane code.  Mutually exclusive
-        with ``injection_azimuth_angle``: supply at most one.  When both are
-        ``None`` the default ``"T"`` state is injected.
+        the corresponding encoded state in the Steane code. This may be
+        ``None`` because it is mutually exclusive with
+        ``injection_azimuth_angle``.
     injection_azimuth_angle
         When set, inject ``Rz(injection_azimuth_angle)|+⟩ = (|0⟩ + e^{i·angle}|1⟩)/√2``
         on qubit 0 instead of a named ``injected_state``.  This sweeps the
         equatorial (XY-plane) states relevant to T-state cultivation:
         ``angle=π/4`` reproduces ``|T⟩ = T|+⟩``, the +1 eigenstate of
-        ``H_XY = (X + Y)/√2``. Mutually exclusive with ``injected_state``.
+        ``H_XY = (X + Y)/√2``. This may be ``None`` because it is mutually
+        exclusive with ``injected_state``. At most one of these arguments may
+        be non-``None``; when both are ``None``, ``injected_state="T"`` is used.
     add_barriers
         Whether to insert a barrier between preparation and encoding stages.
     """
@@ -200,8 +205,8 @@ def append_steane_state_injection_encoder(
         circuit.h(dq[0])
         circuit.rz(injection_azimuth_angle, dq[0])
     else:
-        state: InjectedStateName = injected_state if injected_state is not None else "T"
         # Prepare the unencoded state on q0.
+        state: InjectedStateName = injected_state if injected_state is not None else "T"
         prepare_physical_state(circuit, dq[0], state)
 
     # Prepare the three Steane codeword-superposition variables u, v, w.
@@ -255,43 +260,28 @@ def append_stabilizer_measurement(
     aq = list(ancilla_qubits)
     cb = list(classical_bits)
 
-    # X-stabilizer measurement: ancilla in |+⟩, CX(anc→data), H, measure.
+    # X-stabilizer measurements.
     for i, support in enumerate(X_STABILIZERS):
-        circuit.h(aq[i])
-        for abstract_q in support:
-            circuit.cx(aq[i], dq[abstract_q])
-        circuit.h(aq[i])
-        circuit.measure(aq[i], cb[i])
+        append_parity_measurement(
+            circuit,
+            "X",
+            data_qubits=[dq[abstract_q] for abstract_q in support],
+            ancilla_qubit=aq[i],
+            classical_bit=cb[i],
+        )
 
     if add_barriers:
         circuit.barrier()
 
-    # Z-stabilizer measurement: ancilla in |0⟩, CX(data→anc), measure.
+    # Z-stabilizer measurements.
     for i, support in enumerate(Z_STABILIZERS):
-        for abstract_q in support:
-            circuit.cx(dq[abstract_q], aq[3 + i])
-        circuit.measure(aq[3 + i], cb[3 + i])
-
-
-def _logical_y_parity_is_inverted(support: tuple[int, ...]) -> bool:
-    """Return whether measuring the physical Y string reverses logical Y.
-
-    The CSS-self-dual Steane code uses the same support for X_L and Z_L. For
-    an odd support of weight w,
-
-        prod(Y_j) = i**(w - 1) Y_L,  where Y_L = i X_L Z_L.
-
-    Thus every weight-3 Steane representative obeys prod(Y_j) = -Y_L.
-    """
-    if len(support) % 2 == 0:
-        raise ValueError("Y logical support must have odd weight.")
-    return len(support) % 4 == 3
-
-
-def _append_classical_bit_flip(circuit: QuantumCircuit, classical_bit) -> None:
-    """Flip a measured classical bit during circuit execution."""
-    clbit = circuit.clbits[classical_bit] if isinstance(classical_bit, int) else classical_bit
-    circuit.store(clbit, expr.bit_not(clbit))
+        append_parity_measurement(
+            circuit,
+            "Z",
+            data_qubits=[dq[abstract_q] for abstract_q in support],
+            ancilla_qubit=aq[3 + i],
+            classical_bit=cb[3 + i],
+        )
 
 
 def append_logical_measurement(
@@ -330,67 +320,17 @@ def append_logical_measurement(
     """
     if len(data_qubits) < 7:
         raise ValueError("data_qubits must contain at least 7 qubits.")
-    basis = normalize_pauli_char(basis)
-    if basis == "Y":
-        assert set(DEFAULT_LOGICAL_X) == set(DEFAULT_LOGICAL_Z)
-    if support is None:
-        support = DEFAULT_LOGICAL_Z if basis == "Z" else DEFAULT_LOGICAL_X
-
-    dq = list(data_qubits)
-    cb = list(classical_bits)
-
-    # Correct the sign of weight-3 Y strings so parity 0 continues to denote
-    # the +1 logical eigenvalue, just as it does for X_L and Z_L.
-    invert_y_parity = basis == "Y" and _logical_y_parity_is_inverted(support)
-
-    if destructive:
-        if len(cb) < len(support):
-            raise ValueError(
-                "classical_bits must have at least "
-                f"{len(support)} entries for destructive measurement."
-            )
-        if basis == "X":
-            for abstract_q in support:
-                circuit.h(dq[abstract_q])
-        elif basis == "Y":
-            for abstract_q in support:
-                # Sdg then H rotates a Y-basis measurement into the
-                # computational basis.
-                circuit.sdg(dq[abstract_q])
-                circuit.h(dq[abstract_q])
-        for i, abstract_q in enumerate(support):
-            circuit.measure(dq[abstract_q], cb[i])
-        if invert_y_parity:
-            # For weight three, Y_L = -prod(Y_j). Flip one stored bit after
-            # measurement so its parity directly reports the Y_L outcome.
-            _append_classical_bit_flip(circuit, cb[0])
-    else:
-        if ancilla_qubit is None:
-            raise ValueError("ancilla_qubit is required for non-destructive measurement.")
-        if len(cb) < 1:
-            raise ValueError(
-                "classical_bits must have at least 1 entry for non-destructive measurement."
-            )
-        if basis == "Z":
-            for abstract_q in support:
-                circuit.cx(dq[abstract_q], ancilla_qubit)
-            circuit.measure(ancilla_qubit, cb[0])
-        elif basis == "X":
-            circuit.h(ancilla_qubit)
-            for abstract_q in support:
-                circuit.cx(ancilla_qubit, dq[abstract_q])
-            circuit.h(ancilla_qubit)
-            circuit.measure(ancilla_qubit, cb[0])
-        else:
-            circuit.h(ancilla_qubit)
-            for abstract_q in support:
-                circuit.cy(ancilla_qubit, dq[abstract_q])
-            circuit.h(ancilla_qubit)
-            circuit.measure(ancilla_qubit, cb[0])
-            if invert_y_parity:
-                # The ancilla measured prod(Y_j); flip its stored result so
-                # the classical bit directly reports Y_L.
-                _append_classical_bit_flip(circuit, cb[0])
+    append_logical_measurement_on_indexed_qubits(
+        circuit,
+        basis,
+        indexed_qubits=data_qubits,
+        default_logical_x=DEFAULT_LOGICAL_X,
+        default_logical_z=DEFAULT_LOGICAL_Z,
+        support=support,
+        ancilla_qubit=ancilla_qubit,
+        classical_bits=classical_bits,
+        destructive=destructive,
+    )
 
 
 # =============================================================================
@@ -566,23 +506,23 @@ def append_patch_steane_state_injection_encoder(
     patch_qubits
         Eleven Qiskit qubits indexed by the 11-site patch labels.
     injected_state
-        The physical one-qubit state to inject on site 0.  Mutually exclusive
-        with ``injection_azimuth_angle``: supply at most one.  When both are
-        ``None`` the default ``"T"`` state is injected.
+        The physical one-qubit state to inject on site 0. This may be ``None``
+        because it is mutually exclusive with ``injection_azimuth_angle``.
     injection_azimuth_angle
         When set, inject ``Rz(injection_azimuth_angle)|+⟩`` on the injection
-        site instead of a named ``injected_state``.  Mutually exclusive with
-        ``injected_state``.
+        site instead of a named state. This may be ``None`` because it is
+        mutually exclusive with ``injected_state``. At most one argument may
+        be non-``None``; when both are ``None``, ``injected_state="T"`` is used.
     add_barriers
         Whether to insert a barrier after the encoder.
     """
-    if len(patch_qubits) < 11:
-        raise ValueError("patch_qubits must contain at least 11 qubits.")
-
-    q = list(patch_qubits)
+    patch_qubits = resolve_patch_qubits(
+        patch_qubits,
+        expected_count=NUM_PATCH_QUBITS,
+    )
 
     # Map abstract encoder qubits 0–6 to the corresponding patch data sites.
-    data_qubits = [q[_STEANE_TO_PATCH[i]] for i in range(7)]
+    data_qubits = [patch_qubits[_STEANE_TO_PATCH[i]] for i in range(7)]
     append_steane_state_injection_encoder(
         circuit,
         data_qubits=data_qubits,
@@ -610,7 +550,7 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
     ``append_patch_steane_state_injection_encoder``, this schedule uses all four
     helper sites for nearest-neighbor routing.
 
-    After the encoder layers the four helper sites should be in |0⟩.  When
+    After the encoder layers the four helper sites should be in |0⟩. When
     ``helper_classical_bits`` is provided the helpers are measured into those
     bits so the caller can postselect on all-zero outcomes.
 
@@ -622,19 +562,20 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
         Eleven Qiskit qubits indexed by the 11-site patch labels.
     injected_state
         The physical one-qubit state to inject on patch site 4, the center data
-        site corresponding to Hirano label ``0``.  Mutually exclusive with
-        ``injection_azimuth_angle``: supply at most one.  When both are ``None`` the
-        default ``"T"`` state is injected.
+        site corresponding to Hirano label ``0``. This may be ``None`` because
+        it is mutually exclusive with ``injection_azimuth_angle``.
     injection_azimuth_angle
         When set, inject ``Rz(injection_azimuth_angle)|+⟩ = (|0⟩ + e^{i·angle}|1⟩)/√2``
         on the injection site instead of a named ``injected_state``.  This
         sweeps the equatorial (XY-plane) states relevant to T-state cultivation:
         ``angle=π/4`` reproduces ``|T⟩ = T|+⟩``, the +1 eigenstate of
-        ``H_XY = (X + Y)/√2``. Used for kickback-tomography angle scans.
-        Mutually exclusive with ``injected_state``.
+        ``H_XY = (X + Y)/√2``. Used for kickback-tomography angle scans. This
+        may be ``None`` because it is mutually exclusive with
+        ``injected_state``. At most one argument may be non-``None``; when both
+        are ``None``, ``injected_state="T"`` is used.
     helper_classical_bits
-        Four classical bits for the helper-site measurements.  When ``None``
-        (default) the helper sites are not measured.
+        Four classical bits for the helper-site measurements. When ``None``
+        (default), the helper sites are not measured.
     add_barriers
         Whether to keep Crumble tick-layer barriers.
 
@@ -643,8 +584,10 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
     QuantumCircuit
         The same circuit object, after appending the encoder.
     """
-    if len(patch_qubits) < 11:
-        raise ValueError("patch_qubits must contain at least 11 qubits.")
+    patch_qubits = resolve_patch_qubits(
+        patch_qubits,
+        expected_count=NUM_PATCH_QUBITS,
+    )
     if injected_state is not None and injection_azimuth_angle is not None:
         raise ValueError(
             "injected_state and injection_azimuth_angle are mutually exclusive; supply at most one."
@@ -654,20 +597,25 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
             f"helper_classical_bits must contain at least {len(PATCH_HELPER_SITES)} bits."
         )
 
-    q = list(patch_qubits)
-
     if injection_azimuth_angle is not None:
-        circuit.h(q[PATCH_CRUMBLE_INJECTION_SITE])
-        circuit.rz(injection_azimuth_angle, q[PATCH_CRUMBLE_INJECTION_SITE])
+        circuit.h(patch_qubits[PATCH_CRUMBLE_INJECTION_SITE])
+        circuit.rz(
+            injection_azimuth_angle,
+            patch_qubits[PATCH_CRUMBLE_INJECTION_SITE],
+        )
     else:
         state: InjectedStateName = injected_state if injected_state is not None else "T"
-        prepare_physical_state(circuit, q[PATCH_CRUMBLE_INJECTION_SITE], state)
+        prepare_physical_state(
+            circuit,
+            patch_qubits[PATCH_CRUMBLE_INJECTION_SITE],
+            state,
+        )
     if add_barriers:
         circuit.barrier(label="crumble injection input")
 
     _append_patch_crumble_encoder_layers(
         circuit,
-        patch_qubits=q,
+        patch_qubits=patch_qubits,
         add_barriers=add_barriers,
     )
     if add_barriers:
@@ -676,7 +624,7 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
     if helper_classical_bits is not None:
         hcb = list(helper_classical_bits)
         for i, site in enumerate(PATCH_HELPER_SITES):
-            circuit.measure(q[site], hcb[i])
+            circuit.measure(patch_qubits[site], hcb[i])
 
     return circuit
 
@@ -691,6 +639,23 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
 #   Stabilizer 1 (3, 4, 8, 9)  → helper site 6
 #   Stabilizer 2 (4, 5, 9, 10) → helper site 7
 PATCH_STABILIZER_ANCILLA_SITES: tuple[int, ...] = (2, 6, 7)
+
+
+def resolve_patch_stabilizer_indices(
+    stabilizer_indices: Sequence[int] | None,
+) -> tuple[int, ...]:
+    """Validate and return an ordered selection of patch stabilizer indices."""
+    if stabilizer_indices is None:
+        selected_indices = tuple(range(len(PATCH_X_STABILIZERS)))
+    else:
+        selected_indices = tuple(stabilizer_indices)
+    if not selected_indices:
+        raise ValueError("stabilizer_indices must select at least one stabilizer.")
+    if len(set(selected_indices)) != len(selected_indices) or any(
+        not 0 <= index < len(PATCH_X_STABILIZERS) for index in selected_indices
+    ):
+        raise ValueError("stabilizer_indices must contain distinct indices in [0, 2].")
+    return selected_indices
 
 
 def append_patch_stabilizer_measurement(
@@ -729,60 +694,55 @@ def append_patch_stabilizer_measurement(
     add_barriers
         Whether to insert a barrier between X and Z stabilizer rounds.
     """
-    if len(patch_qubits) < 11:
-        raise ValueError("patch_qubits must contain at least 11 qubits.")
+    patch_qubits = resolve_patch_qubits(
+        patch_qubits,
+        expected_count=NUM_PATCH_QUBITS,
+    )
     if basis not in {"x", "z", "both"}:
         raise ValueError("basis must be 'x', 'z', or 'both'.")
 
-    if stabilizer_indices is None:
-        selected_indices = tuple(range(len(PATCH_X_STABILIZERS)))
-    else:
-        selected_indices = tuple(stabilizer_indices)
-    if not selected_indices:
-        raise ValueError("stabilizer_indices must select at least one stabilizer.")
-    if len(set(selected_indices)) != len(selected_indices) or any(
-        not 0 <= index < len(PATCH_X_STABILIZERS) for index in selected_indices
-    ):
-        raise ValueError("stabilizer_indices must contain distinct indices in [0, 2].")
+    selected_indices = resolve_patch_stabilizer_indices(stabilizer_indices)
 
     required_bits = len(selected_indices) * (2 if basis == "both" else 1)
     if len(classical_bits) < required_bits:
         raise ValueError(f"classical_bits must contain at least {required_bits} bits.")
 
-    pq = list(patch_qubits)
     cb = list(classical_bits)
     anc_sites = PATCH_STABILIZER_ANCILLA_SITES
     selected_ancilla_sites = tuple(anc_sites[index] for index in selected_indices)
 
     if basis in {"x", "both"}:
-        # X-stabilizer measurement: ancilla in |+⟩, CX(anc→data), H, measure.
+        # X-stabilizer measurements.
         for site in selected_ancilla_sites:
-            circuit.reset(pq[site])
+            circuit.reset(patch_qubits[site])
         for output_index, stabilizer_index in enumerate(selected_indices):
             ancilla_site = anc_sites[stabilizer_index]
             support = PATCH_X_STABILIZERS[stabilizer_index]
-            circuit.h(pq[ancilla_site])
-            for site in support:
-                circuit.cx(pq[ancilla_site], pq[site])
-            circuit.h(pq[ancilla_site])
-            circuit.measure(pq[ancilla_site], cb[output_index])
+            append_parity_measurement(
+                circuit,
+                "X",
+                data_qubits=[patch_qubits[site] for site in support],
+                ancilla_qubit=patch_qubits[ancilla_site],
+                classical_bit=cb[output_index],
+            )
 
     if basis == "both" and add_barriers:
         circuit.barrier()
 
     if basis in {"z", "both"}:
-        # Z-stabilizer measurement: ancilla in |0⟩, CX(data→anc), measure.
+        # Z-stabilizer measurements.
         for site in selected_ancilla_sites:
-            circuit.reset(pq[site])
+            circuit.reset(patch_qubits[site])
         classical_offset = len(selected_indices) if basis == "both" else 0
         for output_index, stabilizer_index in enumerate(selected_indices):
             ancilla_site = anc_sites[stabilizer_index]
             support = PATCH_Z_STABILIZERS[stabilizer_index]
-            for site in support:
-                circuit.cx(pq[site], pq[ancilla_site])
-            circuit.measure(
-                pq[ancilla_site],
-                cb[classical_offset + output_index],
+            append_parity_measurement(
+                circuit,
+                "Z",
+                data_qubits=[patch_qubits[site] for site in support],
+                ancilla_qubit=patch_qubits[ancilla_site],
+                classical_bit=cb[classical_offset + output_index],
             )
 
 
@@ -825,65 +785,18 @@ def append_patch_logical_measurement(
         If True (default), directly measure the data qubits in the
         appropriate basis. If False, use the ancilla for indirect measurement.
     """
-    if len(patch_qubits) < 11:
-        raise ValueError("patch_qubits must contain at least 11 qubits.")
-    basis = normalize_pauli_char(basis)
-    if basis == "Y":
-        assert set(PATCH_DEFAULT_LOGICAL_X) == set(PATCH_DEFAULT_LOGICAL_Z)
-    if support is None:
-        support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
-
-    pq = list(patch_qubits)
-    cb = list(classical_bits)
-
-    # Keep parity 0 aligned with the +1 logical eigenvalue.
-    invert_y_parity = basis == "Y" and _logical_y_parity_is_inverted(support)
-
-    if destructive:
-        if len(cb) < len(support):
-            raise ValueError(
-                "classical_bits must have at least "
-                f"{len(support)} entries for destructive measurement."
-            )
-        if basis == "X":
-            for site in support:
-                circuit.h(pq[site])
-        elif basis == "Y":
-            for site in support:
-                # Sdg then H rotates a Y-basis measurement into the
-                # computational basis.
-                circuit.sdg(pq[site])
-                circuit.h(pq[site])
-        for i, site in enumerate(support):
-            circuit.measure(pq[site], cb[i])
-        if invert_y_parity:
-            # For weight three, Y_L = -prod(Y_j). Flip one stored bit after
-            # measurement so its parity directly reports the Y_L outcome.
-            _append_classical_bit_flip(circuit, cb[0])
-    else:
-        if ancilla_qubit is None:
-            raise ValueError("ancilla_qubit is required for non-destructive measurement.")
-        if len(cb) < 1:
-            raise ValueError(
-                "classical_bits must have at least 1 entry for non-destructive measurement."
-            )
-        if basis == "Z":
-            for site in support:
-                circuit.cx(pq[site], ancilla_qubit)
-            circuit.measure(ancilla_qubit, cb[0])
-        elif basis == "X":
-            circuit.h(ancilla_qubit)
-            for site in support:
-                circuit.cx(ancilla_qubit, pq[site])
-            circuit.h(ancilla_qubit)
-            circuit.measure(ancilla_qubit, cb[0])
-        else:
-            circuit.h(ancilla_qubit)
-            for site in support:
-                circuit.cy(ancilla_qubit, pq[site])
-            circuit.h(ancilla_qubit)
-            circuit.measure(ancilla_qubit, cb[0])
-            if invert_y_parity:
-                # The ancilla measured prod(Y_j); flip its stored result so
-                # the classical bit directly reports Y_L.
-                _append_classical_bit_flip(circuit, cb[0])
+    patch_qubits = resolve_patch_qubits(
+        patch_qubits,
+        expected_count=NUM_PATCH_QUBITS,
+    )
+    append_logical_measurement_on_indexed_qubits(
+        circuit,
+        basis,
+        indexed_qubits=patch_qubits,
+        default_logical_x=PATCH_DEFAULT_LOGICAL_X,
+        default_logical_z=PATCH_DEFAULT_LOGICAL_Z,
+        support=support,
+        ancilla_qubit=ancilla_qubit,
+        classical_bits=classical_bits,
+        destructive=destructive,
+    )

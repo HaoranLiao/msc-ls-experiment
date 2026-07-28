@@ -5,10 +5,11 @@ from collections.abc import Sequence
 from qiskit import QuantumCircuit
 
 from magic_state_cultivation.steane_code.state_injection_qiskit import (
+    NUM_PATCH_QUBITS,
     InjectedStateName,
     append_patch_steane_state_injection_encoder_crumble_sequences,
 )
-from magic_state_cultivation.utils.normalize import qiskit_bit_value
+from magic_state_cultivation.utils.normalize import qiskit_bit_value, resolve_patch_qubits
 
 # =============================================================================
 # 11-site cultivation patch layout
@@ -75,6 +76,7 @@ Finally, the inverse single-qubit rotation is applied to all data sites.
 DATA_SITES: tuple[int, ...] = (0, 3, 4, 5, 8, 9, 10)
 HELPER_SITES: tuple[int, ...] = (1, 2, 6, 7)
 FOLDED_MEASUREMENT_SITE: int = 7
+CULTIVATION_MEASUREMENTS_PER_ROUND: int = 1 + len(HELPER_SITES)
 
 
 # =============================================================================
@@ -143,10 +145,13 @@ def append_cnot_layer_from_site_labels(
         Iterable of ``(control_site, target_site)`` pairs.
     """
     for control_site, target_site in cnot_layer:
-        circuit.cx(patch_qubits[control_site], patch_qubits[target_site])
+        circuit.cx(
+            patch_qubits[control_site],
+            patch_qubits[target_site],
+        )
 
 
-def _filter_fold_layer(
+def filter_fold_layer(
     layer: Sequence[tuple[int, int]],
     *,
     skip_cx_1_4: bool = False,
@@ -196,7 +201,7 @@ def append_fold_network(
         Takes precedence over skip_cx_1_4.
     """
     for layer_index, layer in enumerate(FOLD_LAYERS, start=3):
-        filtered = _filter_fold_layer(layer, skip_cx_1_4=skip_cx_1_4, skip_cx=skip_cx)
+        filtered = filter_fold_layer(layer, skip_cx_1_4=skip_cx_1_4, skip_cx=skip_cx)
         append_cnot_layer_from_site_labels(circuit, patch_qubits, filtered)
         if add_barriers:
             circuit.barrier(label=f"fold step {layer_index}")
@@ -234,7 +239,7 @@ def append_unfold_network(
         reversed(FOLD_LAYERS),
         strict=False,
     ):
-        filtered = _filter_fold_layer(layer, skip_cx_1_4=skip_cx_1_4, skip_cx=skip_cx)
+        filtered = filter_fold_layer(layer, skip_cx_1_4=skip_cx_1_4, skip_cx=skip_cx)
         append_cnot_layer_from_site_labels(
             circuit,
             patch_qubits,
@@ -244,7 +249,7 @@ def append_unfold_network(
             circuit.barrier(label=f"unfold step {reverse_step_index}")
 
 
-def append_hadamard_axis_projection_round(
+def append_h_xy_projection_round(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
@@ -291,18 +296,21 @@ def append_hadamard_axis_projection_round(
         If given, omit the specified (control, target) CX gate.
         Takes precedence over skip_cx_1_4.
     """
-    if len(patch_qubits) != 11:
-        raise ValueError("patch_qubits must contain exactly 11 qubits.")
+    patch_qubits = resolve_patch_qubits(
+        patch_qubits,
+        expected_count=NUM_PATCH_QUBITS,
+    )
 
-    if len(classical_bits) != 5:
-        raise ValueError("classical_bits must contain exactly 5 bits.")
+    if len(classical_bits) != CULTIVATION_MEASUREMENTS_PER_ROUND:
+        raise ValueError(
+            "classical_bits must contain exactly " f"{CULTIVATION_MEASUREMENTS_PER_ROUND} bits."
+        )
 
-    q = list(patch_qubits)
     c = list(classical_bits)
 
     # Step 2 helper preparation.
     for helper_site in HELPER_SITES:
-        reset_to_plus(circuit, q[helper_site])
+        reset_to_plus(circuit, patch_qubits[helper_site])
 
     if add_barriers:
         circuit.barrier(label="prepare helpers")
@@ -310,7 +318,7 @@ def append_hadamard_axis_projection_round(
     # Step 2 data rotations. Transversal T rotates H_XY onto the folded
     # X measurement axis; the fold CNOT network is unchanged.
     for data_site in DATA_SITES:
-        circuit.t(q[data_site])
+        circuit.t(patch_qubits[data_site])
 
     if add_barriers:
         circuit.barrier(label="T on data")
@@ -318,20 +326,24 @@ def append_hadamard_axis_projection_round(
     # Steps 3--6: fold.
     append_fold_network(
         circuit,
-        q,
+        patch_qubits,
         add_barriers=add_barriers,
         skip_cx_1_4=skip_cx_1_4,
         skip_cx=skip_cx,
     )
 
     # Step 7: measure the folded observable on site 7.
-    measure_in_x_basis(circuit, q[FOLDED_MEASUREMENT_SITE], c[0])
+    measure_in_x_basis(
+        circuit,
+        patch_qubits[FOLDED_MEASUREMENT_SITE],
+        c[0],
+    )
 
     if add_barriers:
         circuit.barrier(label="measure folded observable")
 
     # Reprepare site 7 to make the time-reversed unfold explicit.
-    reset_to_plus(circuit, q[FOLDED_MEASUREMENT_SITE])
+    reset_to_plus(circuit, patch_qubits[FOLDED_MEASUREMENT_SITE])
 
     if add_barriers:
         circuit.barrier(label="reset folded site")
@@ -339,7 +351,7 @@ def append_hadamard_axis_projection_round(
     # Steps 8--12: unfold.
     append_unfold_network(
         circuit,
-        q,
+        patch_qubits,
         add_barriers=add_barriers,
         skip_cx_1_4=skip_cx_1_4,
         skip_cx=skip_cx,
@@ -347,14 +359,18 @@ def append_hadamard_axis_projection_round(
 
     # Step 13: measure the four helper / M qubits.
     for bit_index, helper_site in enumerate(HELPER_SITES, start=1):
-        measure_in_x_basis(circuit, q[helper_site], c[bit_index])
+        measure_in_x_basis(
+            circuit,
+            patch_qubits[helper_site],
+            c[bit_index],
+        )
 
     if add_barriers:
         circuit.barrier(label="measure helpers")
 
     # Step 14: undo the single-qubit basis rotation on the data.
     for data_site in DATA_SITES:
-        circuit.tdg(q[data_site])
+        circuit.tdg(patch_qubits[data_site])
 
     if add_barriers:
         circuit.barrier(label="T dagger on data")
@@ -365,7 +381,7 @@ def append_hadamard_axis_projection_round(
 # =============================================================================
 
 
-def append_steane_injection_with_h_cultivation(
+def append_steane_injection_and_cultivation(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
@@ -397,8 +413,6 @@ def append_steane_injection_with_h_cultivation(
     skip_cx
         If given, omit the specified (control, target) CX gate.
     """
-    if len(patch_qubits) < 11:
-        raise ValueError("patch_qubits must contain at least 11 qubits.")
     if len(encoder_classical_bits) < 4:
         raise ValueError("encoder_classical_bits must contain at least 4 bits.")
     n_rounds = len(cultivation_classical_bits)
@@ -416,7 +430,7 @@ def append_steane_injection_with_h_cultivation(
         circuit.barrier(label="state injection")
 
     for r in range(n_rounds):
-        append_hadamard_axis_projection_round(
+        append_h_xy_projection_round(
             circuit,
             patch_qubits=patch_qubits,
             classical_bits=cultivation_classical_bits[r],

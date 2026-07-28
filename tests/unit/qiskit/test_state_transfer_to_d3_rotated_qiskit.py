@@ -223,12 +223,8 @@ class TestTransferCircuitLayout:
             add_barriers=False,
         )
 
-        assert "post_transfer_surface_z" not in {
-            register.name for register in circuit.cregs
-        }
-        assert "post_transfer_surface_x" not in {
-            register.name for register in circuit.cregs
-        }
+        assert "post_transfer_surface_z" not in {register.name for register in circuit.cregs}
+        assert "post_transfer_surface_x" not in {register.name for register in circuit.cregs}
 
     def test_optional_post_transfer_stage_appends_three_full_rounds_before_readout(
         self,
@@ -253,8 +249,7 @@ class TestTransferCircuitLayout:
         logical_measurements = [
             position
             for position, instruction in enumerate(circuit.data)
-            if instruction.operation.name == "measure"
-            and instruction.clbits[0] in logical_bits
+            if instruction.operation.name == "measure" and instruction.clbits[0] in logical_bits
         ]
 
         assert registers["post_transfer_surface_z"].size == (
@@ -273,9 +268,7 @@ class TestTransferCircuitLayout:
         )
         assert len(measurements["post_transfer_surface_z_rounds"]) == 3
         assert len(measurements["post_transfer_surface_x_rounds"]) == 3
-        assert len(
-            measurements["post_transfer_surface_syndrome_delta_history"]
-        ) == 3
+        assert len(measurements["post_transfer_surface_syndrome_delta_history"]) == 3
 
     def test_top_x_recovery_is_unconditional(self) -> None:
         circuit = d3t.build_steane_to_rotated_d3_lattice_surgery_circuit(
@@ -313,7 +306,11 @@ class TestTransferMeasurementParsing:
             "surface_x_recovery",
             "surface_logical_z",
         }
-        assert measurements["registers"]["surface_logical_z"]["labels"] == ("a", "b", "c")
+        assert measurements["registers"]["surface_logical_z"]["labels"] == (
+            "a",
+            "b",
+            "c",
+        )
         assert measurements["registers"]["surface_init_z"]["labels"] == (
             "Z_abde",
             "Z_cf",
@@ -396,7 +393,9 @@ class TestTransferMeasurementParsing:
         assert toggled_frame.has_x_flip("surface") != original_frame.has_x_flip("surface")
         assert toggled_frame.has_z_flip("surface") == original_frame.has_z_flip("surface")
 
-    def test_merged_interval_surface_syndrome_rounds_have_noiseless_deltas(self) -> None:
+    def test_merged_interval_surface_syndrome_rounds_have_noiseless_deltas(
+        self,
+    ) -> None:
         measurements = _one_parsed_shot(
             injected_state="0",
             include_cultivation=False,
@@ -420,7 +419,9 @@ class TestTransferMeasurementParsing:
         assert d3t.TRANSFER_SPEC.z_labels == ("Z_abde", "Z_cf", "Z_dg", "Z_efhi")
         assert d3t.TRANSFER_SPEC.merged_x_labels == ("X_bcef", "X_degh", "X_hi")
 
-    def test_restored_top_x_check_completes_post_transfer_stabilizer_frame(self) -> None:
+    def test_restored_top_x_check_completes_post_transfer_stabilizer_frame(
+        self,
+    ) -> None:
         measurements = _one_parsed_shot(
             injected_state="0",
             include_cultivation=False,
@@ -474,7 +475,9 @@ class TestTransferMeasurementParsing:
 class TestLogicalTransferCorrectness:
     """Verify corrected target readout matches the transferred logical state."""
 
-    def test_transfer_preserves_logical_z_basis_states_without_cultivation(self) -> None:
+    def test_transfer_preserves_logical_z_basis_states_without_cultivation(
+        self,
+    ) -> None:
         zero_counts = _corrected_logical_counts(
             injected_state="0",
             include_cultivation=False,
@@ -489,7 +492,9 @@ class TestLogicalTransferCorrectness:
         assert zero_counts[0] == sum(zero_counts.values())
         assert one_counts[1] == sum(one_counts.values())
 
-    def test_transfer_preserves_logical_x_basis_states_without_cultivation(self) -> None:
+    def test_transfer_preserves_logical_x_basis_states_without_cultivation(
+        self,
+    ) -> None:
         plus_counts = _corrected_logical_counts(
             injected_state="+",
             include_cultivation=False,
@@ -611,7 +616,9 @@ class TestLogicalTransferCorrectness:
                 == 0
             )
 
-    def test_logical_support_readout_preserves_basis_states_without_cultivation(self) -> None:
+    def test_logical_support_readout_preserves_basis_states_without_cultivation(
+        self,
+    ) -> None:
         zero_measurements = _one_parsed_shot(
             injected_state="0",
             include_cultivation=False,

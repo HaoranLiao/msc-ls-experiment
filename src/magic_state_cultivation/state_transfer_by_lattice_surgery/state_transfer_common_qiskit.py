@@ -25,12 +25,8 @@ from typing import Literal
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
-from magic_state_cultivation.steane_code import (
-    magic_state_cultivation_qiskit as cultivation,
-)
-from magic_state_cultivation.steane_code import (
-    state_injection_qiskit as steane,
-)
+from magic_state_cultivation.steane_code import magic_state_cultivation_qiskit as cultivation
+from magic_state_cultivation.steane_code import state_injection_qiskit as steane
 from magic_state_cultivation.surface_code.post_transfer import rotated_post_transfer
 
 SurfaceReadoutBasis = Literal["X", "Z"]
@@ -402,9 +398,7 @@ def append_steane_lattice_surgery_verification_round(
             patch_qubits=patch_qubits,
             classical_bits=[classical_bit],
             basis=check_name[0].lower(),
-            stabilizer_indices=(
-                STEANE_LS_VERIFICATION_STABILIZER_INDICES[check_name],
-            ),
+            stabilizer_indices=(STEANE_LS_VERIFICATION_STABILIZER_INDICES[check_name],),
             add_barriers=False,
         )
 
@@ -472,8 +466,7 @@ def append_surface_top_x_recovery_measurements(
         circuit,
         surface_qubits=surface_data_qubits(registers, spec.surface_order),
         x_ancillas=[
-            registers.surface_x_ancillas[label.lower()][0]
-            for label in spec.top_x_recovery_labels
+            registers.surface_x_ancillas[label.lower()][0] for label in spec.top_x_recovery_labels
         ],
         classical_bits=classical_bits,
         round_label="recover surface top edge",
@@ -575,9 +568,7 @@ def append_lattice_surgery_circuit(
         spec,
         include_cultivation=include_cultivation,
         surface_readout_basis=surface_readout_basis,
-        include_post_transfer_stabilizer_rounds=(
-            include_post_transfer_stabilizer_rounds
-        ),
+        include_post_transfer_stabilizer_rounds=(include_post_transfer_stabilizer_rounds),
     )
     cregs = {
         register_spec.name: ClassicalRegister(len(register_spec.labels), register_spec.name)
@@ -605,7 +596,7 @@ def append_lattice_surgery_circuit(
         helper_classical_bits=list(cregs["enc_helpers"]),
     )
     if include_cultivation:
-        cultivation.append_hadamard_axis_projection_round(
+        cultivation.append_h_xy_projection_round(
             circuit,
             patch_qubits=patch_qubits,
             classical_bits=list(cregs["cult"]),
@@ -698,12 +689,8 @@ def append_lattice_surgery_circuit(
     rotated_post_transfer.append_rotated_post_transfer(
         circuit,
         surface_qubits=surface_data_qubits(qregs, spec.surface_order),
-        z_ancillas=[
-            qregs.surface_z_ancillas[label.lower()][0] for label in spec.z_labels
-        ],
-        x_ancillas=[
-            qregs.surface_x_ancillas[label.lower()][0] for label in spec.x_labels
-        ],
+        z_ancillas=[qregs.surface_z_ancillas[label.lower()][0] for label in spec.z_labels],
+        x_ancillas=[qregs.surface_x_ancillas[label.lower()][0] for label in spec.x_labels],
         z_classical_bits=(
             list(cregs["post_transfer_surface_z"])
             if include_post_transfer_stabilizer_rounds
@@ -714,12 +701,8 @@ def append_lattice_surgery_circuit(
             if include_post_transfer_stabilizer_rounds
             else ()
         ),
-        stabilizer_rounds=(
-            spec.distance if include_post_transfer_stabilizer_rounds else 0
-        ),
-        append_stabilizer_round=(
-            spec.surface_code_operations.append_stabilizer_round
-        ),
+        stabilizer_rounds=(spec.distance if include_post_transfer_stabilizer_rounds else 0),
+        append_stabilizer_round=(spec.surface_code_operations.append_stabilizer_round),
         logical_readout_basis=surface_readout_basis,
         logical_x=spec.logical_x,
         logical_z=spec.logical_z,
@@ -728,9 +711,7 @@ def append_lattice_surgery_circuit(
             if surface_readout_basis is not None
             else ()
         ),
-        append_logical_measurement=(
-            spec.surface_code_operations.append_logical_measurement
-        ),
+        append_logical_measurement=(spec.surface_code_operations.append_logical_measurement),
         add_barriers=add_barriers,
     )
     return circuit

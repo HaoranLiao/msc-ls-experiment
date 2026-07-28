@@ -48,9 +48,7 @@ def parse_transfer_measurements(
     specs = transfer_classical_register_specs(
         spec,
         include_cultivation=include_cultivation,
-        include_post_transfer_stabilizer_rounds=(
-            include_post_transfer_stabilizer_rounds
-        ),
+        include_post_transfer_stabilizer_rounds=(include_post_transfer_stabilizer_rounds),
         surface_readout_basis=surface_readout_basis,
     )
     labels_by_register = [(register.name, register.labels) for register in specs]
@@ -131,18 +129,14 @@ def parse_transfer_measurements(
             f"surface_logical_{surface_readout_basis.lower()}"
         )
 
-    parsed["merged_surface_syndrome_delta_history"] = (
-        merged_surface_syndrome_delta_history(
-            parsed,
-            merged_surface_z_labels=spec.z_labels,
-            merged_surface_x_labels=spec.merged_x_labels,
-        )
+    parsed["merged_surface_syndrome_delta_history"] = merged_surface_syndrome_delta_history(
+        parsed,
+        merged_surface_z_labels=spec.z_labels,
+        merged_surface_x_labels=spec.merged_x_labels,
     )
-    parsed["post_transfer_surface_stabilizer_frame"] = (
-        post_transfer_surface_stabilizer_frame(
-            parsed,
-            spec=spec,
-        )
+    parsed["post_transfer_surface_stabilizer_frame"] = post_transfer_surface_stabilizer_frame(
+        parsed,
+        spec=spec,
     )
     if include_post_transfer_stabilizer_rounds:
         parsed["post_transfer_surface_syndrome_delta_history"] = (
@@ -161,12 +155,12 @@ def parse_transfer_measurements(
     )
     parsed["merged_surface_qec_recovery"] = recovery
     parsed["merged_surface_qec_recoveries"] = (recovery,)
-    parsed["merged_surface_logical_x_byproduct"] = len(
-        recovery.x_error_sites & frozenset(spec.logical_z)
-    ) % 2
-    parsed["merged_surface_logical_z_byproduct"] = len(
-        recovery.z_error_sites & frozenset(spec.logical_x)
-    ) % 2
+    parsed["merged_surface_logical_x_byproduct"] = (
+        len(recovery.x_error_sites & frozenset(spec.logical_z)) % 2
+    )
+    parsed["merged_surface_logical_z_byproduct"] = (
+        len(recovery.z_error_sites & frozenset(spec.logical_x)) % 2
+    )
     return parsed
 
 
@@ -191,9 +185,7 @@ def post_transfer_surface_stabilizer_frame(
     if set(final_z) != set(spec.z_labels):
         raise ValueError("final merged surface-Z round does not match the transfer spec.")
     if set(final_compatible_x) != set(spec.merged_x_labels):
-        raise ValueError(
-            "final compatible surface-X round does not match the transfer spec."
-        )
+        raise ValueError("final compatible surface-X round does not match the transfer spec.")
     if set(restored_x) != set(spec.top_x_recovery_labels):
         raise ValueError("restored top-edge surface-X checks do not match the transfer spec.")
 
@@ -300,10 +292,7 @@ def merged_surface_syndrome_delta_history(
 
     z_frame = StabilizerFrame()
     z_frame.record_many(
-        {
-            label: measurements["surface_init_z"][label]
-            for label in merged_surface_z_labels
-        }
+        {label: measurements["surface_init_z"][label] for label in merged_surface_z_labels}
     )
     delta_history: list[dict[str, dict[str, int]]] = []
     for merged_z, merged_x in zip(
@@ -316,10 +305,7 @@ def merged_surface_syndrome_delta_history(
         delta_history.append(
             {
                 "z": dict(z_delta_layer),
-                "x": {
-                    label: x_delta_layer[label]
-                    for label in merged_surface_x_labels
-                },
+                "x": {label: x_delta_layer[label] for label in merged_surface_x_labels},
             }
         )
     return delta_history
@@ -385,9 +371,7 @@ def merged_surface_qec_recovery(
         x_stabilizers={label: x_stabilizers[label] for label in measured_x_labels},
     )
     return decoder.decode(
-        z_delta_history=[
-            delta_layer["z"] for delta_layer in delta_history if delta_layer["z"]
-        ],
+        z_delta_history=[delta_layer["z"] for delta_layer in delta_history if delta_layer["z"]],
         x_delta_history=[delta_layer["x"] for delta_layer in delta_history],
     )
 

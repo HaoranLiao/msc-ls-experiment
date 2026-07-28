@@ -18,9 +18,7 @@ def repeated_round_labels(
     if rounds < 0:
         raise ValueError("rounds must be nonnegative.")
     return tuple(
-        f"round{round_index + 1}_{label}"
-        for round_index in range(rounds)
-        for label in labels
+        f"round{round_index + 1}_{label}" for round_index in range(rounds) for label in labels
     )
 
 
@@ -55,13 +53,9 @@ def append_rotated_post_transfer(
     required_z_bits = stabilizer_rounds * len(z_ancillas)
     required_x_bits = stabilizer_rounds * len(x_ancillas)
     if len(z_bits) < required_z_bits:
-        raise ValueError(
-            f"z_classical_bits must contain at least {required_z_bits} bits."
-        )
+        raise ValueError(f"z_classical_bits must contain at least {required_z_bits} bits.")
     if len(x_bits) < required_x_bits:
-        raise ValueError(
-            f"x_classical_bits must contain at least {required_x_bits} bits."
-        )
+        raise ValueError(f"x_classical_bits must contain at least {required_x_bits} bits.")
 
     for round_index in range(stabilizer_rounds):
         z_start = round_index * len(z_ancillas)
@@ -79,9 +73,7 @@ def append_rotated_post_transfer(
             add_barriers=False,
         )
         if add_barriers:
-            circuit.barrier(
-                label=f"post-transfer full stabilizer round {round_index + 1}"
-            )
+            circuit.barrier(label=f"post-transfer full stabilizer round {round_index + 1}")
 
     if logical_readout_basis is None:
         return
@@ -99,6 +91,4 @@ def append_rotated_post_transfer(
         destructive=True,
     )
     if add_barriers:
-        circuit.barrier(
-            label=f"destructive logical {normalized_basis}_{''.join(support)}"
-        )
+        circuit.barrier(label=f"destructive logical {normalized_basis}_{''.join(support)}")

@@ -172,12 +172,8 @@ class TestD5TransferCircuitLayout:
             add_barriers=False,
         )
 
-        assert "post_transfer_surface_z" not in {
-            register.name for register in circuit.cregs
-        }
-        assert "post_transfer_surface_x" not in {
-            register.name for register in circuit.cregs
-        }
+        assert "post_transfer_surface_z" not in {register.name for register in circuit.cregs}
+        assert "post_transfer_surface_x" not in {register.name for register in circuit.cregs}
 
     def test_optional_post_transfer_stage_allocates_five_full_rounds(self) -> None:
         circuit = d5t.build_steane_to_rotated_d5_lattice_surgery_circuit(
@@ -200,8 +196,7 @@ class TestD5TransferCircuitLayout:
         logical_measurements = [
             position
             for position, instruction in enumerate(circuit.data)
-            if instruction.operation.name == "measure"
-            and instruction.clbits[0] in logical_bits
+            if instruction.operation.name == "measure" and instruction.clbits[0] in logical_bits
         ]
 
         assert registers["post_transfer_surface_z"].size == (
@@ -282,7 +277,10 @@ class TestD5TransferMeasurementParsing:
             "surface_x_recovery",
             "surface_logical_z",
         }
-        assert measurements["registers"]["surface_x_recovery"]["labels"] == ("X_ab", "X_cd")
+        assert measurements["registers"]["surface_x_recovery"]["labels"] == (
+            "X_ab",
+            "X_cd",
+        )
         assert measurements["registers"]["surface_init_z"]["labels"] == d5t.TRANSFER_SPEC.z_labels
         assert measurements["registers"]["surface_logical_z"]["labels"] == (
             "a",
@@ -327,7 +325,9 @@ class TestD5TransferMeasurementParsing:
 
         assert analysis.transfer_acceptance_succeeds(measurements)
 
-    def test_merged_interval_surface_syndrome_rounds_have_noiseless_deltas(self) -> None:
+    def test_merged_interval_surface_syndrome_rounds_have_noiseless_deltas(
+        self,
+    ) -> None:
         measurements = _one_parsed_shot(
             injected_state="0",
             surface_readout_basis=None,
@@ -397,14 +397,18 @@ class TestD5TransferMeasurementParsing:
 class TestD5LogicalTransferCorrectness:
     """Verify corrected target readout matches transferred logical basis states."""
 
-    def test_transfer_preserves_logical_z_basis_states_without_cultivation(self) -> None:
+    def test_transfer_preserves_logical_z_basis_states_without_cultivation(
+        self,
+    ) -> None:
         zero_counts = _corrected_logical_counts(injected_state="0", basis="Z")
         one_counts = _corrected_logical_counts(injected_state="1", basis="Z")
 
         assert zero_counts[0] == sum(zero_counts.values())
         assert one_counts[1] == sum(one_counts.values())
 
-    def test_transfer_preserves_logical_x_basis_states_without_cultivation(self) -> None:
+    def test_transfer_preserves_logical_x_basis_states_without_cultivation(
+        self,
+    ) -> None:
         plus_counts = _corrected_logical_counts(injected_state="+", basis="X")
         minus_counts = _corrected_logical_counts(injected_state="-", basis="X")
 

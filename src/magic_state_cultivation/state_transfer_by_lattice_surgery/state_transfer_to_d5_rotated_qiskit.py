@@ -113,9 +113,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
         TRANSFER_SPEC,
         injected_state=injected_state,
         include_cultivation=include_cultivation,
-        include_post_transfer_stabilizer_rounds=(
-            include_post_transfer_stabilizer_rounds
-        ),
+        include_post_transfer_stabilizer_rounds=(include_post_transfer_stabilizer_rounds),
         surface_readout_basis=surface_readout_basis,
         add_barriers=add_barriers,
     )
@@ -133,8 +131,6 @@ def parse_transfer_measurements(
         bitstring,
         spec=TRANSFER_SPEC,
         include_cultivation=include_cultivation,
-        include_post_transfer_stabilizer_rounds=(
-            include_post_transfer_stabilizer_rounds
-        ),
+        include_post_transfer_stabilizer_rounds=(include_post_transfer_stabilizer_rounds),
         surface_readout_basis=surface_readout_basis,
     )

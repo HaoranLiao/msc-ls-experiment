@@ -16,11 +16,7 @@ from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit.quantum_info import SparsePauliOp, Statevector
 from qiskit_aer import AerSimulator
 
-from magic_state_cultivation.decoding import (
-    PauliFrame,
-    StabilizerFrame,
-    SteaneDecoder,
-)
+from magic_state_cultivation.decoding import PauliFrame, StabilizerFrame, SteaneDecoder
 from magic_state_cultivation.noise import append_pauli_faults
 from magic_state_cultivation.steane_code.decoding.decoder import (
     SYNDROME_BIT_LABELS,
@@ -150,12 +146,12 @@ def _assert_logical_expectations(
 ) -> None:
     """Assert corrected ⟨Z_L⟩ and ⟨X_L⟩ match expected values for the state."""
     expected_z, expected_x = _EXPECTED[state]
-    assert corrected_z == pytest.approx(expected_z, abs=TOLERANCE), (
-        f"{label}: ⟨Z_L⟩ = {corrected_z:.6f}, expected {expected_z:.6f}"
-    )
-    assert corrected_x == pytest.approx(expected_x, abs=TOLERANCE), (
-        f"{label}: ⟨X_L⟩ = {corrected_x:.6f}, expected {expected_x:.6f}"
-    )
+    assert corrected_z == pytest.approx(
+        expected_z, abs=TOLERANCE
+    ), f"{label}: ⟨Z_L⟩ = {corrected_z:.6f}, expected {expected_z:.6f}"
+    assert corrected_x == pytest.approx(
+        expected_x, abs=TOLERANCE
+    ), f"{label}: ⟨X_L⟩ = {corrected_x:.6f}, expected {expected_x:.6f}"
 
 
 # ===========================================================================

@@ -3,6 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TypeVar
+
+_QubitT = TypeVar("_QubitT")
+
+
+def resolve_patch_qubits(
+    patch_qubits: Sequence[_QubitT],
+    *,
+    expected_count: int,
+) -> list[_QubitT]:
+    """Validate an exact patch size and return the qubits as a list."""
+    if len(patch_qubits) != expected_count:
+        raise ValueError(f"patch_qubits must contain exactly {expected_count} qubits.")
+    return list(patch_qubits)
 
 
 def normalize_bit(bit: int | bool) -> int:

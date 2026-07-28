@@ -16,7 +16,8 @@ from typing import Literal
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
 from magic_state_cultivation.steane_code.magic_state_cultivation_qiskit import (
-    append_hadamard_axis_projection_round,
+    CULTIVATION_MEASUREMENTS_PER_ROUND,
+    append_h_xy_projection_round,
 )
 from magic_state_cultivation.steane_code.state_injection_qiskit import (
     InjectedStateName,
@@ -27,7 +28,6 @@ from magic_state_cultivation.utils.normalize import qiskit_bit_value
 
 FinalStabilizerMode = Literal["x", "z", "both", "none"]
 
-KT_CULTIVATION_BITS_PER_ROUND = 5
 KT_STABILIZER_BITS_PER_CYCLE = 6
 KT_DEFAULT_QEC_CYCLE_INDICES: tuple[int, ...] = (1, 3)
 KT_FULL_QEC_CYCLE_INDICES: tuple[int, ...] = (1, 2, 3, 4)
@@ -148,10 +148,10 @@ class KickbackTomographySummary:
 # =============================================================================
 
 
-def _cultivation_round_bits_from_positions(
+def cultivation_round_bits_from_positions(
     positions: Sequence[int],
 ) -> KickbackCultivationRoundBits:
-    if len(positions) < KT_CULTIVATION_BITS_PER_ROUND:
+    if len(positions) < CULTIVATION_MEASUREMENTS_PER_ROUND:
         raise ValueError("cultivation register must contain at least 5 bit positions.")
     return KickbackCultivationRoundBits(
         folded_root=positions[0],
@@ -159,7 +159,7 @@ def _cultivation_round_bits_from_positions(
     )
 
 
-def _normalise_qec_cycle_indices(qec_cycle_indices: Iterable[int]) -> tuple[int, ...]:
+def normalize_qec_cycle_indices(qec_cycle_indices: Iterable[int]) -> tuple[int, ...]:
     indices = tuple(qec_cycle_indices)
     if any(index not in _VALID_QEC_CYCLE_INDICES for index in indices):
         raise ValueError("qec_cycle_indices may only contain 1, 2, 3, and 4.")
@@ -168,7 +168,7 @@ def _normalise_qec_cycle_indices(qec_cycle_indices: Iterable[int]) -> tuple[int,
     return tuple(sorted(indices))
 
 
-def _final_stabilizer_bit_count(mode: FinalStabilizerMode) -> int:
+def final_stabilizer_bit_count(mode: FinalStabilizerMode) -> int:
     if mode == "both":
         return KT_STABILIZER_BITS_PER_CYCLE
     if mode in {"x", "z"}:
@@ -187,12 +187,18 @@ def build_kickback_tomography_experiment(
     final_stabilizer_basis: FinalStabilizerMode = "x",
     add_barriers: bool = True,
 ) -> KickbackTomographyExperiment:
-    """Build a Steane-patch kickback tomography experiment.
+    """Build a Steane-patch ``H_XY`` kickback-tomography experiment.
 
-    Stage order is
+    The protocol order is
 
     ``encode -> QEC1 -> [prepare cultivation] -> QEC2 -> KT measure
     -> QEC3 -> KT check -> QEC4 -> final stabilizer check``.
+
+    ``injected_state`` and ``injection_azimuth_angle`` are mutually exclusive.
+    A supplied angle injects the equatorial state ``Rz(angle)|+⟩`` instead of a
+    named state; ``angle=π/4`` gives ``|T⟩``. If neither is supplied, ``|T⟩`` is
+    injected. Every cultivation and KT round measures
+    ``H_XY = (X + Y) / sqrt(2)``.
 
     ``qec_cycle_indices`` uses the paper's one-based numbering. The default
     schedule is ``KT_DEFAULT_QEC_CYCLE_INDICES = (1, 3)``; pass
@@ -204,12 +210,6 @@ def build_kickback_tomography_experiment(
     ``final_stabilizer_basis="x"`` matches the final detector block drawn in
     Fig. 3. ``"z"`` selects the equivalent CSS basis, ``"both"`` measures all
     six stabilizers, and ``"none"`` omits the final check.
-
-    When ``injection_azimuth_angle`` is given, inject ``Rz(injection_azimuth_angle)|+⟩`` instead
-    of the named ``injected_state`` — an equatorial state sweep where
-    ``angle=π/4`` reproduces ``|T⟩``.
-
-    Every cultivation and KT round measures ``H_XY = (X + Y) / sqrt(2)``.
     """
 
     if injected_state is not None and injection_azimuth_angle is not None:
@@ -217,11 +217,11 @@ def build_kickback_tomography_experiment(
             "injected_state and injection_azimuth_angle are mutually exclusive; supply at most one."
         )
 
-    qec_indices = _normalise_qec_cycle_indices(qec_cycle_indices)
+    qec_indices = normalize_qec_cycle_indices(qec_cycle_indices)
 
     patch = QuantumRegister(11, "patch")
     prep_creg = (
-        ClassicalRegister(KT_CULTIVATION_BITS_PER_ROUND, "prep_cult")
+        ClassicalRegister(CULTIVATION_MEASUREMENTS_PER_ROUND, "prep_cult")
         if include_preparation_cultivation
         else None
     )
@@ -229,9 +229,9 @@ def build_kickback_tomography_experiment(
         index: ClassicalRegister(KT_STABILIZER_BITS_PER_CYCLE, f"qec_{index}")
         for index in qec_indices
     }
-    kt_measure_creg = ClassicalRegister(KT_CULTIVATION_BITS_PER_ROUND, "kt_measure")
-    kt_check_creg = ClassicalRegister(KT_CULTIVATION_BITS_PER_ROUND, "kt_check")
-    final_bit_count = _final_stabilizer_bit_count(final_stabilizer_basis)
+    kt_measure_creg = ClassicalRegister(CULTIVATION_MEASUREMENTS_PER_ROUND, "kt_measure")
+    kt_check_creg = ClassicalRegister(CULTIVATION_MEASUREMENTS_PER_ROUND, "kt_check")
+    final_bit_count = final_stabilizer_bit_count(final_stabilizer_basis)
     final_creg = ClassicalRegister(final_bit_count, "final_stab") if final_bit_count else None
 
     classical_registers: list[ClassicalRegister] = []
@@ -263,7 +263,7 @@ def build_kickback_tomography_experiment(
 
     if include_preparation_cultivation:
         assert prep_creg is not None
-        append_hadamard_axis_projection_round(
+        append_h_xy_projection_round(
             circuit,
             patch_qubits=patch_qubits,
             classical_bits=list(prep_creg),
@@ -278,7 +278,7 @@ def build_kickback_tomography_experiment(
             add_barriers=add_barriers,
         )
 
-    append_hadamard_axis_projection_round(
+    append_h_xy_projection_round(
         circuit,
         patch_qubits=patch_qubits,
         classical_bits=list(kt_measure_creg),
@@ -293,7 +293,7 @@ def build_kickback_tomography_experiment(
             add_barriers=add_barriers,
         )
 
-    append_hadamard_axis_projection_round(
+    append_h_xy_projection_round(
         circuit,
         patch_qubits=patch_qubits,
         classical_bits=list(kt_check_creg),
@@ -318,11 +318,10 @@ def build_kickback_tomography_experiment(
         )
 
     qec_positions = tuple(
-        tuple(circuit.find_bit(bit).index for bit in qec_registers[index])
-        for index in qec_indices
+        tuple(circuit.find_bit(bit).index for bit in qec_registers[index]) for index in qec_indices
     )
     preparation_bits = (
-        _cultivation_round_bits_from_positions(
+        cultivation_round_bits_from_positions(
             tuple(circuit.find_bit(bit).index for bit in prep_creg),
         )
         if prep_creg is not None
@@ -330,10 +329,10 @@ def build_kickback_tomography_experiment(
     )
     layout = KickbackTomographyBitLayout(
         preparation_round=preparation_bits,
-        tomography_measurement_round=_cultivation_round_bits_from_positions(
+        tomography_measurement_round=cultivation_round_bits_from_positions(
             tuple(circuit.find_bit(bit).index for bit in kt_measure_creg),
         ),
-        tomography_check_round=_cultivation_round_bits_from_positions(
+        tomography_check_round=cultivation_round_bits_from_positions(
             tuple(circuit.find_bit(bit).index for bit in kt_check_creg),
         ),
         qec_cycles=qec_positions,
@@ -379,10 +378,7 @@ def kickback_tomography_shot_is_retained(
     ``retain_measure_check_disagreement=False`` to reject disagreements.
     """
 
-    if any(
-        qiskit_bit_value(bitstring, position)
-        for position in layout.detector_positions
-    ):
+    if any(qiskit_bit_value(bitstring, position) for position in layout.detector_positions):
         return False
 
     measurement_round_root = qiskit_bit_value(
