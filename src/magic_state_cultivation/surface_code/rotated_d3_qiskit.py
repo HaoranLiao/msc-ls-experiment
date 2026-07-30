@@ -353,18 +353,21 @@ def append_logical_measurement(
     circuit
         Circuit being modified.
     basis
-        Which logical to measure: ``"Z"`` for Z_L or ``"X"`` for X_L.
+        Which logical Pauli to measure: ``"X"``, ``"Y"``, or ``"Z"``.
     surface_qubits
         Nine data qubits ordered according to ``SURFACE_ORDER``.
     support
         Data-qubit labels for the logical representative to measure. Defaults
-        to ``DEFAULT_LOGICAL_Z`` or ``DEFAULT_LOGICAL_X``.
+        to ``DEFAULT_LOGICAL_Z`` or ``DEFAULT_LOGICAL_X`` for Z or X. For Y,
+        omit this argument to measure ``i X_L Z_L`` from the distinct default
+        X and Z supports.
     ancilla_qubit
         For non-destructive measurement, the ancilla qubit to use. Required
         when ``destructive=False``.
     classical_bits
         Classical bits for measurement results. For destructive: one per
-        support qubit. For non-destructive: at least one bit.
+        measured physical qubit (the union of the X and Z supports for Y).
+        For non-destructive: at least one bit.
     destructive
         If True (default), directly measure the data qubits in the
         appropriate basis. If False, use an ancilla for indirect measurement.

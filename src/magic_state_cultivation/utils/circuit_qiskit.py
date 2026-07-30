@@ -7,8 +7,23 @@ from typing import Any
 
 from qiskit import QuantumCircuit
 from qiskit.circuit.classical import expr
+from qiskit.dagcircuit import DAGCircuit
+from qiskit.transpiler import TransformationPass
 
 from magic_state_cultivation.utils.normalize import normalize_pauli_char
+
+# ---------------------------------------------------------------------------
+# Circuit transformations
+# ---------------------------------------------------------------------------
+
+
+class RemoveResetOperations(TransformationPass):
+    """Remove every reset operation from a completed circuit."""
+
+    def run(self, dag: DAGCircuit) -> DAGCircuit:
+        dag.remove_all_ops_named("reset")
+        return dag
+
 
 # ---------------------------------------------------------------------------
 # Gate decompositions
@@ -43,22 +58,35 @@ def apply_ty_dagger(circuit: QuantumCircuit, qubit) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Parity measurements & Logical measurements
+# Parity measurements
 # ---------------------------------------------------------------------------
 
 
-def logical_y_parity_is_inverted(support: tuple[int, ...]) -> bool:
+def logical_y_parity_is_inverted(x_z_overlap: tuple[int, ...]) -> bool:
     """Return whether measuring the physical Y string reverses logical Y.
 
-    For an odd support of weight w,
+    Let ``S_X`` and ``S_Z`` be the supports of X-only and Z-only logical
+    representatives for the same encoded qubit, and let
+    ``m = len(S_X & S_Z)``. Each shared site contributes ``XZ = -ZX``, while
+    operators on different sites commute, so
 
-        prod(Y_j) = i**(w - 1) Y_L,  where Y_L = i X_L Z_L.
+        X_L Z_L = (-1)**m Z_L X_L.
 
-    Thus a weight-3 representative obeys ``prod(Y_j) = -Y_L``.
+    Logical X and Z for the same encoded qubit must anticommute; therefore
+    ``m`` must be odd for these X-only and Z-only representatives. General
+    mixed-Pauli representatives may have even total support overlap—the
+    invariant requirement is an odd number of sites whose local Paulis
+    anticommute.
+
+    The default rotated-surface-code representatives have ``m = 1``;
+    the common weight-three Steane representatives have ``m = 3``.
     """
-    if len(support) % 2 == 0:
-        raise ValueError("Y logical support must have odd weight.")
-    return len(support) % 4 == 3
+    if len(x_z_overlap) % 2 == 0:
+        raise ValueError(
+            "X-only logical-X and Z-only logical-Z representatives for the same "
+            "encoded qubit must have odd support overlap so they anticommute."
+        )
+    return len(x_z_overlap) % 4 == 3
 
 
 def append_classical_bit_flip(circuit: QuantumCircuit, classical_bit) -> None:
@@ -102,14 +130,6 @@ def append_scheduled_parity_measurements(
     classical_bits
         Destination bits for the ancilla measurements, in schedule order.
         Additional entries are untouched.
-
-    Raises
-    ------
-    ValueError
-        If a basis is not a supported Pauli label, fewer bases, ancillas, or
-        classical bits are supplied than schedules, schedule lengths differ,
-        one ancilla is assigned to more than one schedule row, or one data
-        qubit appears in more than one measurement during the same time step.
 
     Notes
     -----
@@ -210,11 +230,6 @@ def append_parity_measurement(
     classical_bit
         Destination bit for the ancilla measurement.
 
-    Raises
-    ------
-    ValueError
-        If ``basis`` is not a supported Pauli label.
-
     Notes
     -----
     This helper does not reset the ancilla or insert barriers. It delegates to
@@ -233,6 +248,86 @@ def append_parity_measurement(
         ancilla_qubits=(ancilla_qubit,),
         classical_bits=(classical_bit,),
     )
+
+
+# ---------------------------------------------------------------------------
+# Logical measurements
+# ---------------------------------------------------------------------------
+
+
+def append_pauli_string_measurement(
+    circuit: QuantumCircuit,
+    *,
+    paulis: Sequence[str],
+    data_qubits: Sequence,
+    ancilla_qubit,
+    classical_bit,
+) -> None:
+    """Append a non-destructive measurement of a physical Pauli string.
+
+    ``paulis`` and ``data_qubits`` give the Pauli acting on each physical
+    qubit. Homogeneous strings reuse :func:`append_parity_measurement`. Mixed
+    strings prepare the ancilla in ``|+>``, apply the corresponding controlled
+    Pauli from the ancilla to each data qubit, return the ancilla to the Z
+    basis, and measure it.
+
+    The ancilla is assumed to start in ``|0>``. This helper does not reset the
+    ancilla, insert barriers, or interpret an operator-specific outcome sign.
+    """
+    selected_paulis = tuple(normalize_pauli_char(pauli) for pauli in paulis)
+    selected_data_qubits = tuple(data_qubits)
+    if len(selected_paulis) != len(selected_data_qubits):
+        raise ValueError("paulis and data_qubits must have the same length.")
+    if len(selected_data_qubits) != len(set(selected_data_qubits)):
+        raise ValueError("a Pauli string can act on each data qubit at most once.")
+
+    if selected_paulis and len(set(selected_paulis)) == 1:
+        append_parity_measurement(
+            circuit,
+            selected_paulis[0],
+            data_qubits=selected_data_qubits,
+            ancilla_qubit=ancilla_qubit,
+            classical_bit=classical_bit,
+        )
+        return
+
+    circuit.h(ancilla_qubit)
+    for pauli, data_qubit in zip(selected_paulis, selected_data_qubits, strict=True):
+        if pauli == "X":
+            circuit.cx(ancilla_qubit, data_qubit)
+        elif pauli == "Y":
+            circuit.cy(ancilla_qubit, data_qubit)
+        elif pauli == "Z":
+            circuit.cz(ancilla_qubit, data_qubit)
+    circuit.h(ancilla_qubit)
+    circuit.measure(ancilla_qubit, classical_bit)
+
+
+def _logical_measurement_terms(
+    basis: str,
+    *,
+    logical_x_support: tuple[int, ...],
+    logical_z_support: tuple[int, ...],
+) -> tuple[tuple[tuple[int, str], ...], bool]:
+    """Resolve a logical Pauli into indexed physical-Pauli terms and its sign."""
+    if basis == "X":
+        return tuple((index, "X") for index in logical_x_support), False
+    if basis == "Z":
+        return tuple((index, "Z") for index in logical_z_support), False
+
+    logical_x_set = set(logical_x_support)
+    logical_z_set = set(logical_z_support)
+    if len(logical_x_set) != len(logical_x_support):
+        raise ValueError("logical_x_support must not contain duplicate indices.")
+    if len(logical_z_set) != len(logical_z_support):
+        raise ValueError("logical_z_support must not contain duplicate indices.")
+
+    x_z_overlap = tuple(index for index in logical_x_support if index in logical_z_set)
+    invert_parity = logical_y_parity_is_inverted(x_z_overlap)
+    terms = tuple(
+        (index, "Y" if index in logical_z_set else "X") for index in logical_x_support
+    ) + tuple((index, "Z") for index in logical_z_support if index not in logical_x_set)
+    return terms, invert_parity
 
 
 def append_logical_measurement_on_indexed_qubits(
@@ -258,9 +353,12 @@ def append_logical_measurement_on_indexed_qubits(
     indexed_qubits
         Physical qubits addressed by the integer indices in ``support``.
     default_logical_x, default_logical_z
-        Default supports used when ``support`` is omitted.
+        Default logical-X and logical-Z supports used when ``support`` is
+        omitted. Logical Y measures ``i X_L Z_L`` using both supports.
     support
-        Physical support expressed as indices into ``indexed_qubits``.
+        Physical support expressed as indices into ``indexed_qubits``. For X
+        or Z this overrides the corresponding default support. For Y it
+        denotes a common X/Z support, as used by the self-dual Steane code.
     ancilla_qubit
         Ancilla used for a non-destructive parity measurement.
     classical_bits
@@ -268,37 +366,42 @@ def append_logical_measurement_on_indexed_qubits(
     destructive
         Directly measure the support when true; otherwise measure its parity.
 
-    Logical-Y outcomes are sign-corrected so bit parity zero denotes the
-    logical ``+1`` eigenvalue.
+    A logical-Y measurement uses Y on the intersection of the selected
+    logical-X and logical-Z representatives, X on the X-only sites, and Z on
+    the Z-only sites. Outcomes are sign-corrected so bit parity zero denotes
+    the logical ``+1`` eigenvalue.
     """
     basis = normalize_pauli_char(basis)
-    if basis == "Y" and set(default_logical_x) != set(default_logical_z):
-        raise ValueError("logical Y requires common logical X and Z support.")
 
     qubits = list(indexed_qubits)
     measurement_bits = list(classical_bits)
-    selected_support = support
-    if selected_support is None:
-        selected_support = default_logical_z if basis == "Z" else default_logical_x
-
-    invert_y_parity = basis == "Y" and logical_y_parity_is_inverted(selected_support)
+    if support is not None:
+        logical_x_support = support if basis in {"X", "Y"} else default_logical_x
+        logical_z_support = support if basis in {"Z", "Y"} else default_logical_z
+    else:
+        logical_x_support = default_logical_x
+        logical_z_support = default_logical_z
+    measurement_terms, invert_parity = _logical_measurement_terms(
+        basis,
+        logical_x_support=logical_x_support,
+        logical_z_support=logical_z_support,
+    )
 
     if destructive:
-        if len(measurement_bits) < len(selected_support):
+        if len(measurement_bits) < len(measurement_terms):
             raise ValueError(
                 "classical_bits must have at least "
-                f"{len(selected_support)} entries for destructive measurement."
+                f"{len(measurement_terms)} entries for destructive measurement."
             )
 
-        if basis == "X":
-            for index in selected_support:
+        for index, physical_basis in measurement_terms:
+            if physical_basis == "X":
                 circuit.h(qubits[index])
-        elif basis == "Y":
-            for index in selected_support:
+            elif physical_basis == "Y":
                 circuit.sdg(qubits[index])
                 circuit.h(qubits[index])
 
-        for output_index, index in enumerate(selected_support):
+        for output_index, (index, _) in enumerate(measurement_terms):
             circuit.measure(qubits[index], measurement_bits[output_index])
     else:
         if ancilla_qubit is None:
@@ -308,15 +411,15 @@ def append_logical_measurement_on_indexed_qubits(
                 "classical_bits must have at least 1 entry for " "non-destructive measurement."
             )
 
-        append_parity_measurement(
+        append_pauli_string_measurement(
             circuit,
-            basis,
-            data_qubits=[qubits[index] for index in selected_support],
+            paulis=tuple(physical_basis for _, physical_basis in measurement_terms),
+            data_qubits=[qubits[index] for index, _ in measurement_terms],
             ancilla_qubit=ancilla_qubit,
             classical_bit=measurement_bits[0],
         )
 
-    if invert_y_parity:
+    if invert_parity:
         append_classical_bit_flip(circuit, measurement_bits[0])
 
 

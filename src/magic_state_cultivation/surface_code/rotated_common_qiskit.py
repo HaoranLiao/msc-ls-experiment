@@ -282,7 +282,17 @@ def append_logical_measurement(
     classical_bits: Sequence[object],
     destructive: bool = True,
 ) -> None:
-    """Append a logical measurement on a rotated surface-code patch."""
+    """Append a logical Pauli measurement on a rotated surface-code patch.
+
+    X and Z use their corresponding logical representative. Y measures
+    ``i X_L Z_L``: physical Y on the intersection of the logical-X and
+    logical-Z supports, X on the X-only sites, and Z on the Z-only sites.
+    Consequently, a destructive Y measurement requires one classical bit per
+    qubit in the union of the two supports.
+
+    ``support`` overrides the representative for X or Z. For Y, omit it so
+    the distinct surface-code X and Z representatives are both used.
+    """
     indexed_support = None if support is None else tuple(surface_index[label] for label in support)
     append_logical_measurement_on_indexed_qubits(
         circuit,

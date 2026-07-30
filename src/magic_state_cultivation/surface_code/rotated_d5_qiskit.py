@@ -341,7 +341,12 @@ def append_logical_measurement(
     classical_bits: Sequence[object],
     destructive: bool = True,
 ) -> None:
-    """Append a logical measurement on the rotated distance-5 patch."""
+    """Append an X, Y, or Z logical measurement on the distance-5 patch.
+
+    For Y, omit ``support`` to measure ``i X_L Z_L`` from the distinct
+    default logical-X and logical-Z supports. A destructive Y measurement
+    requires one classical bit per qubit in their union.
+    """
     rotated_common.append_logical_measurement(
         circuit,
         basis,
