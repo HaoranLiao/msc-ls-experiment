@@ -28,8 +28,12 @@ from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from magic_state_cultivation.steane_code import magic_state_cultivation_qiskit as cultivation
 from magic_state_cultivation.steane_code import state_injection_qiskit as steane
 from magic_state_cultivation.surface_code.post_transfer import rotated_post_transfer
+from magic_state_cultivation.utils.circuit_qiskit import (
+    resolve_logical_measurement_terms,
+)
+from magic_state_cultivation.utils.normalize import normalize_pauli_char
 
-SurfaceReadoutBasis = Literal["X", "Z"]
+SurfaceReadoutBasis = Literal["X", "Y", "Z"]
 LATTICE_SURGERY_ROUNDS = 3
 MergedBoundaryCheck = tuple[str, tuple[str, ...], tuple[str, ...]]
 CircuitAppender = Callable[..., None]
@@ -295,11 +299,17 @@ def transfer_classical_register_specs(
             ]
         )
     if surface_readout_basis is not None:
-        support = spec.logical_x if surface_readout_basis.upper() == "X" else spec.logical_z
+        surface_readout_basis = normalize_pauli_char(surface_readout_basis)
+        measurement_terms, _ = resolve_logical_measurement_terms(
+            surface_readout_basis,
+            logical_x_support=spec.logical_x,
+            logical_z_support=spec.logical_z,
+        )
+        selected_support = tuple(support_item for support_item, _ in measurement_terms)
         specs.append(
             ClassicalRegisterSpec(
                 f"surface_logical_{surface_readout_basis.lower()}",
-                tuple(support),
+                tuple(selected_support),
             )
         )
     return specs
@@ -531,11 +541,11 @@ def append_lattice_surgery_circuit(
         Whether to append ``spec.distance`` full surface X/Z stabilizer rounds
         after top-edge recovery and before any logical readout.
     surface_readout_basis
-        Optional ``"X"`` or ``"Z"`` analysis basis. ``None`` ends the appended
-        sequence immediately after top-edge recovery, matching the paper-facing
-        transfer boundary. Otherwise, the target's standard logical-operator
-        support is measured destructively. This terminal measurement is an
-        analysis addition, not a lattice-surgery round.
+        Optional ``"X"``, ``"Y"``, or ``"Z"`` analysis basis. ``None`` ends
+        the appended sequence immediately after top-edge recovery, matching
+        the paper-facing transfer boundary. Y uses the union of the target's
+        standard logical-X and logical-Z supports. This terminal destructive
+        measurement is an analysis addition, not a lattice-surgery round.
     add_barriers
         Whether to add labeled barriers between conceptual protocol stages.
         Barriers improve circuit inspection but do not change the measured
@@ -729,8 +739,8 @@ def build_lattice_surgery_circuit(
     #   (1 for d=3, 2 for d=5);
     # - post_transfer_surface_z/x: distance rounds of full syndromes, if enabled
     #   (12 Z + 12 X bits for d=3, 60 Z + 60 X bits for d=5);
-    # - surface_logical_x/z: one bit per logical-support qubit, if requested
-    #   (3 for d=3, 5 for d=5).
+    # - surface_logical_x/y/z: one bit per measured physical qubit, if requested
+    #   (Y uses the union of the logical-X and logical-Z supports).
     classical_specs = transfer_classical_register_specs(
         spec,
         include_cultivation=include_cultivation,

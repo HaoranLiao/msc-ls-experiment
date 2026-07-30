@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Hashable, Sequence
+from typing import Any, TypeVar
 
 from qiskit import QuantumCircuit
 from qiskit.circuit.classical import expr
@@ -11,6 +11,8 @@ from qiskit.dagcircuit import DAGCircuit
 from qiskit.transpiler import TransformationPass
 
 from magic_state_cultivation.utils.normalize import normalize_pauli_char
+
+_SupportT = TypeVar("_SupportT", bound=Hashable)
 
 # ---------------------------------------------------------------------------
 # Circuit transformations
@@ -62,7 +64,7 @@ def apply_ty_dagger(circuit: QuantumCircuit, qubit) -> None:
 # ---------------------------------------------------------------------------
 
 
-def logical_y_parity_is_inverted(x_z_overlap: tuple[int, ...]) -> bool:
+def logical_y_parity_is_inverted(x_z_overlap: Sequence[object]) -> bool:
     """Return whether measuring the physical Y string reverses logical Y.
 
     Let ``S_X`` and ``S_Z`` be the supports of X-only and Z-only logical
@@ -303,17 +305,17 @@ def append_pauli_string_measurement(
     circuit.measure(ancilla_qubit, classical_bit)
 
 
-def _logical_measurement_terms(
+def resolve_logical_measurement_terms(
     basis: str,
     *,
-    logical_x_support: tuple[int, ...],
-    logical_z_support: tuple[int, ...],
-) -> tuple[tuple[tuple[int, str], ...], bool]:
-    """Resolve a logical Pauli into indexed physical-Pauli terms and its sign."""
+    logical_x_support: tuple[_SupportT, ...],
+    logical_z_support: tuple[_SupportT, ...],
+) -> tuple[tuple[tuple[_SupportT, str], ...], bool]:
+    """Resolve a logical Pauli into ordered support-Pauli terms and its sign."""
     if basis == "X":
-        return tuple((index, "X") for index in logical_x_support), False
+        return tuple((support_item, "X") for support_item in logical_x_support), False
     if basis == "Z":
-        return tuple((index, "Z") for index in logical_z_support), False
+        return tuple((support_item, "Z") for support_item in logical_z_support), False
 
     logical_x_set = set(logical_x_support)
     logical_z_set = set(logical_z_support)
@@ -322,11 +324,20 @@ def _logical_measurement_terms(
     if len(logical_z_set) != len(logical_z_support):
         raise ValueError("logical_z_support must not contain duplicate indices.")
 
-    x_z_overlap = tuple(index for index in logical_x_support if index in logical_z_set)
+    x_z_overlap = tuple(
+        support_item
+        for support_item in logical_x_support
+        if support_item in logical_z_set
+    )
     invert_parity = logical_y_parity_is_inverted(x_z_overlap)
     terms = tuple(
-        (index, "Y" if index in logical_z_set else "X") for index in logical_x_support
-    ) + tuple((index, "Z") for index in logical_z_support if index not in logical_x_set)
+        (support_item, "Y" if support_item in logical_z_set else "X")
+        for support_item in logical_x_support
+    ) + tuple(
+        (support_item, "Z")
+        for support_item in logical_z_support
+        if support_item not in logical_x_set
+    )
     return terms, invert_parity
 
 
@@ -381,7 +392,7 @@ def append_logical_measurement_on_indexed_qubits(
     else:
         logical_x_support = default_logical_x
         logical_z_support = default_logical_z
-    measurement_terms, invert_parity = _logical_measurement_terms(
+    measurement_terms, invert_parity = resolve_logical_measurement_terms(
         basis,
         logical_x_support=logical_x_support,
         logical_z_support=logical_z_support,

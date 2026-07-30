@@ -9,6 +9,7 @@ Pauli frame.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import assert_never
 
 from magic_state_cultivation.decoding.pauli_frame import PauliFrame
 from magic_state_cultivation.decoding.stabilizer_frame import StabilizerFrame
@@ -481,6 +482,21 @@ def corrected_surface_logical_readout(
     """
     raw_bit = raw_surface_logical_readout(measurements)
     pauli_frame = transfer_pauli_frame(measurements)
-    if basis.upper() == "X":
-        return pauli_frame.interpret_x_readout("surface", raw_bit)
-    return pauli_frame.interpret_z_readout("surface", raw_bit)
+    match basis:
+        case "X":
+            return pauli_frame.interpret_x_readout("surface", raw_bit)
+        case "Y":
+            return pauli_frame.interpret_y_readout("surface", raw_bit)
+        case "Z":
+            return pauli_frame.interpret_z_readout("surface", raw_bit)
+    assert_never(basis)
+
+
+def logical_expectation_from_logical_counts(
+    logical_counts: Mapping[int, int],
+) -> float:
+    """Return the expectation represented by logical zero/one outcome counts."""
+    total = sum(logical_counts.values())
+    if total == 0:
+        raise ValueError("logical_counts must contain at least one accepted shot.")
+    return (logical_counts.get(0, 0) - logical_counts.get(1, 0)) / total

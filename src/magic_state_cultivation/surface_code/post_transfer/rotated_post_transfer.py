@@ -6,6 +6,11 @@ from collections.abc import Callable, Sequence
 
 from qiskit import QuantumCircuit
 
+from magic_state_cultivation.utils.circuit_qiskit import (
+    resolve_logical_measurement_terms,
+)
+from magic_state_cultivation.utils.normalize import normalize_pauli_char
+
 CircuitAppender = Callable[..., None]
 
 
@@ -79,17 +84,26 @@ def append_rotated_post_transfer(
     if logical_readout_basis is None:
         return
 
-    basis = logical_readout_basis.upper()
-    if basis not in {"X", "Z"}:
-        raise ValueError("logical_readout_basis must be 'X', 'Z', or None.")
-    support = logical_x if basis == "X" else logical_z
+    logical_readout_basis = normalize_pauli_char(logical_readout_basis)
+    measurement_terms, _ = resolve_logical_measurement_terms(
+        logical_readout_basis,
+        logical_x_support=logical_x,
+        logical_z_support=logical_z,
+    )
+    selected_support = tuple(support_item for support_item, _ in measurement_terms)
+
+    logical_measurement_kwargs = (
+        {} if logical_readout_basis == "Y" else {"support": selected_support}
+    )
     append_logical_measurement(
         circuit,
-        basis,
+        logical_readout_basis,
         surface_qubits=surface_qubits,
-        support=support,
         classical_bits=logical_classical_bits,
         destructive=True,
+        **logical_measurement_kwargs,
     )
     if add_barriers:
-        circuit.barrier(label=f"destructive logical {basis}_{''.join(support)}")
+        circuit.barrier(
+            label=f"destructive logical {logical_readout_basis}_{''.join(selected_support)}"
+        )

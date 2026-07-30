@@ -89,9 +89,10 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
         Whether to append five full d5 surface-stabilizer rounds after the
         transfer and before any logical readout.
     surface_readout_basis
-        Optional ``"X"`` or ``"Z"`` basis for a destructive analysis
-        measurement of the standard d5 logical support after top-edge
-        recovery. ``None`` ends the circuit at the Figure 6 transfer boundary.
+        Optional ``"X"``, ``"Y"``, or ``"Z"`` basis for a destructive
+        analysis measurement after top-edge recovery. Y uses the union of the
+        standard logical-X and logical-Z supports. ``None`` ends the circuit
+        at the Figure 6 transfer boundary.
     add_barriers
         Whether to add labeled barriers between conceptual protocol stages.
 
