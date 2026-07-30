@@ -82,12 +82,8 @@ DATA_SITES: tuple[int, ...] = (0, 3, 4, 5, 8, 9, 10)
 HELPER_SITES: tuple[int, ...] = (1, 2, 6, 7)
 FOLDED_MEASUREMENT_SITE: int = 7
 CULTIVATION_MEASUREMENTS_PER_ROUND: int = 1 + len(HELPER_SITES)
-POST_INJECTION_QED_STABILIZER_LABELS: tuple[str, ...] = (
-    X_STABILIZER_LABELS + Z_STABILIZER_LABELS
-)
-STEANE_QED_MEASUREMENTS_PER_ROUND: int = len(
-    POST_INJECTION_QED_STABILIZER_LABELS
-)
+POST_INJECTION_QED_STABILIZER_LABELS: tuple[str, ...] = X_STABILIZER_LABELS + Z_STABILIZER_LABELS
+STEANE_QED_MEASUREMENTS_PER_ROUND: int = len(POST_INJECTION_QED_STABILIZER_LABELS)
 
 
 # =============================================================================
@@ -453,8 +449,7 @@ def append_steane_injection_and_cultivation(
             "sequence per cultivation round."
         )
     if add_qed_round and (
-        qed_classical_bits is None
-        or len(qed_classical_bits) != STEANE_QED_MEASUREMENTS_PER_ROUND
+        qed_classical_bits is None or len(qed_classical_bits) != STEANE_QED_MEASUREMENTS_PER_ROUND
     ):
         raise ValueError(
             "qed_classical_bits must contain exactly "
@@ -563,9 +558,7 @@ def build_steane_injection_and_cultivation_circuit(
     #   measurements.
     enc_creg = ClassicalRegister(len(HELPER_SITES), "enc")
     qed_creg = (
-        ClassicalRegister(STEANE_QED_MEASUREMENTS_PER_ROUND, "qed")
-        if add_qed_round
-        else None
+        ClassicalRegister(STEANE_QED_MEASUREMENTS_PER_ROUND, "qed") if add_qed_round else None
     )
     cult_cregs = [
         ClassicalRegister(
@@ -638,9 +631,6 @@ def postselect_success_counts(
             if set(bs) <= {"0"}:
                 accepted[bitstring] = count
         else:
-            if all(
-                qiskit_bit_value(bitstring, i) == 0
-                for i in postselection_bit_positions
-            ):
+            if all(qiskit_bit_value(bitstring, i) == 0 for i in postselection_bit_positions):
                 accepted[bitstring] = count
     return accepted

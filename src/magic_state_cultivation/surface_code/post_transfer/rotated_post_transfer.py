@@ -65,21 +65,16 @@ def append_rotated_post_transfer(
         append_scheduled_stabilizer_round(
             circuit,
             surface_qubits=surface_qubits,
-            selected_stabilizer_names=tuple(z_stabilizer_names)
-            + tuple(x_stabilizer_names),
+            selected_stabilizer_names=tuple(z_stabilizer_names) + tuple(x_stabilizer_names),
             ancillas=tuple(z_ancillas) + tuple(x_ancillas),
-            classical_bits=tuple(
-                z_bits[z_start : z_start + len(z_ancillas)]
-            )
+            classical_bits=tuple(z_bits[z_start : z_start + len(z_ancillas)])
             + tuple(x_bits[x_start : x_start + len(x_ancillas)]),
             round_label=f"post-transfer round {round_index + 1}",
             reset_ancillas_initially=True,
             add_barriers=False,
         )
         if add_barriers:
-            circuit.barrier(
-                label=f"post-transfer scheduled stabilizer round {round_index + 1}"
-            )
+            circuit.barrier(label=f"post-transfer scheduled stabilizer round {round_index + 1}")
 
     if logical_readout_basis is None:
         return

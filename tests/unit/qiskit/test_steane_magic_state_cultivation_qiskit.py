@@ -107,9 +107,7 @@ def _build_cultivation_with_logical_measurement(
     return circuit
 
 
-N_POSTSELECTION_BITS = (
-    4 + STEANE_QED_MEASUREMENTS_PER_ROUND + CULTIVATION_MEASUREMENTS_PER_ROUND
-)
+N_POSTSELECTION_BITS = 4 + STEANE_QED_MEASUREMENTS_PER_ROUND + CULTIVATION_MEASUREMENTS_PER_ROUND
 
 
 def _postselect_and_compute_expectation(
@@ -295,11 +293,7 @@ NOISE_RESET = 0.005
 
 def _n_postselection_bits(n_rounds: int) -> int:
     """Return the number of postselection bits for n_rounds cultivation."""
-    return (
-        4
-        + STEANE_QED_MEASUREMENTS_PER_ROUND
-        + n_rounds * CULTIVATION_MEASUREMENTS_PER_ROUND
-    )
+    return 4 + STEANE_QED_MEASUREMENTS_PER_ROUND + n_rounds * CULTIVATION_MEASUREMENTS_PER_ROUND
 
 
 def _postselect_multi_round(

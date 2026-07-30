@@ -221,24 +221,16 @@ class TestCanonicalStabilizerSchedule:
 
     def test_full_mixed_basis_schedule_has_no_data_qubit_collisions(self) -> None:
         """Each canonical step touches every data qubit at most once."""
-        full_mixed_basis_schedule_rows = tuple(
-            Z_STABILIZER_SCHEDULE.values()
-        ) + tuple(
+        full_mixed_basis_schedule_rows = tuple(Z_STABILIZER_SCHEDULE.values()) + tuple(
             X_STABILIZER_SCHEDULE.values()
         )
-        assert all(
-            len(schedule) == 4 for schedule in full_mixed_basis_schedule_rows
-        )
+        assert all(len(schedule) == 4 for schedule in full_mixed_basis_schedule_rows)
         for canonical_step in zip(
             *full_mixed_basis_schedule_rows,
             strict=True,
         ):
-            active_data_qubit_labels = [
-                label for label in canonical_step if label
-            ]
-            assert len(active_data_qubit_labels) == len(
-                set(active_data_qubit_labels)
-            )
+            active_data_qubit_labels = [label for label in canonical_step if label]
+            assert len(active_data_qubit_labels) == len(set(active_data_qubit_labels))
 
     def test_all_z_preparation_checks_have_two_qubit_depth_four(self) -> None:
         assert two_qubit_depth(self._scheduled_round_circuit(Z_NAMES)) == 4
@@ -247,9 +239,7 @@ class TestCanonicalStabilizerSchedule:
         assert two_qubit_depth(self._scheduled_round_circuit(X_NAMES)) == 4
 
     def test_full_qec_round_has_two_qubit_depth_four(self) -> None:
-        assert two_qubit_depth(
-            self._scheduled_round_circuit(Z_NAMES + X_NAMES)
-        ) == 4
+        assert two_qubit_depth(self._scheduled_round_circuit(Z_NAMES + X_NAMES)) == 4
 
     def test_merge_compatible_round_omits_top_x_and_has_depth_four(self) -> None:
         circuit = self._scheduled_round_circuit(Z_NAMES + MERGE_X_NAMES)
@@ -296,10 +286,7 @@ class TestCanonicalStabilizerSchedule:
                 subset_size,
             ):
                 assert (
-                    two_qubit_depth(
-                        self._scheduled_round_circuit(selected_stabilizer_names)
-                    )
-                    <= 4
+                    two_qubit_depth(self._scheduled_round_circuit(selected_stabilizer_names)) <= 4
                 )
 
 

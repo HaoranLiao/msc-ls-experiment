@@ -115,9 +115,7 @@ def build_full_canonical_stabilizer_schedule(
                 southwest = label_by_coord[(west, south)]
                 southeast = label_by_coord[(east, south)]
             except KeyError as error:
-                raise ValueError(
-                    f"{stabilizer_name} is not a four-corner bulk check."
-                ) from error
+                raise ValueError(f"{stabilizer_name} is not a four-corner bulk check.") from error
             full_stabilizer_schedule[stabilizer_name] = (
                 (northwest, northeast, southwest, southeast)
                 if basis == "X"
@@ -159,9 +157,7 @@ def build_full_canonical_stabilizer_schedule(
 
     for step in range(4):
         active_labels = [
-            schedule[step]
-            for schedule in full_stabilizer_schedule.values()
-            if schedule[step]
+            schedule[step] for schedule in full_stabilizer_schedule.values() if schedule[step]
         ]
         if len(active_labels) != len(set(active_labels)):
             raise ValueError(f"canonical schedule has a data-qubit collision at step {step + 1}.")
@@ -196,8 +192,7 @@ def _resolve_selected_stabilizer_schedules(
     num_checks = len(selected_stabilizer_schedules)
     if len(ancillas) < num_checks:
         raise ValueError(
-            f"stabilizer round requires at least {num_checks} ancillas, "
-            f"got {len(ancillas)}."
+            f"stabilizer round requires at least {num_checks} ancillas, " f"got {len(ancillas)}."
         )
     if len(classical_bits) < num_checks:
         raise ValueError(
@@ -249,22 +244,18 @@ def append_scheduled_stabilizer_round(
                         └── append_scheduled_parity_measurements
 
     """
-    data_qubit_schedules, used_ancillas, used_bits = (
-        _resolve_selected_stabilizer_schedules(
-            label_to_qubit=label_to_qubit,
-            selected_stabilizer_schedules=selected_stabilizer_schedules,
-            ancillas=ancillas,
-            classical_bits=classical_bits,
-        )
+    data_qubit_schedules, used_ancillas, used_bits = _resolve_selected_stabilizer_schedules(
+        label_to_qubit=label_to_qubit,
+        selected_stabilizer_schedules=selected_stabilizer_schedules,
+        ancillas=ancillas,
+        classical_bits=classical_bits,
     )
     if reset_ancillas_initially:
         reset_to_zero(circuit, qubits=used_ancillas, add_barriers=False)
 
     append_scheduled_parity_measurements(
         circuit,
-        bases=tuple(
-            stabilizer_name[0] for stabilizer_name in selected_stabilizer_schedules
-        ),
+        bases=tuple(stabilizer_name[0] for stabilizer_name in selected_stabilizer_schedules),
         data_qubit_schedules=data_qubit_schedules,
         ancilla_qubits=used_ancillas,
         classical_bits=used_bits,
@@ -292,9 +283,7 @@ def append_logical_measurement(
     destructive: bool = True,
 ) -> None:
     """Append a logical measurement on a rotated surface-code patch."""
-    indexed_support = (
-        None if support is None else tuple(surface_index[label] for label in support)
-    )
+    indexed_support = None if support is None else tuple(surface_index[label] for label in support)
     append_logical_measurement_on_indexed_qubits(
         circuit,
         basis,

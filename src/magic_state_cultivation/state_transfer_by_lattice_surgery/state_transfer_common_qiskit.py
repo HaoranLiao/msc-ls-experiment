@@ -432,13 +432,8 @@ def append_merged_surface_syndrome_round(
         circuit,
         surface_qubits=surface_qubits,
         selected_stabilizer_names=spec.z_labels + spec.merged_x_labels,
-        ancillas=[
-            registers.surface_z_ancillas[label.lower()][0] for label in spec.z_labels
-        ]
-        + [
-            registers.surface_x_ancillas[label.lower()][0]
-            for label in spec.merged_x_labels
-        ],
+        ancillas=[registers.surface_z_ancillas[label.lower()][0] for label in spec.z_labels]
+        + [registers.surface_x_ancillas[label.lower()][0] for label in spec.merged_x_labels],
         classical_bits=[*z_classical_bits, *x_classical_bits],
         round_label=f"{round_label} compatible surface checks",
         reset_ancillas_initially=True,
@@ -575,9 +570,7 @@ def append_lattice_surgery_circuit(
         injected_state=injected_state,
         encoder_classical_bits=list(cregs["enc_helpers"]),
         qed_classical_bits=list(cregs["steane_qed"]),
-        cultivation_classical_bits=(
-            [list(cregs["cult"])] if include_cultivation else []
-        ),
+        cultivation_classical_bits=([list(cregs["cult"])] if include_cultivation else []),
         cultivation_rounds=(1 if include_cultivation else 0),
         add_barriers=add_barriers,
     )
@@ -596,9 +589,7 @@ def append_lattice_surgery_circuit(
         circuit,
         surface_qubits=surface_qubits,
         selected_stabilizer_names=spec.z_labels,
-        ancillas=[
-            qregs.surface_z_ancillas[label.lower()][0] for label in spec.z_labels
-        ],
+        ancillas=[qregs.surface_z_ancillas[label.lower()][0] for label in spec.z_labels],
         classical_bits=list(cregs["surface_init_z"]),
         round_label=f"initialize {spec.name} |+_L>",
         reset_ancillas_initially=True,
@@ -670,12 +661,8 @@ def append_lattice_surgery_circuit(
     rotated_post_transfer.append_rotated_post_transfer(
         circuit,
         surface_qubits=surface_data_qubits(qregs, spec.surface_order),
-        z_ancillas=[
-            qregs.surface_z_ancillas[label.lower()][0] for label in spec.z_labels
-        ],
-        x_ancillas=[
-            qregs.surface_x_ancillas[label.lower()][0] for label in spec.x_labels
-        ],
+        z_ancillas=[qregs.surface_z_ancillas[label.lower()][0] for label in spec.z_labels],
+        x_ancillas=[qregs.surface_x_ancillas[label.lower()][0] for label in spec.x_labels],
         z_stabilizer_names=spec.z_labels,
         x_stabilizer_names=spec.x_labels,
         z_classical_bits=(
@@ -696,9 +683,7 @@ def append_lattice_surgery_circuit(
         logical_x=spec.logical_x,
         logical_z=spec.logical_z,
         logical_classical_bits=(
-            list(
-                cregs[f"surface_logical_{surface_readout_basis.lower()}"]
-            )
+            list(cregs[f"surface_logical_{surface_readout_basis.lower()}"])
             if surface_readout_basis is not None
             else ()
         ),
@@ -768,11 +753,7 @@ def build_lattice_surgery_circuit(
         qregs.merge_ancillas,
     )
     circuit = QuantumCircuit(
-        *(
-            register
-            for group in qreg_groups
-            for register in group.values()
-        ),
+        *(register for group in qreg_groups for register in group.values()),
         *(cregs[register_spec.name] for register_spec in classical_specs),
     )
     append_lattice_surgery_circuit(

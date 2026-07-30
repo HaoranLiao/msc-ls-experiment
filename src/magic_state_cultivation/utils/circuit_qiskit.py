@@ -125,13 +125,10 @@ def append_scheduled_parity_measurements(
     num_measurements = len(schedules)
 
     if len(bases) < num_measurements:
-        raise ValueError(
-            f"bases must have at least {num_measurements} entries, got {len(bases)}."
-        )
+        raise ValueError(f"bases must have at least {num_measurements} entries, got {len(bases)}.")
     if len(ancillas) < num_measurements:
         raise ValueError(
-            "ancilla_qubits must have at least "
-            f"{num_measurements} entries, got {len(ancillas)}."
+            "ancilla_qubits must have at least " f"{num_measurements} entries, got {len(ancillas)}."
         )
     if len(measurement_bits) < num_measurements:
         raise ValueError(
