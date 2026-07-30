@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 from magic_state_cultivation.steane_code.kickback_tomography_qiskit import (
-    KT_DEFAULT_QEC_CYCLE_INDICES,
-    KT_FULL_QEC_CYCLE_INDICES,
+    KT_DEFAULT_QED_CYCLE_INDICES,
+    KT_FULL_QED_CYCLE_INDICES,
     KT_STABILIZER_BITS_PER_CYCLE,
     KickbackTomographySummary,
 )
@@ -29,7 +29,7 @@ NUM_SHOTS = 2000
 
 def _measurement_record_order(
     experiment: KickbackTomographyExperiment,
-    qec_cycle_indices: tuple[int, ...],
+    qed_cycle_indices: tuple[int, ...],
 ) -> list[str]:
     """Return measurement-stage names in Stim record order."""
     layout = experiment.layout
@@ -50,11 +50,11 @@ def _measurement_record_order(
         layout.tomography_check_round.all_positions,
     )
     for cycle_index, positions in zip(
-        qec_cycle_indices,
-        layout.qec_cycles,
+        qed_cycle_indices,
+        layout.qed_cycles,
         strict=True,
     ):
-        label_positions(f"qec_{cycle_index}", positions)
+        label_positions(f"qed_{cycle_index}", positions)
     label_positions("final_stab", layout.final_stabilizers)
 
     order: list[str] = []
@@ -103,27 +103,27 @@ class TestKickbackTomographyCircuitConstruction:
         [
             (
                 None,
-                KT_DEFAULT_QEC_CYCLE_INDICES,
+                KT_DEFAULT_QED_CYCLE_INDICES,
                 [
-                    "qec_1",
+                    "qed_1",
                     "prep_cult",
                     "kt_measure",
-                    "qec_3",
+                    "qed_3",
                     "kt_check",
                     "final_stab",
                 ],
             ),
             (
-                KT_FULL_QEC_CYCLE_INDICES,
-                KT_FULL_QEC_CYCLE_INDICES,
+                KT_FULL_QED_CYCLE_INDICES,
+                KT_FULL_QED_CYCLE_INDICES,
                 [
-                    "qec_1",
+                    "qed_1",
                     "prep_cult",
-                    "qec_2",
+                    "qed_2",
                     "kt_measure",
-                    "qec_3",
+                    "qed_3",
                     "kt_check",
-                    "qec_4",
+                    "qed_4",
                     "final_stab",
                 ],
             ),
@@ -132,22 +132,22 @@ class TestKickbackTomographyCircuitConstruction:
                 (2, 4),
                 [
                     "prep_cult",
-                    "qec_2",
+                    "qed_2",
                     "kt_measure",
                     "kt_check",
-                    "qec_4",
+                    "qed_4",
                     "final_stab",
                 ],
             ),
         ],
     )
-    def test_qec_schedules_follow_paper_cycle_order(
+    def test_qed_schedules_follow_paper_cycle_order(
         self,
         requested_indices: tuple[int, ...] | None,
         expected_indices: tuple[int, ...],
         expected_measurement_order: list[str],
     ) -> None:
-        kwargs = {} if requested_indices is None else {"qec_cycle_indices": requested_indices}
+        kwargs = {} if requested_indices is None else {"qed_cycle_indices": requested_indices}
         experiment = build_kickback_tomography_experiment(
             add_ticks=False,
             **kwargs,
@@ -162,8 +162,8 @@ class TestKickbackTomographyCircuitConstruction:
             + KT_STABILIZER_BITS_PER_CYCLE // 2
         )
         assert layout.preparation_round is not None
-        assert len(layout.qec_cycles) == len(expected_indices)
-        assert all(len(cycle) == KT_STABILIZER_BITS_PER_CYCLE for cycle in layout.qec_cycles)
+        assert len(layout.qed_cycles) == len(expected_indices)
+        assert all(len(cycle) == KT_STABILIZER_BITS_PER_CYCLE for cycle in layout.qed_cycles)
         assert len(layout.final_stabilizers) == (KT_STABILIZER_BITS_PER_CYCLE // 2)
         assert _measurement_record_order(experiment, expected_indices) == expected_measurement_order
 
@@ -178,7 +178,7 @@ class TestKickbackTomographyCircuitConstruction:
     ) -> None:
         experiment = build_kickback_tomography_experiment(
             include_preparation_cultivation=False,
-            qec_cycle_indices=(),
+            qed_cycle_indices=(),
             final_stabilizer_basis=basis,
             add_ticks=False,
         )
@@ -197,7 +197,7 @@ class TestKickbackTomographyShotAnalysis:
     def test_summary_classifies_retained_root_outcomes(self) -> None:
         experiment = build_kickback_tomography_experiment(
             include_preparation_cultivation=False,
-            qec_cycle_indices=(),
+            qed_cycle_indices=(),
             final_stabilizer_basis="none",
             add_ticks=False,
         )
@@ -337,7 +337,7 @@ class TestNoiselessKickbackTomography:
         experiment = build_kickback_tomography_experiment(
             injected_state=state,
             include_preparation_cultivation=False,
-            qec_cycle_indices=(),
+            qed_cycle_indices=(),
             final_stabilizer_basis="none",
             add_ticks=False,
         )
@@ -364,7 +364,7 @@ class TestNoiselessKickbackTomography:
         experiment = build_kickback_tomography_experiment(
             injected_state="1",
             include_preparation_cultivation=True,
-            qec_cycle_indices=(),
+            qed_cycle_indices=(),
             final_stabilizer_basis="none",
             add_ticks=False,
         )

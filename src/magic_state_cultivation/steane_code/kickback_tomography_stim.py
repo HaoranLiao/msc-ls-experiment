@@ -21,7 +21,7 @@ import numpy as np
 import stim
 
 from magic_state_cultivation.steane_code.kickback_tomography_qiskit import (
-    KT_DEFAULT_QEC_CYCLE_INDICES,
+    KT_DEFAULT_QED_CYCLE_INDICES,
     KT_STABILIZER_BITS_PER_CYCLE,
     FinalStabilizerMode,
     KickbackCultivationRoundBits,
@@ -29,7 +29,7 @@ from magic_state_cultivation.steane_code.kickback_tomography_qiskit import (
     KickbackTomographySummary,
     cultivation_round_bits_from_positions,
     final_stabilizer_bit_count,
-    normalize_qec_cycle_indices,
+    normalize_qed_cycle_indices,
 )
 from magic_state_cultivation.steane_code.magic_state_cultivation_qiskit import (
     CULTIVATION_MEASUREMENTS_PER_ROUND,
@@ -57,7 +57,7 @@ def build_kickback_tomography_experiment(
     injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
     *,
     include_preparation_cultivation: bool = True,
-    qec_cycle_indices: Iterable[int] = KT_DEFAULT_QEC_CYCLE_INDICES,
+    qed_cycle_indices: Iterable[int] = KT_DEFAULT_QED_CYCLE_INDICES,
     final_stabilizer_basis: FinalStabilizerMode = "x",
     add_ticks: bool = True,
 ) -> KickbackTomographyExperiment:
@@ -65,27 +65,27 @@ def build_kickback_tomography_experiment(
 
     The protocol order is
 
-    ``encode -> QEC1 -> [prep cultivation] -> QEC2 -> KT measure -> QEC3
-    -> KT check -> QEC4 -> final stabilizer check``.
+    ``encode -> QED1 -> [prep cultivation] -> QED2 -> KT measure -> QED3
+    -> KT check -> QED4 -> final stabilizer check``.
 
     This parallels :func:`kickback_tomography_qiskit.build_kickback_tomography_experiment`
     with ``T -> S``. Every cultivation and KT round therefore measures the
     logical-Y axis of the Clifford ``S``-state proxy.
 
-    ``qec_cycle_indices`` uses the paper's one-based numbering and defaults to
-    ``(1, 3)``. An empty tuple omits the QEC cycles. The final stabilizer basis
+    ``qed_cycle_indices`` uses the paper's one-based numbering and defaults to
+    ``(1, 3)``. An empty tuple omits the QED cycles. The final stabilizer basis
     may be ``"x"``, ``"z"``, ``"both"``, or ``"none"``.
     """
-    qec_indices = normalize_qec_cycle_indices(qec_cycle_indices)
+    qed_indices = normalize_qed_cycle_indices(qed_cycle_indices)
 
     circuit = stim.Circuit()
     record_count = 0
-    qec_positions: dict[int, tuple[int, ...]] = {}
+    qed_positions: dict[int, tuple[int, ...]] = {}
 
-    def add_qec_cycle(index: int) -> None:
+    def add_qed_cycle(index: int) -> None:
         nonlocal record_count
         append_patch_stabilizer_measurement(circuit, add_ticks=add_ticks)
-        qec_positions[index] = tuple(
+        qed_positions[index] = tuple(
             range(record_count, record_count + KT_STABILIZER_BITS_PER_CYCLE)
         )
         record_count += KT_STABILIZER_BITS_PER_CYCLE
@@ -107,23 +107,23 @@ def build_kickback_tomography_experiment(
         circuit, injected_state=injected_state, add_ticks=add_ticks
     )
 
-    if 1 in qec_indices:
-        add_qec_cycle(1)
+    if 1 in qed_indices:
+        add_qed_cycle(1)
 
     preparation_bits = add_cultivation_round() if include_preparation_cultivation else None
 
-    if 2 in qec_indices:
-        add_qec_cycle(2)
+    if 2 in qed_indices:
+        add_qed_cycle(2)
 
     measurement_bits = add_cultivation_round()
 
-    if 3 in qec_indices:
-        add_qec_cycle(3)
+    if 3 in qed_indices:
+        add_qed_cycle(3)
 
     check_bits = add_cultivation_round()
 
-    if 4 in qec_indices:
-        add_qec_cycle(4)
+    if 4 in qed_indices:
+        add_qed_cycle(4)
 
     final_bit_count = final_stabilizer_bit_count(final_stabilizer_basis)
     final_positions: tuple[int, ...] = ()
@@ -138,7 +138,7 @@ def build_kickback_tomography_experiment(
         preparation_round=preparation_bits,
         tomography_measurement_round=measurement_bits,
         tomography_check_round=check_bits,
-        qec_cycles=tuple(qec_positions[index] for index in qec_indices),
+        qed_cycles=tuple(qed_positions[index] for index in qed_indices),
         final_stabilizers=final_positions,
     )
     if circuit.num_measurements != record_count:
