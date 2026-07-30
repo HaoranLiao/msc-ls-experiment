@@ -82,13 +82,14 @@ class TestD3SingleFaultDecoding:
 
         # Step 1: Prepare |+_L⟩ (all data in |+⟩, then Z-stabilizer round).
         d3.prepare_product_plus(circuit, qubits=list(data))
-        d3.append_z_stabilizer_measurements(
+        d3.append_scheduled_stabilizer_round(
             circuit,
             surface_qubits=list(data),
-            z_ancillas=list(z_anc),
+            selected_stabilizer_names=Z_NAMES,
+            ancillas=list(z_anc),
             classical_bits=list(init_z_cl),
             round_label="init",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
 
@@ -100,16 +101,14 @@ class TestD3SingleFaultDecoding:
         )
 
         # Step 3: Full stabilizer round (detection).
-        d3.append_stabilizer_round(
+        d3.append_scheduled_stabilizer_round(
             circuit,
             surface_qubits=list(data),
-            z_ancillas=list(z_anc),
-            x_ancillas=list(x_anc),
-            z_bits=list(det_z_cl),
-            x_bits=list(det_x_cl),
+            selected_stabilizer_names=Z_NAMES + X_NAMES,
+            ancillas=[*list(z_anc), *list(x_anc)],
+            classical_bits=[*list(det_z_cl), *list(det_x_cl)],
             round_label="detect",
-            prepare_z_ancillas=True,
-            prepare_x_ancillas=True,
+            reset_ancillas_initially=True,
             add_barriers=False,
         )
 
@@ -197,13 +196,14 @@ class TestD3SingleFaultDecoding:
 
         # Step 1: Prepare |+_L⟩.
         d3.prepare_product_plus(circuit, qubits=list(data))
-        d3.append_z_stabilizer_measurements(
+        d3.append_scheduled_stabilizer_round(
             circuit,
             surface_qubits=list(data),
-            z_ancillas=list(z_anc),
+            selected_stabilizer_names=Z_NAMES,
+            ancillas=list(z_anc),
             classical_bits=list(init_z_cl),
             round_label="init",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
 
@@ -215,16 +215,14 @@ class TestD3SingleFaultDecoding:
         )
 
         # Step 3: Full stabilizer round (detection).
-        d3.append_stabilizer_round(
+        d3.append_scheduled_stabilizer_round(
             circuit,
             surface_qubits=list(data),
-            z_ancillas=list(z_anc),
-            x_ancillas=list(x_anc),
-            z_bits=list(det_z_cl),
-            x_bits=list(det_x_cl),
+            selected_stabilizer_names=Z_NAMES + X_NAMES,
+            ancillas=[*list(z_anc), *list(x_anc)],
+            classical_bits=[*list(det_z_cl), *list(det_x_cl)],
             round_label="detect",
-            prepare_z_ancillas=True,
-            prepare_x_ancillas=True,
+            reset_ancillas_initially=True,
             add_barriers=False,
         )
 
@@ -297,13 +295,14 @@ class TestD3MultiRoundFaultDecoding:
 
         # Prepare |+_L⟩.
         d3.prepare_product_plus(circuit, qubits=list(data))
-        d3.append_z_stabilizer_measurements(
+        d3.append_scheduled_stabilizer_round(
             circuit,
             surface_qubits=list(data),
-            z_ancillas=list(z_anc),
+            selected_stabilizer_names=Z_NAMES,
+            ancillas=list(z_anc),
             classical_bits=list(init_z_cl),
             round_label="init",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
 
@@ -314,16 +313,14 @@ class TestD3MultiRoundFaultDecoding:
                 [(fault_pauli, fault_qubit)],
                 qubit_map=d3.label2qubit(list(data)),
             )
-            d3.append_stabilizer_round(
+            d3.append_scheduled_stabilizer_round(
                 circuit,
                 surface_qubits=list(data),
-                z_ancillas=list(z_anc),
-                x_ancillas=list(x_anc),
-                z_bits=list(round_z_cls[index]),
-                x_bits=list(round_x_cls[index]),
+                selected_stabilizer_names=Z_NAMES + X_NAMES,
+                ancillas=[*list(z_anc), *list(x_anc)],
+                classical_bits=[*list(round_z_cls[index]), *list(round_x_cls[index])],
                 round_label=f"r{index}",
-                prepare_z_ancillas=True,
-                prepare_x_ancillas=True,
+                reset_ancillas_initially=True,
                 add_barriers=False,
             )
 
@@ -434,13 +431,14 @@ class TestD5SingleFaultDecoding:
         circuit = QuantumCircuit(data, z_anc, x_anc, init_z_cl, det_z_cl, det_x_cl)
 
         d5.prepare_product_plus(circuit, qubits=list(data))
-        d5.append_z_stabilizer_measurements(
+        d5.append_scheduled_stabilizer_round(
             circuit,
             surface_qubits=list(data),
-            z_ancillas=list(z_anc),
+            selected_stabilizer_names=D5_Z_NAMES,
+            ancillas=list(z_anc),
             classical_bits=list(init_z_cl),
             round_label="init",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
         append_pauli_faults(
@@ -448,16 +446,14 @@ class TestD5SingleFaultDecoding:
             [(fault_pauli, fault_qubit)],
             qubit_map=d5.label2qubit(list(data)),
         )
-        d5.append_stabilizer_round(
+        d5.append_scheduled_stabilizer_round(
             circuit,
             surface_qubits=list(data),
-            z_ancillas=list(z_anc),
-            x_ancillas=list(x_anc),
-            z_bits=list(det_z_cl),
-            x_bits=list(det_x_cl),
+            selected_stabilizer_names=D5_Z_NAMES + D5_X_NAMES,
+            ancillas=[*list(z_anc), *list(x_anc)],
+            classical_bits=[*list(det_z_cl), *list(det_x_cl)],
             round_label="detect",
-            prepare_z_ancillas=True,
-            prepare_x_ancillas=True,
+            reset_ancillas_initially=True,
             add_barriers=False,
         )
 
@@ -514,13 +510,14 @@ class TestD5SingleFaultDecoding:
         circuit = QuantumCircuit(data, z_anc, x_anc, init_z_cl, det_z_cl, det_x_cl, log_cl)
 
         d5.prepare_product_plus(circuit, qubits=list(data))
-        d5.append_z_stabilizer_measurements(
+        d5.append_scheduled_stabilizer_round(
             circuit,
             surface_qubits=list(data),
-            z_ancillas=list(z_anc),
+            selected_stabilizer_names=D5_Z_NAMES,
+            ancillas=list(z_anc),
             classical_bits=list(init_z_cl),
             round_label="init",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
         append_pauli_faults(
@@ -528,16 +525,14 @@ class TestD5SingleFaultDecoding:
             [(pauli, qubit_label)],
             qubit_map=d5.label2qubit(list(data)),
         )
-        d5.append_stabilizer_round(
+        d5.append_scheduled_stabilizer_round(
             circuit,
             surface_qubits=list(data),
-            z_ancillas=list(z_anc),
-            x_ancillas=list(x_anc),
-            z_bits=list(det_z_cl),
-            x_bits=list(det_x_cl),
+            selected_stabilizer_names=D5_Z_NAMES + D5_X_NAMES,
+            ancillas=[*list(z_anc), *list(x_anc)],
+            classical_bits=[*list(det_z_cl), *list(det_x_cl)],
             round_label="detect",
-            prepare_z_ancillas=True,
-            prepare_x_ancillas=True,
+            reset_ancillas_initially=True,
             add_barriers=False,
         )
         d5.append_logical_measurement(
@@ -599,13 +594,14 @@ class TestD5MultiRoundFaultDecoding:
         circuit = QuantumCircuit(data, z_anc, x_anc, init_z_cl, *round_z_cls, *round_x_cls, log_cl)
 
         d5.prepare_product_plus(circuit, qubits=list(data))
-        d5.append_z_stabilizer_measurements(
+        d5.append_scheduled_stabilizer_round(
             circuit,
             surface_qubits=list(data),
-            z_ancillas=list(z_anc),
+            selected_stabilizer_names=D5_Z_NAMES,
+            ancillas=list(z_anc),
             classical_bits=list(init_z_cl),
             round_label="init",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
 
@@ -615,16 +611,14 @@ class TestD5MultiRoundFaultDecoding:
                 [(fault_pauli, fault_qubit)],
                 qubit_map=d5.label2qubit(list(data)),
             )
-            d5.append_stabilizer_round(
+            d5.append_scheduled_stabilizer_round(
                 circuit,
                 surface_qubits=list(data),
-                z_ancillas=list(z_anc),
-                x_ancillas=list(x_anc),
-                z_bits=list(round_z_cls[index]),
-                x_bits=list(round_x_cls[index]),
+                selected_stabilizer_names=D5_Z_NAMES + D5_X_NAMES,
+                ancillas=[*list(z_anc), *list(x_anc)],
+                classical_bits=[*list(round_z_cls[index]), *list(round_x_cls[index])],
                 round_label=f"r{index}",
-                prepare_z_ancillas=True,
-                prepare_x_ancillas=True,
+                reset_ancillas_initially=True,
                 add_barriers=False,
             )
 
@@ -861,13 +855,14 @@ def test_temporal_decoder_updates_frame_from_physical_fault_history() -> None:
     )
 
     d3.prepare_product_plus(circuit, qubits=list(data))
-    d3.append_z_stabilizer_measurements(
+    d3.append_scheduled_stabilizer_round(
         circuit,
         surface_qubits=list(data),
-        z_ancillas=list(z_anc),
+        selected_stabilizer_names=Z_NAMES,
+        ancillas=list(z_anc),
         classical_bits=list(init_z_cl),
         round_label="init",
-        prepare_ancillas=False,
+        reset_ancillas_initially=False,
         add_barriers=False,
     )
     append_pauli_faults(
@@ -876,16 +871,14 @@ def test_temporal_decoder_updates_frame_from_physical_fault_history() -> None:
         qubit_map=d3.label2qubit(list(data)),
     )
     for index in range(3):
-        d3.append_stabilizer_round(
+        d3.append_scheduled_stabilizer_round(
             circuit,
             surface_qubits=list(data),
-            z_ancillas=list(z_anc),
-            x_ancillas=list(x_anc),
-            z_bits=list(round_z_cls[index]),
-            x_bits=list(round_x_cls[index]),
+            selected_stabilizer_names=Z_NAMES + X_NAMES,
+            ancillas=[*list(z_anc), *list(x_anc)],
+            classical_bits=[*list(round_z_cls[index]), *list(round_x_cls[index])],
             round_label=f"r{index}",
-            prepare_z_ancillas=True,
-            prepare_x_ancillas=True,
+            reset_ancillas_initially=True,
             add_barriers=False,
         )
     d3.append_logical_measurement(

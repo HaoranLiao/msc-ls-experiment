@@ -7,6 +7,8 @@ Organized into two test sets:
 
 from __future__ import annotations
 
+from itertools import combinations
+
 import pytest
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit.quantum_info import SparsePauliOp, Statevector
@@ -21,14 +23,16 @@ from magic_state_cultivation.surface_code.rotated_d3_qiskit import (
     SURFACE_INDEX,
     SURFACE_ORDER,
     X_STABILIZER_CENTERS,
+    X_STABILIZER_SCHEDULE,
     X_STABILIZERS,
     Z_STABILIZER_CENTERS,
+    Z_STABILIZER_SCHEDULE,
     Z_STABILIZERS,
     append_logical_measurement,
-    append_x_stabilizer_measurements,
-    append_z_stabilizer_measurements,
+    append_scheduled_stabilizer_round,
     prepare_product_plus,
 )
+from magic_state_cultivation.utils.circuit_qiskit import two_qubit_depth
 
 # ===========================================================================
 # Shared constants
@@ -39,6 +43,7 @@ NUM_Z_ANCILLAS = 4
 NUM_X_ANCILLAS = 4
 Z_NAMES = tuple(Z_STABILIZERS)
 X_NAMES = tuple(X_STABILIZERS)
+MERGE_X_NAMES = tuple(name for name in X_NAMES if name != "X_ab")
 
 
 # ===========================================================================
@@ -85,7 +90,7 @@ def _expectation_from_counts(counts: dict[str, int], log_width: int) -> float:
 
 
 # ===========================================================================
-# SET 1: Patch geometry validation
+# SET 1: Patch geometry and canonical measurement schedule validation
 # ===========================================================================
 
 
@@ -138,8 +143,6 @@ class TestPatchGeometry:
 
     def test_logical_z_representatives_recovered_from_stabilizer_products(self) -> None:
         """Stabilizer products recover all logical-Z representatives."""
-        from itertools import combinations
-
         z_stab_supports = [frozenset(s) for s in Z_STABILIZERS.values()]
         default = frozenset(DEFAULT_LOGICAL_Z)
         generated = set()
@@ -154,8 +157,6 @@ class TestPatchGeometry:
 
     def test_logical_x_representatives_recovered_from_stabilizer_products(self) -> None:
         """Stabilizer products recover all logical-X representatives."""
-        from itertools import combinations
-
         x_stab_supports = [frozenset(s) for s in X_STABILIZERS.values()]
         default = frozenset(DEFAULT_LOGICAL_X)
         generated = set()
@@ -169,8 +170,141 @@ class TestPatchGeometry:
         assert generated == expected
 
 
+class TestCanonicalStabilizerSchedule:
+    """Verify the hook-safe four-step interaction schedule."""
+
+    @staticmethod
+    def _scheduled_round_circuit(
+        selected_stabilizer_names: tuple[str, ...],
+    ) -> QuantumCircuit:
+        data = QuantumRegister(NUM_DATA_QUBITS, "data")
+        circuit = QuantumCircuit(data)
+        ancillas = ()
+        bits = ()
+        if selected_stabilizer_names:
+            ancilla_register = QuantumRegister(
+                len(selected_stabilizer_names),
+                "ancillas",
+            )
+            syndrome_register = ClassicalRegister(
+                len(selected_stabilizer_names),
+                "syndrome",
+            )
+            circuit.add_register(ancilla_register, syndrome_register)
+            ancillas = tuple(ancilla_register)
+            bits = tuple(syndrome_register)
+
+        append_scheduled_stabilizer_round(
+            circuit,
+            surface_qubits=list(data),
+            selected_stabilizer_names=selected_stabilizer_names,
+            ancillas=ancillas,
+            classical_bits=bits,
+            round_label="scheduled",
+            add_barriers=False,
+        )
+        return circuit
+
+    def test_schedule_matches_canonical_corner_and_boundary_order(self) -> None:
+        assert X_STABILIZER_SCHEDULE == {
+            "X_ab": ("", "", "a", "b"),
+            "X_bcef": ("b", "c", "e", "f"),
+            "X_degh": ("d", "e", "g", "h"),
+            "X_hi": ("h", "i", "", ""),
+        }
+        assert Z_STABILIZER_SCHEDULE == {
+            "Z_abde": ("a", "d", "b", "e"),
+            "Z_cf": ("c", "f", "", ""),
+            "Z_dg": ("", "", "d", "g"),
+            "Z_efhi": ("e", "h", "f", "i"),
+        }
+
+    def test_full_mixed_basis_schedule_has_no_data_qubit_collisions(self) -> None:
+        """Each canonical step touches every data qubit at most once."""
+        full_mixed_basis_schedule_rows = tuple(
+            Z_STABILIZER_SCHEDULE.values()
+        ) + tuple(
+            X_STABILIZER_SCHEDULE.values()
+        )
+        assert all(
+            len(schedule) == 4 for schedule in full_mixed_basis_schedule_rows
+        )
+        for canonical_step in zip(
+            *full_mixed_basis_schedule_rows,
+            strict=True,
+        ):
+            active_data_qubit_labels = [
+                label for label in canonical_step if label
+            ]
+            assert len(active_data_qubit_labels) == len(
+                set(active_data_qubit_labels)
+            )
+
+    def test_all_z_preparation_checks_have_two_qubit_depth_four(self) -> None:
+        assert two_qubit_depth(self._scheduled_round_circuit(Z_NAMES)) == 4
+
+    def test_all_x_preparation_checks_have_two_qubit_depth_four(self) -> None:
+        assert two_qubit_depth(self._scheduled_round_circuit(X_NAMES)) == 4
+
+    def test_full_qec_round_has_two_qubit_depth_four(self) -> None:
+        assert two_qubit_depth(
+            self._scheduled_round_circuit(Z_NAMES + X_NAMES)
+        ) == 4
+
+    def test_merge_compatible_round_omits_top_x_and_has_depth_four(self) -> None:
+        circuit = self._scheduled_round_circuit(Z_NAMES + MERGE_X_NAMES)
+        expected_cx_count = sum(map(len, Z_STABILIZERS.values())) + sum(
+            len(X_STABILIZERS[name]) for name in MERGE_X_NAMES
+        )
+
+        assert "X_ab" not in MERGE_X_NAMES
+        assert circuit.count_ops()["cx"] == expected_cx_count
+        assert two_qubit_depth(circuit) == 4
+
+    def test_empty_stabilizer_subset_has_two_qubit_depth_zero(self) -> None:
+        assert two_qubit_depth(self._scheduled_round_circuit(())) == 0
+
+    def test_duplicate_stabilizer_names_are_rejected(self) -> None:
+        with pytest.raises(ValueError, match="selected_stabilizer_names must be unique"):
+            self._scheduled_round_circuit(("X_ab", "X_ab"))
+
+    def test_reused_stabilizer_ancilla_is_rejected(self) -> None:
+        data = QuantumRegister(NUM_DATA_QUBITS, "data")
+        ancilla = QuantumRegister(1, "ancilla")
+        bits = ClassicalRegister(2, "syndrome")
+        circuit = QuantumCircuit(data, ancilla, bits)
+
+        with pytest.raises(ValueError, match="unique ancilla"):
+            append_scheduled_stabilizer_round(
+                circuit,
+                surface_qubits=list(data),
+                selected_stabilizer_names=("X_ab", "Z_cf"),
+                ancillas=(ancilla[0], ancilla[0]),
+                classical_bits=tuple(bits),
+                round_label="invalid",
+                add_barriers=False,
+            )
+
+    def test_every_stabilizer_subset_has_two_qubit_depth_at_most_four(
+        self,
+    ) -> None:
+        """Every one of the 256 d=3 subsets has depth at most four."""
+        full_stabilizer_names = Z_NAMES + X_NAMES
+        for subset_size in range(len(full_stabilizer_names) + 1):
+            for selected_stabilizer_names in combinations(
+                full_stabilizer_names,
+                subset_size,
+            ):
+                assert (
+                    two_qubit_depth(
+                        self._scheduled_round_circuit(selected_stabilizer_names)
+                    )
+                    <= 4
+                )
+
+
 # ===========================================================================
-# SET 2: Logical state preparation and eigenvalue checks
+# SET 2: Logical zero preparation and eigenvalue checks
 # ===========================================================================
 
 
@@ -191,13 +325,14 @@ class TestLogicalZeroPreparation:
         x_cl = ClassicalRegister(NUM_X_ANCILLAS, "x_syn")
         qc = QuantumCircuit(s, xa, x_cl)
 
-        append_x_stabilizer_measurements(
+        append_scheduled_stabilizer_round(
             qc,
             surface_qubits=list(s),
-            x_ancillas=list(xa),
+            selected_stabilizer_names=X_NAMES,
+            ancillas=list(xa),
             classical_bits=list(x_cl),
             round_label="init",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
         qc_no_meas = qc.remove_final_measurements(inplace=False)
@@ -212,13 +347,14 @@ class TestLogicalZeroPreparation:
         log_cl = ClassicalRegister(len(support), "log")
         qc = QuantumCircuit(s, xa, x_cl, log_cl)
 
-        append_x_stabilizer_measurements(
+        append_scheduled_stabilizer_round(
             qc,
             surface_qubits=list(s),
-            x_ancillas=list(xa),
+            selected_stabilizer_names=X_NAMES,
+            ancillas=list(xa),
             classical_bits=list(x_cl),
             round_label="init",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
         append_logical_measurement(
@@ -242,13 +378,14 @@ class TestLogicalZeroPreparation:
         log_cl = ClassicalRegister(1, "log")
         qc = QuantumCircuit(s, xa, anc, x_cl, log_cl)
 
-        append_x_stabilizer_measurements(
+        append_scheduled_stabilizer_round(
             qc,
             surface_qubits=list(s),
-            x_ancillas=list(xa),
+            selected_stabilizer_names=X_NAMES,
+            ancillas=list(xa),
             classical_bits=list(x_cl),
             round_label="init",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
         append_logical_measurement(
@@ -312,22 +449,24 @@ class TestLogicalZeroPreparation:
         z_cl = ClassicalRegister(NUM_Z_ANCILLAS, "z_syn")
         qc = QuantumCircuit(s, xa, za, x_cl, z_cl)
 
-        append_x_stabilizer_measurements(
+        append_scheduled_stabilizer_round(
             qc,
             surface_qubits=list(s),
-            x_ancillas=list(xa),
+            selected_stabilizer_names=X_NAMES,
+            ancillas=list(xa),
             classical_bits=list(x_cl),
             round_label="init",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
-        append_z_stabilizer_measurements(
+        append_scheduled_stabilizer_round(
             qc,
             surface_qubits=list(s),
-            z_ancillas=list(za),
+            selected_stabilizer_names=Z_NAMES,
+            ancillas=list(za),
             classical_bits=list(z_cl),
             round_label="check",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
 
@@ -340,6 +479,11 @@ class TestLogicalZeroPreparation:
             assert exp_val == pytest.approx(
                 1.0, abs=1e-10
             ), f"Z-stabilizer {name} ancilla has ⟨Z⟩ = {exp_val}, expected +1"
+
+
+# ===========================================================================
+# SET 3: Logical-plus preparation and eigenvalue checks
+# ===========================================================================
 
 
 class TestLogicalPlusPreparation:
@@ -360,13 +504,14 @@ class TestLogicalPlusPreparation:
         qc = QuantumCircuit(s, za, z_cl)
 
         prepare_product_plus(qc, qubits=list(s))
-        append_z_stabilizer_measurements(
+        append_scheduled_stabilizer_round(
             qc,
             surface_qubits=list(s),
-            z_ancillas=list(za),
+            selected_stabilizer_names=Z_NAMES,
+            ancillas=list(za),
             classical_bits=list(z_cl),
             round_label="init",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
         qc_no_meas = qc.remove_final_measurements(inplace=False)
@@ -382,13 +527,14 @@ class TestLogicalPlusPreparation:
         qc = QuantumCircuit(s, za, z_cl, log_cl)
 
         prepare_product_plus(qc, qubits=list(s))
-        append_z_stabilizer_measurements(
+        append_scheduled_stabilizer_round(
             qc,
             surface_qubits=list(s),
-            z_ancillas=list(za),
+            selected_stabilizer_names=Z_NAMES,
+            ancillas=list(za),
             classical_bits=list(z_cl),
             round_label="init",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
         append_logical_measurement(
@@ -413,13 +559,14 @@ class TestLogicalPlusPreparation:
         qc = QuantumCircuit(s, za, anc, z_cl, log_cl)
 
         prepare_product_plus(qc, qubits=list(s))
-        append_z_stabilizer_measurements(
+        append_scheduled_stabilizer_round(
             qc,
             surface_qubits=list(s),
-            z_ancillas=list(za),
+            selected_stabilizer_names=Z_NAMES,
+            ancillas=list(za),
             classical_bits=list(z_cl),
             round_label="init",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
         append_logical_measurement(
@@ -484,22 +631,24 @@ class TestLogicalPlusPreparation:
         qc = QuantumCircuit(s, za, xa, z_cl, x_cl)
 
         prepare_product_plus(qc, qubits=list(s))
-        append_z_stabilizer_measurements(
+        append_scheduled_stabilizer_round(
             qc,
             surface_qubits=list(s),
-            z_ancillas=list(za),
+            selected_stabilizer_names=Z_NAMES,
+            ancillas=list(za),
             classical_bits=list(z_cl),
             round_label="init",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
-        append_x_stabilizer_measurements(
+        append_scheduled_stabilizer_round(
             qc,
             surface_qubits=list(s),
-            x_ancillas=list(xa),
+            selected_stabilizer_names=X_NAMES,
+            ancillas=list(xa),
             classical_bits=list(x_cl),
             round_label="check",
-            prepare_ancillas=False,
+            reset_ancillas_initially=False,
             add_barriers=False,
         )
 

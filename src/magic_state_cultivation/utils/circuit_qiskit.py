@@ -67,6 +67,124 @@ def append_classical_bit_flip(circuit: QuantumCircuit, classical_bit) -> None:
     circuit.store(clbit, expr.bit_not(clbit))
 
 
+def append_scheduled_parity_measurements(
+    circuit: QuantumCircuit,
+    *,
+    bases: Sequence[str],
+    data_qubit_schedules: Sequence[Sequence[object | None]],
+    ancilla_qubits: Sequence,
+    classical_bits: Sequence,
+) -> None:
+    """Append scheduled non-destructive Pauli-string measurements.
+
+    Parameters
+    ----------
+    circuit
+        Circuit to modify.
+    bases
+        Case-insensitive physical Pauli basis for each schedule row. ``"Z"``
+        uses data-controlled CX gates, ``"X"`` uses ancilla-controlled CX
+        gates, and ``"Y"`` uses ancilla-controlled CY gates. X- and Y-basis
+        ancillas receive Hadamard gates before and after their interactions.
+        ``"I"`` measures the corresponding untouched ancilla.
+    data_qubit_schedules
+        A schedule matrix with one row per parity measurement and one column
+        per interaction time step. Each row corresponds to one ancilla. For
+        example, ``((q0, q1), (q2, q3))`` schedules ``q0`` and ``q2`` in the
+        first step, followed by ``q1`` and ``q3`` in the second. Use ``None``
+        when a measurement is idle during a step. All rows must have equal
+        length. Row order is paired with ``ancilla_qubits`` and
+        ``classical_bits``.
+    ancilla_qubits
+        Measurement ancillas. The first ``len(data_qubit_schedules)`` entries
+        are used and additional entries are untouched. Every schedule row must
+        have a distinct ancilla, and every used ancilla must start in ``|0>``.
+    classical_bits
+        Destination bits for the ancilla measurements, in schedule order.
+        Additional entries are untouched.
+
+    Raises
+    ------
+    ValueError
+        If a basis is not a supported Pauli label, fewer bases, ancillas, or
+        classical bits are supplied than schedules, schedule lengths differ,
+        one ancilla is assigned to more than one schedule row, or one data
+        qubit appears in more than one measurement during the same time step.
+
+    Notes
+    -----
+    This helper does not reset ancillas or insert barriers. The caller owns
+    reset policy and any operator-specific outcome-sign interpretation.
+    Measurements within each time step act on disjoint data qubits, so a
+    schedule with four populated interaction layers has two-qubit depth four.
+    """
+    schedules = [tuple(schedule) for schedule in data_qubit_schedules]
+    bases = list(bases)
+    ancillas = list(ancilla_qubits)
+    measurement_bits = list(classical_bits)
+    num_measurements = len(schedules)
+
+    if len(bases) < num_measurements:
+        raise ValueError(
+            f"bases must have at least {num_measurements} entries, got {len(bases)}."
+        )
+    if len(ancillas) < num_measurements:
+        raise ValueError(
+            "ancilla_qubits must have at least "
+            f"{num_measurements} entries, got {len(ancillas)}."
+        )
+    if len(measurement_bits) < num_measurements:
+        raise ValueError(
+            "classical_bits must have at least "
+            f"{num_measurements} entries, got {len(measurement_bits)}."
+        )
+
+    schedule_widths = {len(schedule) for schedule in schedules}
+    if len(schedule_widths) > 1:
+        raise ValueError("all data-qubit schedules must have the same number of steps.")
+
+    bases = [normalize_pauli_char(basis) for basis in bases[:num_measurements]]
+    used_ancillas = ancillas[:num_measurements]
+    used_bits = measurement_bits[:num_measurements]
+    if len(used_ancillas) != len(set(used_ancillas)):
+        raise ValueError("each parity-measurement schedule row requires a unique ancilla.")
+
+    schedule_layers = list(zip(*schedules, strict=True))
+    for data_qubits_at_step in schedule_layers:
+        active_data_qubits = [
+            data_qubit for data_qubit in data_qubits_at_step if data_qubit is not None
+        ]
+        if len(active_data_qubits) != len(set(active_data_qubits)):
+            raise ValueError("a data qubit cannot participate twice in one parallel step.")
+
+    for basis, ancilla in zip(bases, used_ancillas, strict=True):
+        if basis in {"X", "Y"}:
+            circuit.h(ancilla)
+
+    for data_qubits_at_step in schedule_layers:
+        for data_qubit, basis, ancilla in zip(
+            data_qubits_at_step,
+            bases,
+            used_ancillas,
+            strict=True,
+        ):
+            if data_qubit is None:
+                continue
+            if basis == "Z":
+                circuit.cx(data_qubit, ancilla)
+            elif basis == "X":
+                circuit.cx(ancilla, data_qubit)
+            elif basis == "Y":
+                circuit.cy(ancilla, data_qubit)
+
+    for basis, ancilla in zip(bases, used_ancillas, strict=True):
+        if basis in {"X", "Y"}:
+            circuit.h(ancilla)
+
+    for ancilla, classical_bit in zip(used_ancillas, used_bits, strict=True):
+        circuit.measure(ancilla, classical_bit)
+
+
 def append_parity_measurement(
     circuit: QuantumCircuit,
     basis: str,
@@ -75,27 +193,49 @@ def append_parity_measurement(
     ancilla_qubit,
     classical_bit,
 ) -> None:
-    """Append a non-destructive Pauli-string parity measurement.
+    """Append a single non-destructive Pauli-string parity measurement.
 
-    The ancilla is assumed to start in ``|0>``. The caller owns any required
-    reset and is responsible for interpreting operator-specific sign
-    conventions after the physical parity is measured.
+    Parameters
+    ----------
+    circuit
+        Circuit to modify.
+    basis
+        Case-insensitive physical Pauli basis. ``"Z"`` appends
+        ``CX(data, ancilla)`` for each data qubit. ``"X"`` surrounds
+        ``CX(ancilla, data)`` interactions with Hadamard gates on the ancilla.
+        ``"Y"`` similarly surrounds ``CY(ancilla, data)`` interactions with
+        Hadamards. ``"I"`` measures the untouched ancilla.
+    data_qubits
+        Ordered support of the physical Pauli string. The order is preserved
+        when appending the two-qubit interactions.
+    ancilla_qubit
+        Measurement ancilla, assumed to start in ``|0>``.
+    classical_bit
+        Destination bit for the ancilla measurement.
+
+    Raises
+    ------
+    ValueError
+        If ``basis`` is not a supported Pauli label.
+
+    Notes
+    -----
+    This helper does not reset the ancilla or insert barriers. It delegates to
+    :func:`append_scheduled_parity_measurements` with one schedule row, one
+    ancilla, and one classical bit. For data qubits ``(q0, q1, q2, q3)``, the
+    complete schedule matrix is ``((q0, q1, q2, q3),)``. The outer tuple has
+    exactly one row because this API measures exactly one parity; the four
+    entries in that row are successive interaction steps. The caller is
+    responsible for any required reset and operator-specific outcome-sign
+    interpretation.
     """
-    normalized_basis = normalize_pauli_char(basis)
-
-    if normalized_basis == "Z":
-        for data_qubit in data_qubits:
-            circuit.cx(data_qubit, ancilla_qubit)
-    elif normalized_basis in {"X", "Y"}:
-        circuit.h(ancilla_qubit)
-        for data_qubit in data_qubits:
-            if normalized_basis == "X":
-                circuit.cx(ancilla_qubit, data_qubit)
-            else:
-                circuit.cy(ancilla_qubit, data_qubit)
-        circuit.h(ancilla_qubit)
-
-    circuit.measure(ancilla_qubit, classical_bit)
+    append_scheduled_parity_measurements(
+        circuit,
+        bases=(basis,),
+        data_qubit_schedules=(tuple(data_qubits),),
+        ancilla_qubits=(ancilla_qubit,),
+        classical_bits=(classical_bit,),
+    )
 
 
 def append_logical_measurement_on_indexed_qubits(
@@ -134,17 +274,17 @@ def append_logical_measurement_on_indexed_qubits(
     Logical-Y outcomes are sign-corrected so bit parity zero denotes the
     logical ``+1`` eigenvalue.
     """
-    normalized_basis = normalize_pauli_char(basis)
-    if normalized_basis == "Y" and set(default_logical_x) != set(default_logical_z):
+    basis = normalize_pauli_char(basis)
+    if basis == "Y" and set(default_logical_x) != set(default_logical_z):
         raise ValueError("logical Y requires common logical X and Z support.")
 
     qubits = list(indexed_qubits)
     measurement_bits = list(classical_bits)
     selected_support = support
     if selected_support is None:
-        selected_support = default_logical_z if normalized_basis == "Z" else default_logical_x
+        selected_support = default_logical_z if basis == "Z" else default_logical_x
 
-    invert_y_parity = normalized_basis == "Y" and logical_y_parity_is_inverted(selected_support)
+    invert_y_parity = basis == "Y" and logical_y_parity_is_inverted(selected_support)
 
     if destructive:
         if len(measurement_bits) < len(selected_support):
@@ -153,10 +293,10 @@ def append_logical_measurement_on_indexed_qubits(
                 f"{len(selected_support)} entries for destructive measurement."
             )
 
-        if normalized_basis == "X":
+        if basis == "X":
             for index in selected_support:
                 circuit.h(qubits[index])
-        elif normalized_basis == "Y":
+        elif basis == "Y":
             for index in selected_support:
                 circuit.sdg(qubits[index])
                 circuit.h(qubits[index])
@@ -173,7 +313,7 @@ def append_logical_measurement_on_indexed_qubits(
 
         append_parity_measurement(
             circuit,
-            normalized_basis,
+            basis,
             data_qubits=[qubits[index] for index in selected_support],
             ancilla_qubit=ancilla_qubit,
             classical_bit=measurement_bits[0],

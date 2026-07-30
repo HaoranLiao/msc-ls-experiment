@@ -46,9 +46,7 @@ TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
     top_x_recovery_labels=("X_ab", "X_cd"),
     surface_code_operations=common.SurfaceCodeOperations(
         prepare_product_plus=d5.prepare_product_plus,
-        append_z_stabilizer_measurements=d5.append_z_stabilizer_measurements,
-        append_x_stabilizer_measurements=d5.append_x_stabilizer_measurements,
-        append_stabilizer_round=d5.append_stabilizer_round,
+        append_scheduled_stabilizer_round=d5.append_scheduled_stabilizer_round,
         append_logical_measurement=d5.append_logical_measurement,
     ),
 )
@@ -109,7 +107,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     stabilizing rounds after code expansion. Full shared protocol semantics are
     documented by ``common.append_lattice_surgery_circuit``.
     """
-    return common.append_lattice_surgery_circuit(
+    return common.build_lattice_surgery_circuit(
         TRANSFER_SPEC,
         injected_state=injected_state,
         include_cultivation=include_cultivation,

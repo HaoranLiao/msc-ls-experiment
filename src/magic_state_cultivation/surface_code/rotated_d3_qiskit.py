@@ -113,18 +113,20 @@ LOGICAL_X_REPRESENTATIVES: tuple[tuple[str, ...], ...] = (
 
 INIT_Z_LABELS: tuple[str, ...] = tuple(f"init_{name.lower()}" for name in Z_STABILIZERS)
 
-Z_STABILIZER_SCHEDULE: dict[str, tuple[str, ...]] = {
-    "Z_abde": ("a", "b", "d", "e"),
-    "Z_cf": ("", "c", "", "f"),
-    "Z_dg": ("", "d", "", "g"),
-    "Z_efhi": ("e", "f", "h", "i"),
-}
+Z_STABILIZER_SCHEDULE = rotated_common.build_full_canonical_stabilizer_schedule(
+    stabilizers=Z_STABILIZERS,
+    surface_coords=SURFACE_COORDS,
+    basis="Z",
+)
 
-X_STABILIZER_SCHEDULE: dict[str, tuple[str, ...]] = {
-    "X_ab": ("", "a", "b", ""),
-    "X_bcef": ("b", "c", "e", "f"),
-    "X_degh": ("d", "e", "g", "h"),
-    "X_hi": ("h", "i", "", ""),
+X_STABILIZER_SCHEDULE = rotated_common.build_full_canonical_stabilizer_schedule(
+    stabilizers=X_STABILIZERS,
+    surface_coords=SURFACE_COORDS,
+    basis="X",
+)
+FULL_STABILIZER_SCHEDULE = {
+    **Z_STABILIZER_SCHEDULE,
+    **X_STABILIZER_SCHEDULE,
 }
 
 
@@ -222,31 +224,6 @@ def draw_patch(ax: Axes | None = None) -> tuple[plt.Figure, Axes]:
 # ---------------------------------------------------------------------------
 
 
-def _append_parallel_stabilizer_measurements(
-    circuit: QuantumCircuit,
-    *,
-    label_to_qubit,
-    ancillas: Sequence[object],
-    classical_bits: Sequence[object],
-    schedules,
-    basis: str,
-    prepare_ancillas: bool,
-    add_barriers: bool,
-    barrier_label: str | None,
-) -> None:
-    rotated_common.append_parallel_stabilizer_measurements(
-        circuit,
-        label_to_qubit=label_to_qubit,
-        ancillas=ancillas,
-        classical_bits=classical_bits,
-        schedules=schedules,
-        basis=basis,
-        prepare_ancillas=prepare_ancillas,
-        add_barriers=add_barriers,
-        barrier_label=barrier_label,
-    )
-
-
 def reset_to_zero(
     circuit: QuantumCircuit,
     *,
@@ -271,7 +248,7 @@ def prepare_product_plus(
     barrier_label: str | None = None,
 ) -> None:
     """Prepare a collection of qubits in ``|+>``."""
-    rotated_common.prepare_plus(
+    rotated_common.prepare_product_plus(
         circuit,
         qubits=qubits,
         add_barriers=add_barriers,
@@ -279,97 +256,83 @@ def prepare_product_plus(
     )
 
 
-def append_z_stabilizer_measurements(
+def append_scheduled_stabilizer_round(
     circuit: QuantumCircuit,
     *,
     surface_qubits: Sequence[object],
-    z_ancillas: Sequence[object],
+    selected_stabilizer_names: Sequence[str],
+    ancillas: Sequence[object],
     classical_bits: Sequence[object],
     round_label: str,
-    stabilizer_names: Sequence[str] | None = None,
-    prepare_ancillas: bool = False,
+    reset_ancillas_initially: bool = False,
     add_barriers: bool = True,
 ) -> None:
-    """Append one parallel rotated-``d=3`` Z-check round."""
-    schedules = (
-        Z_STABILIZER_SCHEDULE
-        if stabilizer_names is None
-        else {name: Z_STABILIZER_SCHEDULE[name] for name in stabilizer_names}
-    )
-    _append_parallel_stabilizer_measurements(
+    """Append selected rotated-``d=3`` stabilizers in the canonical schedule.
+
+    For every position ``i``, ``selected_stabilizer_names[i]`` is measured
+    with ``ancillas[i]`` and stored in ``classical_bits[i]``. The selection may
+    contain only X checks, only Z checks, or any mixed-basis subset. Every
+    selected check retains its row from ``FULL_STABILIZER_SCHEDULE``, so any
+    valid selection has at most four two-qubit layers.
+
+    Call structure::
+
+        FULL_STABILIZER_SCHEDULE
+        └── selected_stabilizer_names
+            └── selected_stabilizer_schedules
+                └── rotated_common.append_scheduled_stabilizer_round
+
+    Parameters
+    ----------
+    circuit
+        Circuit to modify.
+    surface_qubits
+        At least nine data qubits ordered according to ``SURFACE_ORDER``.
+    selected_stabilizer_names
+        Unique names selected from ``FULL_STABILIZER_SCHEDULE``. Order defines
+        the positional alignment with ``ancillas`` and ``classical_bits``.
+    ancillas
+        Distinct measurement ancillas, one per selected stabilizer. Additional
+        ancillas are untouched.
+    classical_bits
+        Result bits, one per selected stabilizer. Additional bits are untouched.
+    round_label
+        Human-readable label used when appending the optional trailing barrier.
+    reset_ancillas_initially
+        If true, reset every used ancilla to ``|0>`` before the round. If false,
+        every used ancilla must already be in ``|0>``.
+    add_barriers
+        Whether to append one labeled barrier after all measurements.
+
+    Raises
+    ------
+    KeyError
+        If a selected stabilizer name is not in ``FULL_STABILIZER_SCHEDULE``.
+    ValueError
+        If selected names or used ancillas are repeated, too few ancillas or
+        classical bits are supplied, or the selected schedules collide.
+
+    Notes
+    -----
+    An empty selection is valid and appends no gates or measurements. With
+    ``add_barriers=True``, it still appends the requested trailing barrier.
+    """
+    selected_stabilizer_names = tuple(selected_stabilizer_names)
+    if len(selected_stabilizer_names) != len(set(selected_stabilizer_names)):
+        raise ValueError("selected_stabilizer_names must be unique.")
+
+    selected_stabilizer_schedules = {
+        name: FULL_STABILIZER_SCHEDULE[name] for name in selected_stabilizer_names
+    }
+    rotated_common.append_scheduled_stabilizer_round(
         circuit,
         label_to_qubit=label2qubit(surface_qubits),
-        ancillas=z_ancillas,
+        ancillas=ancillas,
         classical_bits=classical_bits,
-        schedules=schedules,
-        basis="Z",
-        prepare_ancillas=prepare_ancillas,
+        selected_stabilizer_schedules=selected_stabilizer_schedules,
+        reset_ancillas_initially=reset_ancillas_initially,
         add_barriers=add_barriers,
-        barrier_label=f"{round_label} parallel Z checks",
-    )
-
-
-def append_x_stabilizer_measurements(
-    circuit: QuantumCircuit,
-    *,
-    surface_qubits: Sequence[object],
-    x_ancillas: Sequence[object],
-    classical_bits: Sequence[object],
-    round_label: str,
-    stabilizer_names: Sequence[str] | None = None,
-    prepare_ancillas: bool = False,
-    add_barriers: bool = True,
-) -> None:
-    """Append one parallel rotated-``d=3`` X-check round."""
-    schedules = (
-        X_STABILIZER_SCHEDULE
-        if stabilizer_names is None
-        else {name: X_STABILIZER_SCHEDULE[name] for name in stabilizer_names}
-    )
-    _append_parallel_stabilizer_measurements(
-        circuit,
-        label_to_qubit=label2qubit(surface_qubits),
-        ancillas=x_ancillas,
-        classical_bits=classical_bits,
-        schedules=schedules,
-        basis="X",
-        prepare_ancillas=prepare_ancillas,
-        add_barriers=add_barriers,
-        barrier_label=f"{round_label} parallel X checks",
-    )
-
-
-def append_stabilizer_round(
-    circuit: QuantumCircuit,
-    *,
-    surface_qubits: Sequence[object],
-    z_ancillas: Sequence[object],
-    x_ancillas: Sequence[object],
-    z_bits: Sequence[object],
-    x_bits: Sequence[object],
-    round_label: str,
-    prepare_z_ancillas: bool = False,
-    prepare_x_ancillas: bool = False,
-    add_barriers: bool = True,
-) -> None:
-    """Append one full rotated-``d=3`` stabilizer round."""
-    append_z_stabilizer_measurements(
-        circuit,
-        surface_qubits=surface_qubits,
-        z_ancillas=z_ancillas,
-        classical_bits=z_bits,
-        round_label=f"{round_label} Z",
-        prepare_ancillas=prepare_z_ancillas,
-        add_barriers=add_barriers,
-    )
-    append_x_stabilizer_measurements(
-        circuit,
-        surface_qubits=surface_qubits,
-        x_ancillas=x_ancillas,
-        classical_bits=x_bits,
-        round_label=f"{round_label} X",
-        prepare_ancillas=prepare_x_ancillas,
-        add_barriers=add_barriers,
+        barrier_label=f"{round_label} scheduled stabilizer round",
     )
 
 
