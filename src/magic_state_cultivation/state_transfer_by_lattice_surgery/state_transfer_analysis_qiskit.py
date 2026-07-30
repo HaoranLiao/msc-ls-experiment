@@ -107,6 +107,7 @@ def parse_transfer_measurements(
     }
     if include_cultivation:
         parsed["cultivation"] = register_bits("cult")
+    parsed["post_injection_qed"] = register_bits("steane_qed")
     if include_post_transfer_stabilizer_rounds:
         post_transfer_z_bits = register_bits("post_transfer_surface_z")
         post_transfer_x_bits = register_bits("post_transfer_surface_x")
@@ -384,6 +385,12 @@ def cultivation_succeeds(measurements: dict[str, object]) -> bool:
     return sum(cultivation.values()) == 0
 
 
+def post_injection_qed_succeeds(measurements: dict[str, object]) -> bool:
+    """Return whether the post-injection Steane QED syndrome is trivial."""
+    syndrome = measurements["post_injection_qed"]
+    return all(bit == 0 for bit in syndrome.values())
+
+
 def encoder_helpers_succeed(measurements: dict[str, object]) -> bool:
     """Return whether the encoder helper postselection bits are all zero."""
     return sum(measurements["enc_helpers"].values()) == 0
@@ -395,13 +402,14 @@ def transfer_acceptance_succeeds(
     """Return whether transfer-local fault-detecting checks accept.
 
     Acceptance here means all hard fault-detection predicates are satisfied:
-    encoder helper checks, optional cultivation checks, repeated merged-boundary
-    consistency, Steane LS verification, and final deterministic X checks.
-    Surface syndromes are corrected rather than hard-postselected, as required
-    by Section III A.
+    encoder helper checks, post-injection QED, optional cultivation checks,
+    repeated merged-boundary consistency, Steane LS verification, and final
+    deterministic X checks. Surface syndromes are corrected rather than
+    hard-postselected, as required by Section III A.
     """
     return (
         encoder_helpers_succeed(measurements)
+        and post_injection_qed_succeeds(measurements)
         and cultivation_succeeds(measurements)
         and merged_boundary_checks_stable(measurements)
         and steane_verification_succeeds(measurements)

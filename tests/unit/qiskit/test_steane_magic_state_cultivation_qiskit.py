@@ -5,13 +5,14 @@ from __future__ import annotations
 import math
 
 import pytest
-from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
+from qiskit import ClassicalRegister, QuantumCircuit
 from qiskit_aer import AerSimulator
 
 from magic_state_cultivation.noise import build_noisy_aer_simulator
 from magic_state_cultivation.steane_code.magic_state_cultivation_qiskit import (
     CULTIVATION_MEASUREMENTS_PER_ROUND,
-    append_steane_injection_and_cultivation,
+    STEANE_QED_MEASUREMENTS_PER_ROUND,
+    build_steane_injection_and_cultivation_circuit,
     postselect_success_counts,
 )
 from magic_state_cultivation.steane_code.state_injection_qiskit import (
@@ -20,7 +21,6 @@ from magic_state_cultivation.steane_code.state_injection_qiskit import (
     InjectedStateName,
     append_patch_logical_measurement,
     append_patch_stabilizer_measurement,
-    append_patch_steane_state_injection_encoder_crumble_sequences,
 )
 from magic_state_cultivation.utils.normalize import qiskit_bit_value
 
@@ -67,37 +67,6 @@ def _expected_acceptance_probability(state: InjectedStateName) -> float:
     return probs[state]
 
 
-# =============================================================================
-# Helpers
-# =============================================================================
-
-
-def _make_cultivation_circuit(
-    injected_state: InjectedStateName = "T",
-    n_rounds: int = 1,
-    add_barriers: bool = False,
-    skip_cx_1_4: bool = False,
-    skip_cx: tuple[int, int] | None = None,
-) -> QuantumCircuit:
-    """Create registers and append injection + cultivation rounds."""
-    qreg = QuantumRegister(11, "q")
-    enc_creg = ClassicalRegister(4, "enc")
-    cult_cregs = [ClassicalRegister(5, f"cult_{r}") for r in range(n_rounds)]
-    circuit = QuantumCircuit(qreg, enc_creg, *cult_cregs)
-
-    append_steane_injection_and_cultivation(
-        circuit,
-        patch_qubits=list(qreg),
-        injected_state=injected_state,
-        encoder_classical_bits=list(enc_creg),
-        cultivation_classical_bits=[list(c) for c in cult_cregs],
-        add_barriers=add_barriers,
-        skip_cx_1_4=skip_cx_1_4,
-        skip_cx=skip_cx,
-    )
-    return circuit
-
-
 def _build_cultivation_with_logical_measurement(
     state: InjectedStateName,
     basis: str,
@@ -106,18 +75,20 @@ def _build_cultivation_with_logical_measurement(
 ) -> QuantumCircuit:
     """Build injection, cultivation rounds, and destructive logical readout.
 
-    Uses :func:`_make_cultivation_circuit` for the encoder and
-    cultivation stages, then appends a destructive logical measurement.
+    Uses :func:`build_steane_injection_and_cultivation_circuit` for the encoder
+    and cultivation stages, then appends a destructive logical measurement.
 
-    For one cultivation round, returns a circuit with 11 qubits and 12
+    For one cultivation round, returns a circuit with 11 qubits and 18
     classical bits:
       - bits 0–3: encoder helper checks (must be zero)
-      - bits 4–8: cultivation outcomes (must be zero)
-      - bits 9–11: destructive logical measurement on 3-qubit support
+      - bits 4–9: post-injection Steane QED syndrome (must be zero)
+      - bits 10–14: cultivation outcomes (must be zero)
+      - bits 15–17: destructive logical measurement on 3-qubit support
     """
-    circuit = _make_cultivation_circuit(
+    circuit = build_steane_injection_and_cultivation_circuit(
         injected_state=state,
-        n_rounds=n_rounds,
+        cultivation_rounds=n_rounds,
+        add_barriers=False,
     )
 
     # Append destructive logical measurement (3 classical bits)
@@ -136,15 +107,17 @@ def _build_cultivation_with_logical_measurement(
     return circuit
 
 
-N_POSTSELECTION_BITS = 9  # 4 encoder helpers + 5 cultivation bits
+N_POSTSELECTION_BITS = (
+    4 + STEANE_QED_MEASUREMENTS_PER_ROUND + CULTIVATION_MEASUREMENTS_PER_ROUND
+)
 
 
 def _postselect_and_compute_expectation(
     counts: dict[str, int],
-    cult_bit_positions: list[int] | None = None,
+    postselection_bit_positions: list[int] | None = None,
     logical_bit_positions: list[int] | None = None,
 ) -> tuple[float, int]:
-    """Postselect on encoder+cultivation bits = all zero, return (⟨logical⟩, n_accepted).
+    """Postselect on encoder, QED, and cultivation bits, then return expectation.
 
     Uses :func:`postselect_success_counts` from the cultivation module for the
     postselection filtering, then computes the logical expectation value from
@@ -154,19 +127,24 @@ def _postselect_and_compute_expectation(
     ----------
     counts
         Qiskit counts dictionary.
-    cult_bit_positions
+    postselection_bit_positions
         Bit indices (Qiskit convention: 0 = rightmost) for postselection.
-        Defaults to [0..8] (4 encoder helpers + 5 cultivation bits).
+        Defaults to the encoder-helper, post-injection QED, and cultivation
+        bits.
     logical_bit_positions
         Bit indices for the logical measurement outcomes whose parity gives ⟨O_L⟩.
-        Defaults to [9, 10, 11].
+        Defaults to the three positions immediately after the postselection
+        bits.
     """
-    if cult_bit_positions is None:
-        cult_bit_positions = list(range(N_POSTSELECTION_BITS))
+    if postselection_bit_positions is None:
+        postselection_bit_positions = list(range(N_POSTSELECTION_BITS))
     if logical_bit_positions is None:
         logical_bit_positions = [N_POSTSELECTION_BITS + i for i in range(3)]
 
-    accepted_counts = postselect_success_counts(counts, cult_bit_positions=cult_bit_positions)
+    accepted_counts = postselect_success_counts(
+        counts,
+        postselection_bit_positions=postselection_bit_positions,
+    )
     total_accepted = sum(accepted_counts.values())
 
     if total_accepted == 0:
@@ -182,8 +160,8 @@ def _postselect_and_compute_expectation(
     return expectation, total_accepted
 
 
-def _compute_success_rate(counts: dict[str, int], n_cult_bits: int = 5) -> float:
-    """Compute fraction of shots where all cultivation bits are zero.
+def _compute_success_rate(counts: dict[str, int]) -> float:
+    """Compute the fraction passing encoder, QED, and cultivation checks.
 
     Uses :func:`postselect_success_counts` from the cultivation module.
     """
@@ -227,11 +205,14 @@ class TestPostselectedLogicalExpectation:
     def test_success_rate(self, state: InjectedStateName) -> None:
         """Acceptance rate matches |⟨T|ψ⟩|² for each injected state."""
         # Use the cultivation-only circuit (no logical measurement needed)
-        circuit = _make_cultivation_circuit(injected_state=state)
+        circuit = build_steane_injection_and_cultivation_circuit(
+            injected_state=state,
+            add_barriers=False,
+        )
         sim = AerSimulator()
         counts = sim.run(circuit, shots=NUM_SHOTS).result().get_counts()
 
-        measured_rate = _compute_success_rate(counts, n_cult_bits=5)
+        measured_rate = _compute_success_rate(counts)
         expected_rate = _expected_acceptance_probability(state)
 
         # For |T⟩ input, acceptance must be exactly 1.0.
@@ -259,7 +240,10 @@ class TestStabilizerSyndromesAfterCultivation:
     @pytest.mark.parametrize("state", ["Ty", "0", "+", "T"])
     def test_all_stabilizers_trivial(self, state: InjectedStateName) -> None:
         """All 6 stabilizer measurements yield 0 (eigenvalue +1) after cultivation."""
-        circuit = _make_cultivation_circuit(injected_state=state)
+        circuit = build_steane_injection_and_cultivation_circuit(
+            injected_state=state,
+            add_barriers=False,
+        )
 
         # Append stabilizer measurement
         n_stab = 6
@@ -279,8 +263,9 @@ class TestStabilizerSyndromesAfterCultivation:
         counts = sim.run(circuit, shots=n_shots).result().get_counts()
 
         # Check all accepted shots have all-zero stabilizer outcomes.
-        # Bits 0..8 are postselection (4 enc helpers + 5 cultivation),
-        # bits 9..14 are the stabilizer measurement.
+        # The postselection prefix contains 4 encoder-helper bits, 6
+        # post-injection QED bits, and 5 cultivation bits. The final 6 bits are
+        # the additional stabilizer measurement under test.
         found_accepted = False
         for bitstring in counts:
             if any(qiskit_bit_value(bitstring, i) for i in range(N_POSTSELECTION_BITS)):
@@ -310,21 +295,25 @@ NOISE_RESET = 0.005
 
 def _n_postselection_bits(n_rounds: int) -> int:
     """Return the number of postselection bits for n_rounds cultivation."""
-    return 4 + n_rounds * CULTIVATION_MEASUREMENTS_PER_ROUND
+    return (
+        4
+        + STEANE_QED_MEASUREMENTS_PER_ROUND
+        + n_rounds * CULTIVATION_MEASUREMENTS_PER_ROUND
+    )
 
 
 def _postselect_multi_round(
     counts: dict[str, int],
     n_rounds: int,
 ) -> tuple[float, int]:
-    """Postselect on all encoder+cultivation rounds succeeding, compute logical expectation.
+    """Postselect on encoder, QED, and cultivation, then compute expectation.
 
     Uses :func:`postselect_success_counts` from the cultivation module.
     """
     n_ps = _n_postselection_bits(n_rounds)
     return _postselect_and_compute_expectation(
         counts,
-        cult_bit_positions=list(range(n_ps)),
+        postselection_bit_positions=list(range(n_ps)),
         logical_bit_positions=[n_ps, n_ps + 1, n_ps + 2],
     )
 
@@ -433,16 +422,18 @@ class TestNoisyCultivationWithRounds:
     @pytest.mark.parametrize("basis", ["X"])
     def test_cultivation_improves_over_no_postselection(self, basis: str) -> None:
         """Cultivation improves on the noisy encoded state without postselection."""
-        # --- Uncultivated state: encoder followed directly by measurement ---
-        qreg = QuantumRegister(11, "q")
-        creg = ClassicalRegister(3, "c")
-        uncultivated_circuit = QuantumCircuit(qreg, creg)
-        append_patch_steane_state_injection_encoder_crumble_sequences(
-            uncultivated_circuit,
-            patch_qubits=list(qreg),
+        # Use the shared front end with both QED and cultivation disabled. The
+        # encoder-helper outcomes remain recorded but are deliberately ignored,
+        # giving the unpostselected baseline.
+        uncultivated_circuit = build_steane_injection_and_cultivation_circuit(
             injected_state="T",
+            cultivation_rounds=0,
+            add_qed_round=False,
             add_barriers=False,
         )
+        qreg = uncultivated_circuit.qregs[0]
+        creg = ClassicalRegister(3, "c")
+        uncultivated_circuit.add_register(creg)
         support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
         append_patch_logical_measurement(
             uncultivated_circuit,
@@ -471,7 +462,7 @@ class TestNoisyCultivationWithRounds:
         uncultivated_even = 0
         uncultivated_total = 0
         for bitstring, count in uncultivated_counts.items():
-            parity = sum(qiskit_bit_value(bitstring, i) for i in range(3)) % 2
+            parity = sum(qiskit_bit_value(bitstring, i) for i in range(4, 7)) % 2
             uncultivated_total += count
             if parity == 0:
                 uncultivated_even += count

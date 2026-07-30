@@ -52,13 +52,13 @@ TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
 
 def build_steane_to_rotated_d3_lattice_surgery_circuit(
     *,
-    injected_state: InjectedStateName | tuple[complex, complex] = "T",
+    injected_state: InjectedStateName = "T",
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
-    """Build the Steane-to-rotated-d3 lattice-surgery transfer circuit.
+    """This is the authoritative d=3 transfer allocation and appending example.
 
     This is the compact distance-3 adaptation of the paper's distance-5
     transfer geometry. The target contains nine surface data qubits. Its
@@ -67,17 +67,18 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     measured during those rounds; the anticommuting top-edge check ``X_ab`` is
     withheld until Steane demolition and then recovered unconditionally.
 
-    The builder also includes the Crumble Steane encoder, optional logical-H_XY
-    cultivation, both paper-defined Steane verification groups, destructive
-    Steane-X demolition, and all classical registers needed by
-    ``parse_transfer_measurements``. Temporal surface decoding is classical
-    post-processing and is not executed while constructing the circuit.
+    The builder also includes the Crumble Steane encoder, post-injection
+    Steane QED, optional logical-H_XY cultivation, both paper-defined Steane
+    verification groups, destructive Steane-X demolition, and all classical
+    registers needed by ``parse_transfer_measurements``. Temporal surface
+    decoding is classical post-processing and is not executed while
+    constructing the circuit.
 
     Parameters
     ----------
     injected_state
-        Named physical state or amplitude pair supplied to the Steane Crumble
-        encoder. The default ``"T"`` is the H_XY-axis magic-state input.
+        Named physical state supplied to the Steane Crumble encoder. The
+        default ``"T"`` is the H_XY-axis magic-state input.
     include_cultivation
         Whether to append the logical-H_XY cultivation projection and its
         postselection measurements. Disable this only for transfer tests or an

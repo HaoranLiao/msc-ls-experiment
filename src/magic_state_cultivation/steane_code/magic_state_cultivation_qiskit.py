@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from qiskit import QuantumCircuit
+from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
+from magic_state_cultivation.steane_code.decoding.decoder import (
+    X_STABILIZER_LABELS,
+    Z_STABILIZER_LABELS,
+)
 from magic_state_cultivation.steane_code.state_injection_qiskit import (
     NUM_PATCH_QUBITS,
     InjectedStateName,
+    append_patch_stabilizer_measurement,
     append_patch_steane_state_injection_encoder_crumble_sequences,
 )
 from magic_state_cultivation.utils.normalize import qiskit_bit_value, resolve_patch_qubits
@@ -77,6 +82,12 @@ DATA_SITES: tuple[int, ...] = (0, 3, 4, 5, 8, 9, 10)
 HELPER_SITES: tuple[int, ...] = (1, 2, 6, 7)
 FOLDED_MEASUREMENT_SITE: int = 7
 CULTIVATION_MEASUREMENTS_PER_ROUND: int = 1 + len(HELPER_SITES)
+POST_INJECTION_QED_STABILIZER_LABELS: tuple[str, ...] = (
+    X_STABILIZER_LABELS + Z_STABILIZER_LABELS
+)
+STEANE_QED_MEASUREMENTS_PER_ROUND: int = len(
+    POST_INJECTION_QED_STABILIZER_LABELS
+)
 
 
 # =============================================================================
@@ -377,7 +388,7 @@ def append_h_xy_projection_round(
 
 
 # =============================================================================
-# 3. Full circuit builder
+# 3. Injection-and-cultivation circuit construction
 # =============================================================================
 
 
@@ -388,11 +399,19 @@ def append_steane_injection_and_cultivation(
     injected_state: InjectedStateName = "T",
     encoder_classical_bits: Sequence,
     cultivation_classical_bits: Sequence[Sequence],
+    cultivation_rounds: int = 1,
+    qed_classical_bits: Sequence | None = None,
+    add_qed_round: bool = True,
     add_barriers: bool = True,
     skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
 ) -> None:
-    """Append Steane injection + H_XY cultivation rounds to an existing circuit.
+    """Append Steane injection, optional QED, and zero or more cultivation rounds.
+
+    By default, the appender measures all three X and all three Z Steane
+    stabilizers immediately after injection and before cultivation. Hirano and
+    Rosenfeld call this a QEC cycle, but its six outcomes are used only for
+    error detection and postselection; this helper applies no recovery.
 
     Parameters
     ----------
@@ -405,7 +424,18 @@ def append_steane_injection_and_cultivation(
     encoder_classical_bits
         Four classical bits for encoder helper postselection.
     cultivation_classical_bits
-        Sequence of 5-bit sequences, one per cultivation round.
+        Exactly ``cultivation_rounds`` 5-bit sequences, one per cultivation
+        round.
+    cultivation_rounds
+        Number of H_XY cultivation rounds. Zero appends injection and optional
+        QED without cultivation.
+    qed_classical_bits
+        Six bits for the post-injection QED outcomes, ordered by
+        ``POST_INJECTION_QED_STABILIZER_LABELS``: the three X stabilizers
+        followed by the three Z stabilizers. Required when
+        ``add_qed_round`` is true and ignored otherwise.
+    add_qed_round
+        Whether to append the post-injection Steane X/Z stabilizer round.
     add_barriers
         Whether to insert barriers between stages.
     skip_cx_1_4
@@ -415,29 +445,155 @@ def append_steane_injection_and_cultivation(
     """
     if len(encoder_classical_bits) < 4:
         raise ValueError("encoder_classical_bits must contain at least 4 bits.")
-    n_rounds = len(cultivation_classical_bits)
-    if n_rounds < 1:
-        raise ValueError("cultivation_classical_bits must contain at least one round.")
+    if cultivation_rounds < 0:
+        raise ValueError("cultivation_rounds must be non-negative.")
+    if len(cultivation_classical_bits) != cultivation_rounds:
+        raise ValueError(
+            "cultivation_classical_bits must contain exactly one 5-bit "
+            "sequence per cultivation round."
+        )
+    if add_qed_round and (
+        qed_classical_bits is None
+        or len(qed_classical_bits) != STEANE_QED_MEASUREMENTS_PER_ROUND
+    ):
+        raise ValueError(
+            "qed_classical_bits must contain exactly "
+            f"{STEANE_QED_MEASUREMENTS_PER_ROUND} bits when add_qed_round is true."
+        )
 
     append_patch_steane_state_injection_encoder_crumble_sequences(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
         helper_classical_bits=encoder_classical_bits,
-        add_barriers=False,
+        add_barriers=add_barriers,
     )
     if add_barriers:
         circuit.barrier(label="state injection")
 
-    for r in range(n_rounds):
+    if add_qed_round:
+        assert qed_classical_bits is not None
+        append_patch_stabilizer_measurement(
+            circuit,
+            patch_qubits=patch_qubits,
+            classical_bits=qed_classical_bits,
+            basis="both",
+            add_barriers=add_barriers,
+        )
+        if add_barriers:
+            circuit.barrier(label="post-injection QED")
+
+    for round_index in range(cultivation_rounds):
         append_h_xy_projection_round(
             circuit,
             patch_qubits=patch_qubits,
-            classical_bits=cultivation_classical_bits[r],
+            classical_bits=cultivation_classical_bits[round_index],
             add_barriers=add_barriers,
             skip_cx_1_4=skip_cx_1_4,
             skip_cx=skip_cx,
         )
+
+
+def build_steane_injection_and_cultivation_circuit(
+    injected_state: InjectedStateName = "T",
+    *,
+    cultivation_rounds: int = 1,
+    add_qed_round: bool = True,
+    add_barriers: bool = True,
+    skip_cx_1_4: bool = False,
+    skip_cx: tuple[int, int] | None = None,
+) -> QuantumCircuit:
+    """This is the authoritative Qiskit register-allocation and appending example.
+
+    It is the register-owning counterpart to
+    :func:`append_steane_injection_and_cultivation`. It allocates one 11-qubit
+    patch register, one four-bit encoder-helper register, an optional six-bit
+    post-injection QED register, and one five-bit result register per
+    cultivation round, then delegates all circuit construction to the appender.
+
+    The QED round is enabled by default to match Hirano's full protocol and the
+    state-preparation block in Rosenfeld Fig. 3. Its syndrome is postselection
+    data; the circuit performs no error correction.
+
+    Register layout
+    ---------------
+    ``q``
+        Eleven qubits ordered by the cultivation patch site labels ``0..10``.
+    ``enc``
+        Four encoder-helper postselection bits.
+    ``qed``
+        Six post-injection Steane stabilizer outcomes when ``add_qed_round`` is
+        true, ordered as the three X checks followed by the three Z checks.
+    ``cult_0``, ``cult_1``, ...
+        Five postselection bits for each cultivation round.
+
+    Parameters
+    ----------
+    injected_state
+        Physical state injected on the center data site before encoding.
+    cultivation_rounds
+        Number of H_XY cultivation rounds. Zero appends injection and optional
+        QED without cultivation.
+    add_qed_round
+        Whether to measure all six Steane stabilizers after injection and
+        before cultivation. Enabled by default.
+    add_barriers
+        Whether to insert barriers between conceptual circuit stages.
+    skip_cx_1_4
+        If true, omit the CX 1->4 gate from every fold/unfold network.
+    skip_cx
+        If given, omit the specified ``(control, target)`` CX gate.
+
+    Returns
+    -------
+    QuantumCircuit
+        Register-owning circuit containing injection and all requested
+        cultivation rounds.
+    """
+    if cultivation_rounds < 0:
+        raise ValueError("cultivation_rounds must be non-negative.")
+
+    # Quantum allocation: one 11-qubit qreg ordered by patch sites 0..10.
+    qreg = QuantumRegister(NUM_PATCH_QUBITS, "q")
+
+    # Classical allocation:
+    # - one 4-bit creg for the state-injection encoder helper measurements;
+    # - one 6-bit creg for post-injection Steane QED, when enabled;
+    # - one 5-bit creg for each cultivation round's root and four helper
+    #   measurements.
+    enc_creg = ClassicalRegister(len(HELPER_SITES), "enc")
+    qed_creg = (
+        ClassicalRegister(STEANE_QED_MEASUREMENTS_PER_ROUND, "qed")
+        if add_qed_round
+        else None
+    )
+    cult_cregs = [
+        ClassicalRegister(
+            CULTIVATION_MEASUREMENTS_PER_ROUND,
+            f"cult_{round_index}",
+        )
+        for round_index in range(cultivation_rounds)
+    ]
+    cregs = [enc_creg]
+    if qed_creg is not None:
+        cregs.append(qed_creg)
+    cregs.extend(cult_cregs)
+    circuit = QuantumCircuit(qreg, *cregs)
+
+    append_steane_injection_and_cultivation(
+        circuit,
+        patch_qubits=list(qreg),
+        injected_state=injected_state,
+        encoder_classical_bits=list(enc_creg),
+        cultivation_classical_bits=[list(cult_creg) for cult_creg in cult_cregs],
+        cultivation_rounds=cultivation_rounds,
+        qed_classical_bits=(list(qed_creg) if qed_creg is not None else None),
+        add_qed_round=add_qed_round,
+        add_barriers=add_barriers,
+        skip_cx_1_4=skip_cx_1_4,
+        skip_cx=skip_cx,
+    )
+    return circuit
 
 
 # =============================================================================
@@ -447,25 +603,23 @@ def append_steane_injection_and_cultivation(
 
 def postselect_success_counts(
     counts: dict[str, int],
-    cult_bit_positions: list[int] | None = None,
+    postselection_bit_positions: Sequence[int] | None = None,
 ) -> dict[str, int]:
-    """Filter a Qiskit counts dictionary to successful cultivation shots.
+    """Filter counts to shots passing the selected error-detection checks.
 
     In Qiskit's convention, X-basis measurement outcome 0 means eigenvalue +1.
-    The desired successful postselection condition is that all cultivation
-    classical bits equal 0 (i.e. the folded logical measurement and all
-    helper/flag measurements are +1).
+    Successful injection and cultivation requires zero-valued encoder-helper,
+    post-injection QED, folded-logical, and cultivation-helper outcomes.
 
     Parameters
     ----------
     counts
         Qiskit counts dictionary from a cultivation circuit run.
-    cult_bit_positions
-        Indices of the cultivation bits within the bitstring, using Qiskit's
-        convention where index 0 is the *rightmost* character.  Only these
+    postselection_bit_positions
+        Indices of the postselection bits within the bitstring, using Qiskit's
+        convention where index 0 is the *rightmost* character. Only these
         positions are checked for the all-zero acceptance condition; any other
-        bits (e.g. a subsequent logical measurement) are ignored during
-        filtering.
+        bits, such as a subsequent logical measurement, are ignored.
 
         If ``None`` (default), the *entire* bitstring is required to be
         all-zero.  This is the correct behaviour when the circuit contains
@@ -480,10 +634,13 @@ def postselect_success_counts(
     accepted: dict[str, int] = {}
     for bitstring, count in counts.items():
         bs = bitstring.replace(" ", "")
-        if cult_bit_positions is None:
+        if postselection_bit_positions is None:
             if set(bs) <= {"0"}:
                 accepted[bitstring] = count
         else:
-            if all(qiskit_bit_value(bitstring, i) == 0 for i in cult_bit_positions):
+            if all(
+                qiskit_bit_value(bitstring, i) == 0
+                for i in postselection_bit_positions
+            ):
                 accepted[bitstring] = count
     return accepted

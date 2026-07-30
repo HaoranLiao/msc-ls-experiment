@@ -16,9 +16,10 @@ import stim
 from magic_state_cultivation.noise.fault_injection_stim import add_circuit_depolarizing_noise
 from magic_state_cultivation.steane_code.magic_state_cultivation_qiskit import (
     CULTIVATION_MEASUREMENTS_PER_ROUND,
+    STEANE_QED_MEASUREMENTS_PER_ROUND,
 )
 from magic_state_cultivation.steane_code.magic_state_cultivation_stim import (
-    append_steane_injection_and_cultivation,
+    build_steane_injection_and_cultivation_circuit,
     postselect_success_shots,
 )
 from magic_state_cultivation.steane_code.state_injection_qiskit import (
@@ -29,7 +30,6 @@ from magic_state_cultivation.steane_code.state_injection_stim import (
     StimInjectedStateName,
     append_patch_logical_measurement,
     append_patch_stabilizer_measurement,
-    append_patch_steane_state_injection_encoder_crumble_sequences,
 )
 
 NUM_SHOTS = 4000
@@ -65,28 +65,6 @@ def _expected_acceptance_probability(state: StimInjectedStateName) -> float:
     return probabilities[state]
 
 
-def _make_cultivation_circuit(
-    injected_state: StimInjectedStateName = "S",
-    n_rounds: int = 1,
-    *,
-    add_ticks: bool = False,
-    skip_cx_1_4: bool = False,
-    skip_cx: tuple[int, int] | None = None,
-) -> stim.Circuit:
-    """Build patch-Crumble injection followed by cultivation rounds."""
-    circuit = stim.Circuit()
-    append_steane_injection_and_cultivation(
-        circuit,
-        injected_state=injected_state,
-        cultivation_rounds=n_rounds,
-        measure_encoder_helpers=True,
-        add_ticks=add_ticks,
-        skip_cx_1_4=skip_cx_1_4,
-        skip_cx=skip_cx,
-    )
-    return circuit
-
-
 def _build_cultivation_with_logical_measurement(
     state: StimInjectedStateName,
     basis: str,
@@ -94,7 +72,11 @@ def _build_cultivation_with_logical_measurement(
     n_rounds: int = 1,
 ) -> stim.Circuit:
     """Build injection, cultivation, and destructive logical readout."""
-    circuit = _make_cultivation_circuit(state, n_rounds)
+    circuit = build_steane_injection_and_cultivation_circuit(
+        state,
+        cultivation_rounds=n_rounds,
+        add_ticks=False,
+    )
     support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
     append_patch_logical_measurement(
         circuit,
@@ -106,8 +88,12 @@ def _build_cultivation_with_logical_measurement(
 
 
 def _n_postselection_bits(n_rounds: int) -> int:
-    """Return encoder-helper plus cultivation postselection bits."""
-    return ENCODER_HELPER_BITS + n_rounds * CULTIVATION_MEASUREMENTS_PER_ROUND
+    """Return encoder-helper, QED, and cultivation postselection bits."""
+    return (
+        ENCODER_HELPER_BITS
+        + STEANE_QED_MEASUREMENTS_PER_ROUND
+        + n_rounds * CULTIVATION_MEASUREMENTS_PER_ROUND
+    )
 
 
 def _postselect_and_compute_expectation(
@@ -119,7 +105,7 @@ def _postselect_and_compute_expectation(
     n_postselection_bits = _n_postselection_bits(n_rounds)
     accepted = postselect_success_shots(
         shots,
-        cult_bit_positions=range(n_postselection_bits),
+        postselection_bit_positions=range(n_postselection_bits),
     )
     n_accepted = int(accepted.shape[0])
     if n_accepted == 0:
@@ -132,10 +118,10 @@ def _postselect_and_compute_expectation(
 
 
 def _compute_success_rate(shots: np.ndarray, *, n_rounds: int = 1) -> float:
-    """Return the fraction passing encoder and cultivation postselection."""
+    """Return the fraction passing encoder, QED, and cultivation postselection."""
     accepted = postselect_success_shots(
         shots,
-        cult_bit_positions=range(_n_postselection_bits(n_rounds)),
+        postselection_bit_positions=range(_n_postselection_bits(n_rounds)),
     )
     return float(accepted.shape[0] / shots.shape[0])
 
@@ -180,7 +166,10 @@ class TestPostselectedLogicalExpectation:
 
     @pytest.mark.parametrize("state", CULTIVATION_TEST_STATES)
     def test_success_rate(self, state: StimInjectedStateName) -> None:
-        circuit = _make_cultivation_circuit(state)
+        circuit = build_steane_injection_and_cultivation_circuit(
+            state,
+            add_ticks=False,
+        )
         shots = _sample(circuit, shots=NUM_SHOTS)
 
         measured_rate = _compute_success_rate(shots)
@@ -208,13 +197,16 @@ class TestStabilizerSyndromesAfterCultivation:
         self,
         state: StimInjectedStateName,
     ) -> None:
-        circuit = _make_cultivation_circuit(state)
+        circuit = build_steane_injection_and_cultivation_circuit(
+            state,
+            add_ticks=False,
+        )
         append_patch_stabilizer_measurement(circuit, add_ticks=False)
 
         shots = _sample(circuit, shots=NUM_SHOTS)
         accepted = postselect_success_shots(
             shots,
-            cult_bit_positions=range(_n_postselection_bits(1)),
+            postselection_bit_positions=range(_n_postselection_bits(1)),
         )
 
         assert accepted.shape[0] > 0
@@ -247,7 +239,7 @@ def _postselect_multi_round(
     shots: np.ndarray,
     n_rounds: int,
 ) -> tuple[float, int]:
-    """Postselect every encoder/cultivation check and compute expectation."""
+    """Postselect every encoder, QED, and cultivation check."""
     return _postselect_and_compute_expectation(shots, n_rounds=n_rounds)
 
 
@@ -314,36 +306,42 @@ class TestNoisyCultivationWithRounds:
         assert acceptance_rates[-1] < acceptance_rates[-2] + 0.01
 
     def test_cultivation_improves_over_no_postselection(self) -> None:
-        raw_circuit = stim.Circuit()
-        append_patch_steane_state_injection_encoder_crumble_sequences(
-            raw_circuit,
+        """Cultivation improves on the noisy encoded state without postselection."""
+        # Use the shared front end with both QED and cultivation disabled. The
+        # four encoder-helper outcomes are recorded but not postselected.
+        uncultivated_circuit = build_steane_injection_and_cultivation_circuit(
             injected_state="S",
+            cultivation_rounds=0,
+            add_qed_round=False,
             add_ticks=False,
         )
         append_patch_logical_measurement(
-            raw_circuit,
+            uncultivated_circuit,
             "Y",
             support=PATCH_DEFAULT_LOGICAL_X,
             destructive=True,
         )
-        raw_shots = _sample(
-            _add_test_noise(raw_circuit),
+        uncultivated_shots = _sample(
+            _add_test_noise(uncultivated_circuit),
             shots=NUM_SHOTS,
         )
-        raw_parities = raw_shots.sum(axis=1) % 2
-        raw_expectation = float(np.mean(1 - 2 * raw_parities))
+        uncultivated_parities = uncultivated_shots[:, -3:].sum(axis=1) % 2
+        uncultivated_expectation = float(np.mean(1 - 2 * uncultivated_parities))
+        uncultivated_error = abs(uncultivated_expectation - 1.0)
 
-        cultivated = _add_test_noise(
+        # Cultivation with postselection.
+        cultivated_circuit = _add_test_noise(
             _build_cultivation_with_logical_measurement(
                 "S",
                 "Y",
             )
         )
-        cultivated_shots = _sample(cultivated, shots=NUM_SHOTS)
+        cultivated_shots = _sample(cultivated_circuit, shots=NUM_SHOTS)
         cultivated_expectation, n_accepted = _postselect_multi_round(
             cultivated_shots,
             1,
         )
+        cultivated_error = abs(cultivated_expectation - 1.0)
 
         assert n_accepted > 50
-        assert abs(cultivated_expectation - 1.0) <= (abs(raw_expectation - 1.0) + 0.10)
+        assert cultivated_error <= uncultivated_error + 0.10

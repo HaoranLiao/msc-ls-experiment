@@ -54,13 +54,13 @@ TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
 
 def build_steane_to_rotated_d5_lattice_surgery_circuit(
     *,
-    injected_state: InjectedStateName | tuple[complex, complex] = "T",
+    injected_state: InjectedStateName = "T",
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
-    """Build the paper-facing Steane-to-rotated-d5 transfer circuit.
+    """This is the authoritative d=5 transfer allocation and appending example.
 
     The target is the 25-data-qubit rotated distance-5 patch used by Figure 6.
     Each of the three merged rounds measures ``Z1a``, ``Z35bc``, and ``Zde``
@@ -69,17 +69,18 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     recovered unconditionally after destructive Steane-X demolition. The
     first ``X_cd`` recovery outcome is not hard-postselected.
 
-    The builder also includes the Crumble Steane encoder, optional logical-H_XY
-    cultivation, and the two paper-defined Steane verification groups assigned
-    to merged rounds 1 and 2. It records all raw measurements needed for
-    temporal surface decoding by ``parse_transfer_measurements``; decoding and
-    Pauli-frame interpretation occur classically after circuit execution.
+    The builder also includes the Crumble Steane encoder, post-injection
+    Steane QED, optional logical-H_XY cultivation, and the two paper-defined
+    Steane verification groups assigned to merged rounds 1 and 2. It records
+    all raw measurements needed for temporal surface decoding by
+    ``parse_transfer_measurements``; decoding and Pauli-frame interpretation
+    occur classically after circuit execution.
 
     Parameters
     ----------
     injected_state
-        Named physical state or amplitude pair supplied to the Steane Crumble
-        encoder. The default ``"T"`` is the H_XY-axis magic-state input.
+        Named physical state supplied to the Steane Crumble encoder. The
+        default ``"T"`` is the H_XY-axis magic-state input.
     include_cultivation
         Whether to append the logical-H_XY cultivation projection and its
         postselection measurements. Disable this only for transfer tests or an

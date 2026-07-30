@@ -297,6 +297,7 @@ class TestTransferMeasurementParsing:
 
         assert set(measurements["registers"]) == {
             "enc_helpers",
+            "steane_qed",
             "surface_init_z",
             "ls_zz",
             "merged_surface_z",
@@ -348,6 +349,7 @@ class TestTransferMeasurementParsing:
             "X0246",
         }
         assert analysis.merged_boundary_checks_stable(measurements)
+        assert analysis.post_injection_qed_succeeds(measurements)
         assert analysis.steane_verification_succeeds(measurements)
         assert analysis.x_verification_succeeds(measurements)
         assert measurements["x_verification_succeeds"]

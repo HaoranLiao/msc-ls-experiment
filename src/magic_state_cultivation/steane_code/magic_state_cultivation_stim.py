@@ -31,6 +31,7 @@ from magic_state_cultivation.steane_code.state_injection_stim import (
     DEFAULT_STIM_INJECTED_STATE,
     DEFAULT_STIM_PATCH_QUBITS,
     StimInjectedStateName,
+    append_patch_stabilizer_measurement,
     append_patch_steane_state_injection_encoder_crumble_sequences,
 )
 from magic_state_cultivation.utils.normalize import resolve_patch_qubits
@@ -197,29 +198,64 @@ def append_steane_injection_and_cultivation(
     injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
     cultivation_rounds: int = 1,
     measure_encoder_helpers: bool = False,
+    add_qed_round: bool = True,
     add_ticks: bool = True,
     skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
 ) -> None:
-    """Append patch-Crumble injection and one or more cultivation rounds.
+    """Append injection, optional QED, and zero or more cultivation rounds.
 
-    Each cultivation round contributes
-    ``CULTIVATION_MEASUREMENTS_PER_ROUND`` entries. When
-    ``measure_encoder_helpers`` is true, four encoder-helper measurements
-    precede them.
+    By default, all three X and all three Z Steane stabilizers are measured
+    after injection and before cultivation. The papers call this a QEC cycle,
+    but this circuit uses its six outcomes only for error detection and
+    postselection. When ``measure_encoder_helpers`` is true, the four encoder
+    helper outcomes come first; the six QED outcomes come next; each
+    cultivation round then contributes five outcomes. Set
+    ``cultivation_rounds=0`` to stop after injection and optional QED.
+
+    Parameters
+    ----------
+    circuit
+        Caller-owned Stim circuit being modified.
+    patch_qubits
+        Eleven Stim qubit indices ordered by the patch site labels.
+    injected_state
+        Clifford state injected on the center data site before encoding.
+    cultivation_rounds
+        Number of Clifford-proxy cultivation rounds. Must be non-negative.
+    measure_encoder_helpers
+        Whether to record the four encoder-helper outcomes.
+    add_qed_round
+        Whether to append the six-outcome post-injection Steane QED round.
+    add_ticks
+        Whether to preserve the protocol's logical time layers with ``TICK``.
+    skip_cx_1_4
+        Whether to omit ``CX 1 -> 4`` from every fold/unfold network.
+    skip_cx
+        Optional ``(control_site, target_site)`` CX gate to omit.
     """
-    if cultivation_rounds < 1:
-        raise ValueError("cultivation_rounds must be at least 1.")
+    if cultivation_rounds < 0:
+        raise ValueError("cultivation_rounds must be non-negative.")
 
     append_patch_steane_state_injection_encoder_crumble_sequences(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
         measure_helpers=measure_encoder_helpers,
-        add_ticks=False,
+        add_ticks=add_ticks,
     )
     if add_ticks:
         circuit.append("TICK", [])
+
+    if add_qed_round:
+        append_patch_stabilizer_measurement(
+            circuit,
+            patch_qubits=patch_qubits,
+            basis="both",
+            add_ticks=add_ticks,
+        )
+        if add_ticks:
+            circuit.append("TICK", [])
 
     for _ in range(cultivation_rounds):
         append_h_xy_projection_round(
@@ -231,24 +267,96 @@ def append_steane_injection_and_cultivation(
         )
 
 
+def build_steane_injection_and_cultivation_circuit(
+    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    *,
+    cultivation_rounds: int = 1,
+    add_qed_round: bool = True,
+    add_ticks: bool = True,
+    skip_cx_1_4: bool = False,
+    skip_cx: tuple[int, int] | None = None,
+) -> stim.Circuit:
+    """This is the authoritative Stim qubit-layout and appending example.
+
+    This is the circuit-owning counterpart to
+    :func:`append_steane_injection_and_cultivation`. Stim has no Qiskit-style
+    quantum or classical registers: the builder uses qubit indices ``0..10``
+    for the 11-site patch and appends measurements directly to Stim's record.
+
+    Measurement-record layout
+    -------------------------
+    The first four entries are the state-injection encoder-helper
+    measurements. When ``add_qed_round`` is true, the next six entries are the
+    three X and three Z Steane stabilizer outcomes. Each cultivation round then
+    appends five entries: the folded root measurement followed by the four
+    cultivation-helper measurements.
+
+    Parameters
+    ----------
+    injected_state
+        Clifford state injected on the center data site before encoding.
+    cultivation_rounds
+        Number of Clifford-proxy cultivation rounds. Zero appends injection and
+        optional QED without cultivation.
+    add_qed_round
+        Whether to append the six-outcome post-injection Steane QED round.
+        Enabled by default.
+    add_ticks
+        Whether to insert ``TICK`` separators between conceptual stages.
+    skip_cx_1_4
+        Whether to omit ``CX 1 -> 4`` from every fold/unfold network.
+    skip_cx
+        Optional ``(control_site, target_site)`` CX gate to omit.
+
+    Returns
+    -------
+    stim.Circuit
+        New circuit containing injection and all requested cultivation rounds.
+    """
+    if cultivation_rounds < 0:
+        raise ValueError("cultivation_rounds must be non-negative.")
+
+    # Quantum layout: Stim qubit indices 0..10 represent patch sites 0..10.
+    circuit = stim.Circuit()
+
+    # Measurement-record layout:
+    # - 4 encoder-helper entries;
+    # - 6 post-injection Steane QED entries, when enabled;
+    # - 5 entries for each cultivation round.
+    append_steane_injection_and_cultivation(
+        circuit,
+        patch_qubits=DEFAULT_STIM_PATCH_QUBITS,
+        injected_state=injected_state,
+        cultivation_rounds=cultivation_rounds,
+        measure_encoder_helpers=True,
+        add_qed_round=add_qed_round,
+        add_ticks=add_ticks,
+        skip_cx_1_4=skip_cx_1_4,
+        skip_cx=skip_cx,
+    )
+    return circuit
+
+
 def postselect_success_shots(
     shots: np.ndarray,
-    cult_bit_positions: Sequence[int] | None = None,
+    postselection_bit_positions: Sequence[int] | None = None,
 ) -> np.ndarray:
-    """Return sampled shots whose selected postselection bits are all zero.
+    """Return sampled shots whose selected error-detection bits are all zero.
 
-    If ``cult_bit_positions`` is omitted, every measurement column is included
-    in the all-zero condition. Otherwise, only the selected zero-based Stim
-    measurement-record columns are checked.
+    If ``postselection_bit_positions`` is omitted, every measurement column is
+    included in the all-zero condition. Otherwise, only the selected zero-based
+    Stim measurement-record columns are checked.
     """
     if shots.ndim != 2:
         raise ValueError("shots must be a two-dimensional array.")
 
     positions = (
-        tuple(range(shots.shape[1])) if cult_bit_positions is None else tuple(cult_bit_positions)
+        tuple(range(shots.shape[1]))
+        if postselection_bit_positions is None
+        else tuple(postselection_bit_positions)
     )
     if any(position < 0 or position >= shots.shape[1] for position in positions):
-        raise ValueError("cult_bit_positions contains an out-of-range position.")
+        raise ValueError("postselection_bit_positions contains an out-of-range position.")
     if not positions:
         return shots.copy()
 

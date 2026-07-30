@@ -248,6 +248,12 @@ def transfer_classical_register_specs(
             ("enc_h1", "enc_h2", "enc_h6", "enc_h7"),
         )
     ]
+    specs.append(
+        ClassicalRegisterSpec(
+            "steane_qed",
+            cultivation.POST_INJECTION_QED_STABILIZER_LABELS,
+        )
+    )
     if include_cultivation:
         specs.append(
             ClassicalRegisterSpec(
@@ -475,7 +481,7 @@ def append_lattice_surgery_circuit(
     spec: SurfaceCodeTransferSpec,
     qregs: HiranoLabeledQRegs,
     cregs: Mapping[str, ClassicalRegister],
-    injected_state: steane.InjectedStateName | tuple[complex, complex] = "T",
+    injected_state: steane.InjectedStateName = "T",
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
@@ -489,18 +495,20 @@ def append_lattice_surgery_circuit(
 
     1. Encode ``injected_state`` on the 11-site Steane patch with the routed
        Crumble encoder and measure its helper-qubit acceptance bits.
-    2. Optionally apply the Steane logical-H_XY cultivation projection.
-    3. Prepare every target surface-data qubit in ``|+>`` and measure every
+    2. Measure every Steane X and Z stabilizer and use the six
+       outcomes for post-injection error detection and postselection.
+    3. Optionally apply the Steane logical-H_XY cultivation projection.
+    4. Prepare every target surface-data qubit in ``|+>`` and measure every
        surface Z stabilizer once, projecting the target into logical
        ``|+_L>`` and establishing the pre-merge Z-syndrome reference.
-    4. Perform exactly three merged rounds. Every round measures the mixed
+    5. Perform exactly three merged rounds. Every round measures the mixed
        boundary-Z checks, every compatible surface Z check, and every
        compatible surface X check. The paper-defined Steane verification
        groups are additionally measured in rounds 1 and 2.
-    5. Demolish the Steane data in X after round 3 and recover the surface
+    6. Demolish the Steane data in X after round 3 and recover the surface
        top-edge X checks that were withheld during the merge.
-    6. Optionally append ``distance`` full surface-stabilizer rounds.
-    7. Optionally append a destructive surface logical readout for analysis.
+    7. Optionally append ``distance`` full surface-stabilizer rounds.
+    8. Optionally append a destructive surface logical readout for analysis.
 
     Parameters
     ----------
@@ -518,9 +526,8 @@ def append_lattice_surgery_circuit(
         Caller-owned classical registers keyed by the names returned from
         ``transfer_classical_register_specs``.
     injected_state
-        Named physical state or amplitude pair passed to the Steane Crumble
-        encoder. The default ``"T"`` prepares the H_XY-axis magic-state input
-        used by cultivation.
+        Named physical state passed to the Steane Crumble encoder. The default
+        ``"T"`` prepares the H_XY-axis magic-state input used by cultivation.
     include_cultivation
         Whether to append the logical-H_XY projection and its classical
         postselection register. Disable this only for transfer plumbing tests
@@ -560,21 +567,20 @@ def append_lattice_surgery_circuit(
     fixed-patch stabilization is delegated to
     ``surface_code.post_transfer.rotated_post_transfer``.
     """
-    # Prepare the accepted color-code input using the existing Steane front end.
+    # Prepare the accepted color-code input through the shared Steane front end.
     patch_qubits = hirano_labeled_patch_qubits(qregs)
-    steane.append_patch_steane_state_injection_encoder_crumble_sequences(
+    cultivation.append_steane_injection_and_cultivation(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
-        helper_classical_bits=list(cregs["enc_helpers"]),
+        encoder_classical_bits=list(cregs["enc_helpers"]),
+        qed_classical_bits=list(cregs["steane_qed"]),
+        cultivation_classical_bits=(
+            [list(cregs["cult"])] if include_cultivation else []
+        ),
+        cultivation_rounds=(1 if include_cultivation else 0),
+        add_barriers=add_barriers,
     )
-    if include_cultivation:
-        cultivation.append_h_xy_projection_round(
-            circuit,
-            patch_qubits=patch_qubits,
-            classical_bits=list(cregs["cult"]),
-            add_barriers=add_barriers,
-        )
 
     # Prepare the target in logical |+_L>. The product |+> state fixes every X
     # check to +1; measuring every Z stabilizer projects into the surface-code
@@ -704,14 +710,42 @@ def append_lattice_surgery_circuit(
 def build_lattice_surgery_circuit(
     spec: SurfaceCodeTransferSpec,
     *,
-    injected_state: steane.InjectedStateName | tuple[complex, complex] = "T",
+    injected_state: steane.InjectedStateName = "T",
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
-    """Allocate transfer registers and build the complete lattice-surgery circuit."""
+    """This is the authoritative transfer-register allocation and appending example."""
+    # Quantum allocation uses one single-qubit qreg per physical site:
+    # - 7 Steane data qregs and 4 Steane helper/routing qregs;
+    # - distance**2 surface-data qregs (9 for d=3, 25 for d=5);
+    # - one ancilla qreg per surface Z or X stabilizer
+    #   (4 Z + 4 X for d=3, 12 Z + 12 X for d=5);
+    # - one merge-ancilla qreg per merged-boundary check
+    #   (2 for d=3, 3 for d=5).
     qregs = build_transfer_qregs(spec)
+
+    # Classical allocation uses one creg per measurement family:
+    # - enc_helpers: 4 state-injection encoder bits;
+    # - steane_qed: 6 post-injection Steane stabilizer bits;
+    # - cult: 5 cultivation bits, when cultivation is enabled;
+    # - surface_init_z: one bit per surface Z stabilizer
+    #   (4 for d=3, 12 for d=5);
+    # - ls_zz: one bit per merge check in each of the 3 merge rounds
+    #   (6 for d=3, 9 for d=5);
+    # - merged_surface_z: one bit per Z stabilizer in each merge round
+    #   (12 for d=3, 36 for d=5);
+    # - merged_surface_x: one bit per compatible X stabilizer in each merge round
+    #   (9 for d=3, 30 for d=5);
+    # - steane_verify: 8 bits across the two Steane verification groups;
+    # - steane_x: 7 Steane demolition bits;
+    # - surface_x_recovery: one bit per withheld top-edge X check
+    #   (1 for d=3, 2 for d=5);
+    # - post_transfer_surface_z/x: distance rounds of full syndromes, if enabled
+    #   (12 Z + 12 X bits for d=3, 60 Z + 60 X bits for d=5);
+    # - surface_logical_x/z: one bit per logical-support qubit, if requested
+    #   (3 for d=3, 5 for d=5).
     classical_specs = transfer_classical_register_specs(
         spec,
         include_cultivation=include_cultivation,
