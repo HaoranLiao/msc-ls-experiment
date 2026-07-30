@@ -8,8 +8,8 @@ import pytest
 from qiskit_aer import AerSimulator
 
 from magic_state_cultivation.steane_code.kickback_tomography_qiskit import (
-    KT_DEFAULT_QEC_CYCLE_INDICES,
-    KT_FULL_QEC_CYCLE_INDICES,
+    KT_DEFAULT_QED_CYCLE_INDICES,
+    KT_FULL_QED_CYCLE_INDICES,
     KT_STABILIZER_BITS_PER_CYCLE,
     KickbackTomographyExperiment,
     KickbackTomographySummary,
@@ -72,27 +72,27 @@ class TestKickbackTomographyCircuitConstruction:
         [
             (
                 None,
-                KT_DEFAULT_QEC_CYCLE_INDICES,
+                KT_DEFAULT_QED_CYCLE_INDICES,
                 [
-                    "qec_1",
+                    "qed_1",
                     "prep_cult",
                     "kt_measure",
-                    "qec_3",
+                    "qed_3",
                     "kt_check",
                     "final_stab",
                 ],
             ),
             (
-                KT_FULL_QEC_CYCLE_INDICES,
-                KT_FULL_QEC_CYCLE_INDICES,
+                KT_FULL_QED_CYCLE_INDICES,
+                KT_FULL_QED_CYCLE_INDICES,
                 [
-                    "qec_1",
+                    "qed_1",
                     "prep_cult",
-                    "qec_2",
+                    "qed_2",
                     "kt_measure",
-                    "qec_3",
+                    "qed_3",
                     "kt_check",
-                    "qec_4",
+                    "qed_4",
                     "final_stab",
                 ],
             ),
@@ -101,22 +101,22 @@ class TestKickbackTomographyCircuitConstruction:
                 (2, 4),
                 [
                     "prep_cult",
-                    "qec_2",
+                    "qed_2",
                     "kt_measure",
                     "kt_check",
-                    "qec_4",
+                    "qed_4",
                     "final_stab",
                 ],
             ),
         ],
     )
-    def test_qec_schedules_follow_paper_cycle_order(
+    def test_qed_schedules_follow_paper_cycle_order(
         self,
         requested_indices: tuple[int, ...] | None,
         expected_indices: tuple[int, ...],
         expected_measurement_order: list[str],
     ) -> None:
-        kwargs = {} if requested_indices is None else {"qec_cycle_indices": requested_indices}
+        kwargs = {} if requested_indices is None else {"qed_cycle_indices": requested_indices}
         experiment = build_kickback_tomography_experiment(
             add_barriers=False,
             **kwargs,
@@ -132,10 +132,10 @@ class TestKickbackTomographyCircuitConstruction:
             + KT_STABILIZER_BITS_PER_CYCLE // 2
         )
         assert layout.preparation_round is not None
-        assert len(layout.qec_cycles) == len(expected_indices)
-        assert all(len(cycle) == 6 for cycle in layout.qec_cycles)
+        assert len(layout.qed_cycles) == len(expected_indices)
+        assert all(len(cycle) == 6 for cycle in layout.qed_cycles)
         assert len(layout.final_stabilizers) == 3
-        assert metadata["qec_cycle_indices"] == expected_indices
+        assert metadata["qed_cycle_indices"] == expected_indices
         assert _measurement_register_order(experiment) == expected_measurement_order
 
     @pytest.mark.parametrize(
@@ -149,13 +149,12 @@ class TestKickbackTomographyCircuitConstruction:
     ) -> None:
         experiment = build_kickback_tomography_experiment(
             include_preparation_cultivation=False,
-            qec_cycle_indices=(),
+            qed_cycle_indices=(),
             final_stabilizer_basis=basis,
             add_barriers=False,
         )
 
         assert len(experiment.layout.final_stabilizers) == expected_bits
-
 
 # =============================================================================
 # Test Set 2: Counts parsing and postselection semantics
@@ -165,11 +164,13 @@ class TestKickbackTomographyCircuitConstruction:
 class TestKickbackTomographyCountsAnalysis:
     """Counts analysis separates detector rejection and KT root outcomes."""
 
-    def test_summary_classifies_retained_root_outcomes(self) -> None:
+    @pytest.mark.parametrize("no_reset", [False, True])
+    def test_summary_classifies_retained_root_outcomes(self, no_reset: bool) -> None:
         experiment = build_kickback_tomography_experiment(
             include_preparation_cultivation=False,
-            qec_cycle_indices=(),
+            qed_cycle_indices=(),
             final_stabilizer_basis="none",
+            no_reset=no_reset,
             add_barriers=False,
         )
         layout = experiment.layout
@@ -189,17 +190,22 @@ class TestKickbackTomographyCountsAnalysis:
         cultivation_flag = layout.tomography_measurement_round.flag_positions[0]
 
         good_success = bitstring_with()
-        good_error = bitstring_with(
-            measurement_root,
-            measurement_root_double_check,
-            check_root,
-            check_root_double_check,
+        expected_double_checks = (
+            () if no_reset else (measurement_root_double_check, check_root_double_check)
         )
+        good_error = bitstring_with(measurement_root, check_root, *expected_double_checks)
         measurement_only_disagreement = bitstring_with(
             measurement_root,
-            measurement_root_double_check,
+            *((measurement_root_double_check,) if not no_reset else ()),
         )
-        check_only_disagreement = bitstring_with(check_root, check_root_double_check)
+        check_only_disagreement = bitstring_with(
+            check_root,
+            *((check_root_double_check,) if not no_reset else ()),
+        )
+        rejected_double_check = bitstring_with(
+            measurement_root,
+            *((measurement_root_double_check,) if no_reset else ()),
+        )
         rejected_detector = bitstring_with(cultivation_flag)
 
         counts = {
@@ -216,6 +222,7 @@ class TestKickbackTomographyCountsAnalysis:
         assert kickback_tomography_shot_is_retained(good_error, layout)
         assert kickback_tomography_shot_is_retained(measurement_only_disagreement, layout)
         assert kickback_tomography_shot_is_retained(check_only_disagreement, layout)
+        assert not kickback_tomography_shot_is_retained(rejected_double_check, layout)
         assert not kickback_tomography_shot_is_retained(rejected_detector, layout)
         assert summary == KickbackTomographySummary(
             total_shots=30,
@@ -261,9 +268,11 @@ class TestKickbackTomographyCountsAnalysis:
 class TestNoiselessKickbackTomography:
     """Noiseless KT matches H_XY projective-measurement probabilities."""
 
-    def test_cultivated_t_state_has_zero_kt_logical_error(self) -> None:
+    @pytest.mark.parametrize("no_reset", [False, True])
+    def test_cultivated_t_state_has_zero_kt_logical_error(self, no_reset: bool) -> None:
         experiment = build_kickback_tomography_experiment(
             injected_state="T",
+            no_reset=no_reset,
             add_barriers=False,
         )
         counts = AerSimulator().run(experiment.circuit, shots=10).result().get_counts()
@@ -275,12 +284,18 @@ class TestNoiselessKickbackTomography:
         assert summary.logical_error_probability == 0.0
 
     @pytest.mark.parametrize("state", ["Ty", "+", "1", "Y+", "T"])
-    def test_injection_only_kt_error_probability(self, state: InjectedStateName) -> None:
+    @pytest.mark.parametrize("no_reset", [False, True])
+    def test_injection_only_kt_error_probability(
+        self,
+        state: InjectedStateName,
+        no_reset: bool,
+    ) -> None:
         experiment = build_kickback_tomography_experiment(
             injected_state=state,
             include_preparation_cultivation=False,
-            qec_cycle_indices=(),
+            qed_cycle_indices=(),
             final_stabilizer_basis="none",
+            no_reset=no_reset,
             add_barriers=False,
         )
         counts = AerSimulator().run(experiment.circuit, shots=NUM_SHOTS).result().get_counts()
@@ -293,7 +308,8 @@ class TestNoiselessKickbackTomography:
         assert summary.retained_shots == NUM_SHOTS
         assert summary.logical_error_probability == pytest.approx(expected_error, abs=tolerance)
 
-    def test_preparation_cultivation_projects_before_kt(self) -> None:
+    @pytest.mark.parametrize("no_reset", [False, True])
+    def test_preparation_cultivation_projects_before_kt(self, no_reset: bool) -> None:
         """
         With preparation cultivation, the state is projected to the +1 H_XY
         state and hence has no logical error in KT.
@@ -301,8 +317,9 @@ class TestNoiselessKickbackTomography:
         experiment = build_kickback_tomography_experiment(
             injected_state="1",
             include_preparation_cultivation=True,
-            qec_cycle_indices=(),
+            qed_cycle_indices=(),
             final_stabilizer_basis="none",
+            no_reset=no_reset,
             add_barriers=False,
         )
         counts = AerSimulator().run(experiment.circuit, shots=NUM_SHOTS).result().get_counts()
