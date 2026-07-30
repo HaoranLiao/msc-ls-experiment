@@ -84,14 +84,6 @@ class PauliFrame:
             return "Z"
         return "I"
 
-    def interpret_z_readout(self, label: str, uncorrected_bit: int) -> int:
-        """Apply the frame to an uncorrected Z-basis logical readout.
-
-        An X byproduct anticommutes with Z measurement, so it flips the result.
-        A Z byproduct commutes with Z measurement, so it has no effect.
-        """
-        return uncorrected_bit ^ int(self._x_flips[label])
-
     def interpret_x_readout(self, label: str, uncorrected_bit: int) -> int:
         """Apply the frame to an uncorrected X-basis logical readout.
 
@@ -100,12 +92,21 @@ class PauliFrame:
         """
         return uncorrected_bit ^ int(self._z_flips[label])
 
-    def correct_z_expectation(self, label: str, raw_value: float) -> float:
-        """Apply the frame sign correction to a raw ⟨Z_L⟩ expectation value.
+    def interpret_y_readout(self, label: str, uncorrected_bit: int) -> int:
+        """Apply the frame to an uncorrected Y-basis logical readout.
 
-        An X byproduct anticommutes with Z, flipping the sign.
+        X and Z byproducts each anticommute with Y and flip its readout. A Y
+        byproduct contains both flips, so their effects cancel.
         """
-        return -raw_value if self._x_flips[label] else raw_value
+        return uncorrected_bit ^ int(self._x_flips[label]) ^ int(self._z_flips[label])
+
+    def interpret_z_readout(self, label: str, uncorrected_bit: int) -> int:
+        """Apply the frame to an uncorrected Z-basis logical readout.
+
+        An X byproduct anticommutes with Z measurement, so it flips the result.
+        A Z byproduct commutes with Z measurement, so it has no effect.
+        """
+        return uncorrected_bit ^ int(self._x_flips[label])
 
     def correct_x_expectation(self, label: str, raw_value: float) -> float:
         """Apply the frame sign correction to a raw ⟨X_L⟩ expectation value.
@@ -113,6 +114,25 @@ class PauliFrame:
         A Z byproduct anticommutes with X, flipping the sign.
         """
         return -raw_value if self._z_flips[label] else raw_value
+
+    def correct_y_expectation(self, label: str, raw_value: float) -> float:
+        """Apply the frame sign correction to a raw ⟨Y_L⟩ expectation value.
+
+        Exactly one of an X or Z byproduct flips the sign; their product Y
+        commutes with the measured logical Y.
+        """
+        return (
+            -raw_value
+            if self._x_flips[label] != self._z_flips[label]
+            else raw_value
+        )
+
+    def correct_z_expectation(self, label: str, raw_value: float) -> float:
+        """Apply the frame sign correction to a raw ⟨Z_L⟩ expectation value.
+
+        An X byproduct anticommutes with Z, flipping the sign.
+        """
+        return -raw_value if self._x_flips[label] else raw_value
 
     def reset(self, label: str) -> None:
         """Reset the frame for ``label`` back to identity."""
