@@ -155,12 +155,12 @@ def append_pauli_faults(
         else:
             qubit = qubit_map[key]
 
-        normalized_pauli = normalize_pauli_char(pauli)
-        if normalized_pauli == "I":
+        pauli = normalize_pauli_char(pauli)
+        if pauli == "I":
             circuit.id(qubit)
-        elif normalized_pauli == "X":
+        elif pauli == "X":
             circuit.x(qubit)
-        elif normalized_pauli == "Y":
+        elif pauli == "Y":
             circuit.y(qubit)
-        elif normalized_pauli == "Z":
+        elif pauli == "Z":
             circuit.z(qubit)

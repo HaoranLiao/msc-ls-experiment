@@ -31,14 +31,14 @@ def append_parity_measurement(
     physical Pauli-string parity has the opposite sign from the represented
     logical observable.
     """
-    normalized_basis = normalize_pauli_char(basis)
+    basis = normalize_pauli_char(basis)
 
-    if normalized_basis == "Z":
+    if basis == "Z":
         for data_qubit in data_qubits:
             circuit.append("CX", [data_qubit, ancilla_qubit])
-    elif normalized_basis in {"X", "Y"}:
+    elif basis in {"X", "Y"}:
         circuit.append("H", [ancilla_qubit])
-        entangling_gate = "CX" if normalized_basis == "X" else "CY"
+        entangling_gate = "CX" if basis == "X" else "CY"
         for data_qubit in data_qubits:
             circuit.append(entangling_gate, [ancilla_qubit, data_qubit])
         circuit.append("H", [ancilla_qubit])
@@ -68,24 +68,24 @@ def append_logical_measurement_on_indexed_qubits(
     outcomes are sign-corrected so parity zero denotes the logical ``+1``
     eigenvalue.
     """
-    normalized_basis = normalize_pauli_char(basis)
-    if normalized_basis == "Y" and set(default_logical_x) != set(default_logical_z):
+    basis = normalize_pauli_char(basis)
+    if basis == "Y" and set(default_logical_x) != set(default_logical_z):
         raise ValueError("logical Y requires common logical X and Z support.")
 
     qubits = list(indexed_qubits)
     selected_support = support
     if selected_support is None:
-        selected_support = default_logical_z if normalized_basis == "Z" else default_logical_x
+        selected_support = default_logical_z if basis == "Z" else default_logical_x
 
     physical_support = [qubits[index] for index in selected_support]
-    invert_y_parity = normalized_basis == "Y" and logical_y_parity_is_inverted(selected_support)
+    invert_y_parity = basis == "Y" and logical_y_parity_is_inverted(selected_support)
 
     if destructive:
         targets: list[int | stim.GateTarget] = list(physical_support)
         if invert_y_parity:
             targets[0] = stim.target_inv(targets[0])
         circuit.append(
-            {"X": "MX", "Y": "MY", "Z": "M"}[normalized_basis],
+            {"X": "MX", "Y": "MY", "Z": "M"}[basis],
             targets,
         )
         return
@@ -95,7 +95,7 @@ def append_logical_measurement_on_indexed_qubits(
 
     append_parity_measurement(
         circuit,
-        normalized_basis,
+        basis,
         data_qubits=physical_support,
         ancilla_qubit=ancilla_qubit,
         invert_result=invert_y_parity,

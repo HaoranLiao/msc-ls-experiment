@@ -116,5 +116,5 @@ def append_pauli_faults(
         else:
             qubit = qubit_map[key]
 
-        normalized_pauli = normalize_pauli_char(pauli)
-        circuit.append(normalized_pauli, [qubit])
+        pauli = normalize_pauli_char(pauli)
+        circuit.append(pauli, [qubit])

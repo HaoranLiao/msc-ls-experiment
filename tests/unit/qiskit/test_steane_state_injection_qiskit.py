@@ -675,12 +675,12 @@ def _expected_patch_syndrome(
     x_syn = [0, 0, 0]
     z_syn = [0, 0, 0]
     for pauli, site in faults:
-        normalized_pauli = normalize_pauli_char(pauli)
+        pauli = normalize_pauli_char(pauli)
         for i, support in enumerate(PATCH_X_STABILIZERS):
-            if site in support and normalized_pauli in ("Z", "Y"):
+            if site in support and pauli in ("Z", "Y"):
                 x_syn[i] ^= 1
         for i, support in enumerate(PATCH_Z_STABILIZERS):
-            if site in support and normalized_pauli in ("X", "Y"):
+            if site in support and pauli in ("X", "Y"):
                 z_syn[i] ^= 1
     return tuple(x_syn), tuple(z_syn)
 
