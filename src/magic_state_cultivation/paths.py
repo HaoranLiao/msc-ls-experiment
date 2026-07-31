@@ -8,6 +8,7 @@ REPO_ROOT = SRC_ROOT.parent
 
 CONFIGS_DIR = REPO_ROOT / "configs"
 DATA_DIR = REPO_ROOT / "data"
+HARDWARE_RUNS_DIR = DATA_DIR / "hardware_runs"
 DOCS_DIR = REPO_ROOT / "docs"
 EXAMPLES_DIR = REPO_ROOT / "examples"
 NOTEBOOKS_DIR = REPO_ROOT / "examples"
