@@ -197,7 +197,7 @@ def append_steane_injection_and_cultivation(
     patch_qubits: Sequence[int] = DEFAULT_STIM_PATCH_QUBITS,
     injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
     cultivation_rounds: int = 1,
-    measure_encoder_helpers: bool = False,
+    measure_encoder_flags: bool = False,
     add_qed_round: bool = True,
     add_ticks: bool = True,
     skip_cx_1_4: bool = False,
@@ -208,8 +208,8 @@ def append_steane_injection_and_cultivation(
     By default, all three X and all three Z Steane stabilizers are measured
     after injection and before cultivation. The papers call this a QEC cycle,
     but this circuit uses its six outcomes only for error detection and
-    postselection. When ``measure_encoder_helpers`` is true, the four encoder
-    helper outcomes come first; the six QED outcomes come next; each
+    postselection. When ``measure_encoder_flags`` is true, the four encoder
+    flag outcomes come first; the six QED outcomes come next; each
     cultivation round then contributes five outcomes. Set
     ``cultivation_rounds=0`` to stop after injection and optional QED.
 
@@ -223,8 +223,8 @@ def append_steane_injection_and_cultivation(
         Clifford state injected on the center data site before encoding.
     cultivation_rounds
         Number of Clifford-proxy cultivation rounds. Must be non-negative.
-    measure_encoder_helpers
-        Whether to record the four encoder-helper outcomes.
+    measure_encoder_flags
+        Whether to record the four encoder-flag outcomes.
     add_qed_round
         Whether to append the six-outcome post-injection Steane QED round.
     add_ticks
@@ -241,7 +241,7 @@ def append_steane_injection_and_cultivation(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
-        measure_helpers=measure_encoder_helpers,
+        measure_flags=measure_encoder_flags,
         add_ticks=add_ticks,
     )
     if add_ticks:
@@ -320,7 +320,7 @@ def build_steane_injection_and_cultivation_circuit(
     circuit = stim.Circuit()
 
     # Measurement-record layout:
-    # - 4 encoder-helper entries;
+    # - 4 encoder-flag entries;
     # - 6 post-injection Steane QED entries, when enabled;
     # - 5 entries for each cultivation round.
     append_steane_injection_and_cultivation(
@@ -328,7 +328,7 @@ def build_steane_injection_and_cultivation_circuit(
         patch_qubits=DEFAULT_STIM_PATCH_QUBITS,
         injected_state=injected_state,
         cultivation_rounds=cultivation_rounds,
-        measure_encoder_helpers=True,
+        measure_encoder_flags=True,
         add_qed_round=add_qed_round,
         add_ticks=add_ticks,
         skip_cx_1_4=skip_cx_1_4,

@@ -22,6 +22,7 @@ from magic_state_cultivation.steane_code.magic_state_cultivation_qiskit import (
     append_h_xy_projection_round,
 )
 from magic_state_cultivation.steane_code.state_injection_qiskit import (
+    PATCH_HELPER_SITES,
     InjectedStateName,
     append_patch_stabilizer_measurement,
     append_patch_steane_state_injection_encoder_crumble_sequences,
@@ -81,6 +82,7 @@ class KickbackTomographyBitLayout:
     tomography_check_round: KickbackCultivationRoundBits
     qed_cycles: tuple[tuple[int, ...], ...]
     final_stabilizers: tuple[int, ...]
+    encoder_flags: tuple[int, ...] = ()
     no_reset: bool = False
 
     @property
@@ -93,6 +95,7 @@ class KickbackTomographyBitLayout:
         """
 
         positions: list[int] = []
+        positions.extend(self.encoder_flags)
         if self.preparation_round is not None:
             positions.extend(self.preparation_round.all_positions)
         positions.extend(self.tomography_measurement_round.flag_positions)
@@ -187,6 +190,7 @@ def build_kickback_tomography_experiment(
     *,
     injection_azimuth_angle: float | None = None,
     include_preparation_cultivation: bool = True,
+    measure_encoder_flags: bool = False,
     qed_cycle_indices: Iterable[int] = KT_DEFAULT_QED_CYCLE_INDICES,
     final_stabilizer_basis: FinalStabilizerMode = "x",
     no_reset: bool = False,
@@ -204,6 +208,11 @@ def build_kickback_tomography_experiment(
     named state; ``angle=π/4`` gives ``|T⟩``. If neither is supplied, ``|T⟩`` is
     injected. Every cultivation and KT round measures
     ``H_XY = (X + Y) / sqrt(2)``.
+
+    When ``measure_encoder_flags`` is true, the four Crumble-encoder flag
+    qubits are measured into a dedicated ``encoder_flags`` register
+    immediately after encoding. KT postselection then requires each flag to be
+    zero, flagging encoding faults.
 
     ``qed_cycle_indices`` uses the paper's one-based numbering. The default
     schedule is ``KT_DEFAULT_QED_CYCLE_INDICES = (1, 3)``; pass
@@ -231,12 +240,17 @@ def build_kickback_tomography_experiment(
     qed_indices = normalize_qed_cycle_indices(qed_cycle_indices)
 
     patch = QuantumRegister(11, "patch")
+    encoder_flags_creg = (
+        ClassicalRegister(len(PATCH_HELPER_SITES), "enc_flags")
+        if measure_encoder_flags
+        else None
+    )
     prep_creg = (
         ClassicalRegister(CULTIVATION_MEASUREMENTS_PER_ROUND, "prep_cult")
         if include_preparation_cultivation
         else None
     )
-    qed_registers = {
+    qed_cregs = {
         index: ClassicalRegister(KT_STABILIZER_BITS_PER_CYCLE, f"qed_{index}")
         for index in qed_indices
     }
@@ -246,9 +260,11 @@ def build_kickback_tomography_experiment(
     final_creg = ClassicalRegister(final_bit_count, "final_stab") if final_bit_count else None
 
     classical_registers: list[ClassicalRegister] = []
+    if encoder_flags_creg is not None:
+        classical_registers.append(encoder_flags_creg)
     if prep_creg is not None:
         classical_registers.append(prep_creg)
-    classical_registers.extend(qed_registers[index] for index in qed_indices)
+    classical_registers.extend(qed_cregs[index] for index in qed_indices)
     classical_registers.extend((kt_measure_creg, kt_check_creg))
     if final_creg is not None:
         classical_registers.append(final_creg)
@@ -261,14 +277,17 @@ def build_kickback_tomography_experiment(
         patch_qubits=patch_qubits,
         injected_state=injected_state,
         injection_azimuth_angle=injection_azimuth_angle,
+        flag_classical_bits=(
+            list(encoder_flags_creg) if encoder_flags_creg is not None else None
+        ),
         add_barriers=add_barriers,
     )
 
-    if 1 in qed_registers:
+    if 1 in qed_cregs:
         append_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
-            classical_bits=list(qed_registers[1]),
+            classical_bits=list(qed_cregs[1]),
             add_barriers=add_barriers,
         )
 
@@ -281,11 +300,11 @@ def build_kickback_tomography_experiment(
             add_barriers=add_barriers,
         )
 
-    if 2 in qed_registers:
+    if 2 in qed_cregs:
         append_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
-            classical_bits=list(qed_registers[2]),
+            classical_bits=list(qed_cregs[2]),
             add_barriers=add_barriers,
         )
 
@@ -296,11 +315,11 @@ def build_kickback_tomography_experiment(
         add_barriers=add_barriers,
     )
 
-    if 3 in qed_registers:
+    if 3 in qed_cregs:
         append_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
-            classical_bits=list(qed_registers[3]),
+            classical_bits=list(qed_cregs[3]),
             add_barriers=add_barriers,
         )
 
@@ -311,11 +330,11 @@ def build_kickback_tomography_experiment(
         add_barriers=add_barriers,
     )
 
-    if 4 in qed_registers:
+    if 4 in qed_cregs:
         append_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
-            classical_bits=list(qed_registers[4]),
+            classical_bits=list(qed_cregs[4]),
             add_barriers=add_barriers,
         )
 
@@ -329,7 +348,7 @@ def build_kickback_tomography_experiment(
         )
 
     qed_positions = tuple(
-        tuple(circuit.find_bit(bit).index for bit in qed_registers[index]) for index in qed_indices
+        tuple(circuit.find_bit(bit).index for bit in qed_cregs[index]) for index in qed_indices
     )
     preparation_bits = (
         cultivation_round_bits_from_positions(
@@ -337,6 +356,11 @@ def build_kickback_tomography_experiment(
         )
         if prep_creg is not None
         else None
+    )
+    encoder_flag_positions = (
+        tuple(circuit.find_bit(bit).index for bit in encoder_flags_creg)
+        if encoder_flags_creg is not None
+        else ()
     )
     layout = KickbackTomographyBitLayout(
         preparation_round=preparation_bits,
@@ -352,6 +376,7 @@ def build_kickback_tomography_experiment(
             if final_creg is not None
             else ()
         ),
+        encoder_flags=encoder_flag_positions,
         no_reset=no_reset,
     )
     circuit.metadata = {
@@ -364,6 +389,7 @@ def build_kickback_tomography_experiment(
             "tomography_check_round": layout.tomography_check_round.all_positions,
             "qed_cycles": layout.qed_cycles,
             "final_stabilizers": layout.final_stabilizers,
+            "encoder_flags": layout.encoder_flags,
             "qed_cycle_indices": qed_indices,
             "final_stabilizer_basis": final_stabilizer_basis,
             "no_reset": no_reset,

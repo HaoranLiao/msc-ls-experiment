@@ -460,7 +460,7 @@ def append_steane_injection_and_cultivation(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
-        helper_classical_bits=encoder_classical_bits,
+        flag_classical_bits=encoder_classical_bits,
         add_barriers=add_barriers,
     )
     if add_barriers:

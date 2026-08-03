@@ -72,14 +72,14 @@ N_PATCH_SYNDROME_BITS = 2 * N_PATCH_STABILIZERS
 def _encoded_circuit(
     state: StimInjectedStateName,
     *,
-    measure_helpers: bool = False,
+    measure_flags: bool = False,
 ) -> stim.Circuit:
     """Return a standalone patch-Crumble encoder circuit."""
     circuit = stim.Circuit()
     append_patch_steane_state_injection_encoder_crumble_sequences(
         circuit,
         injected_state=state,
-        measure_helpers=measure_helpers,
+        measure_flags=measure_flags,
         add_ticks=False,
     )
     return circuit
@@ -407,11 +407,11 @@ def test_patch_crumble_helper_sites_expectation_value(
 
 
 @pytest.mark.parametrize("state", CLIFFORD_STATES)
-def test_patch_crumble_helper_sites_bit_value(
+def test_patch_crumble_flag_qubits_bit_value(
     state: StimInjectedStateName,
 ) -> None:
-    """Verify measured helper sites always return the all-zero outcome."""
-    circuit = _encoded_circuit(state, measure_helpers=True)
+    """Verify measured flag qubits always return the all-zero outcome."""
+    circuit = _encoded_circuit(state, measure_flags=True)
     shots = _sample(circuit, shots=1024)
 
     assert shots.shape == (1024, len(PATCH_HELPER_SITES))

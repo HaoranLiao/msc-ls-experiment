@@ -90,7 +90,7 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
     *,
     patch_qubits: Sequence[int] = DEFAULT_STIM_PATCH_QUBITS,
     injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
-    measure_helpers: bool = False,
+    measure_flags: bool = False,
     add_ticks: bool = True,
 ) -> stim.Circuit:
     """Append the Clifford (Stim) patch-Crumble Steane injection encoder.
@@ -110,7 +110,7 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
     injected_state
         Clifford state to inject on patch site 4 (the center data site).
         Defaults to ``"S"``, the proxy for the ``T`` magic state.
-    measure_helpers
+    measure_flags
         Whether to measure helper sites 1, 2, 6, and 7 into the Stim
         measurement record after encoding.
     add_ticks
@@ -149,7 +149,7 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
         if add_ticks:
             circuit.append("TICK", [])
 
-    if measure_helpers:
+    if measure_flags:
         circuit.append(
             "M",
             [patch_qubits[site] for site in PATCH_HELPER_SITES],

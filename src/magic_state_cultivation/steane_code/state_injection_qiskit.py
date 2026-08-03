@@ -540,7 +540,7 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
     patch_qubits: Sequence,
     injected_state: InjectedStateName | None = None,
     injection_azimuth_angle: float | None = None,
-    helper_classical_bits: Sequence | None = None,
+    flag_classical_bits: Sequence | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
     """Append the Crumble nearest-neighbor Steane encoder on the 11-site patch.
@@ -573,7 +573,7 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
         may be ``None`` because it is mutually exclusive with
         ``injected_state``. At most one argument may be non-``None``; when both
         are ``None``, ``injected_state="T"`` is used.
-    helper_classical_bits
+    flag_classical_bits
         Four classical bits for the helper-site measurements. When ``None``
         (default), the helper sites are not measured.
     add_barriers
@@ -592,7 +592,7 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
         raise ValueError(
             "injected_state and injection_azimuth_angle are mutually exclusive; supply at most one."
         )
-    if helper_classical_bits is not None and len(helper_classical_bits) < len(PATCH_HELPER_SITES):
+    if flag_classical_bits is not None and len(flag_classical_bits) < len(PATCH_HELPER_SITES):
         raise ValueError(
             f"helper_classical_bits must contain at least {len(PATCH_HELPER_SITES)} bits."
         )
@@ -621,10 +621,10 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
     if add_barriers:
         circuit.barrier(label="crumble state injection")
 
-    if helper_classical_bits is not None:
-        hcb = list(helper_classical_bits)
+    if flag_classical_bits is not None:
+        flag_classical_bits = list(flag_classical_bits)
         for i, site in enumerate(PATCH_HELPER_SITES):
-            circuit.measure(patch_qubits[site], hcb[i])
+            circuit.measure(patch_qubits[site], flag_classical_bits[i])
 
     return circuit
 

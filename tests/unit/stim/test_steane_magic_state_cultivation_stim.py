@@ -36,7 +36,7 @@ NUM_SHOTS = 4000
 NOISY_NUM_SHOTS = 10_000
 NOISY_TEST_SEED = 42
 
-ENCODER_HELPER_BITS = 4
+ENCODER_FLAG_BITS = 4
 LOGICAL_MEASUREMENT_BITS = len(PATCH_DEFAULT_LOGICAL_X)
 
 CULTIVATION_TEST_STATES: tuple[StimInjectedStateName, ...] = (
@@ -88,9 +88,9 @@ def _build_cultivation_with_logical_measurement(
 
 
 def _n_postselection_bits(n_rounds: int) -> int:
-    """Return encoder-helper, QED, and cultivation postselection bits."""
+    """Return encoder-flag, QED, and cultivation postselection bits."""
     return (
-        ENCODER_HELPER_BITS
+        ENCODER_FLAG_BITS
         + STEANE_QED_MEASUREMENTS_PER_ROUND
         + n_rounds * CULTIVATION_MEASUREMENTS_PER_ROUND
     )
@@ -308,7 +308,7 @@ class TestNoisyCultivationWithRounds:
     def test_cultivation_improves_over_no_postselection(self) -> None:
         """Cultivation improves on the noisy encoded state without postselection."""
         # Use the shared front end with both QED and cultivation disabled. The
-        # four encoder-helper outcomes are recorded but not postselected.
+        # four encoder-flag outcomes are recorded but not postselected.
         uncultivated_circuit = build_steane_injection_and_cultivation_circuit(
             injected_state="S",
             cultivation_rounds=0,

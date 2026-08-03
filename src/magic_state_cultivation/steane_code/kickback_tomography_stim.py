@@ -39,6 +39,7 @@ from magic_state_cultivation.steane_code.magic_state_cultivation_stim import (
 )
 from magic_state_cultivation.steane_code.state_injection_stim import (
     DEFAULT_STIM_INJECTED_STATE,
+    PATCH_HELPER_SITES,
     StimInjectedStateName,
     append_patch_stabilizer_measurement,
     append_patch_steane_state_injection_encoder_crumble_sequences,
@@ -57,6 +58,7 @@ def build_kickback_tomography_experiment(
     injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
     *,
     include_preparation_cultivation: bool = True,
+    measure_encoder_flags: bool = False,
     qed_cycle_indices: Iterable[int] = KT_DEFAULT_QED_CYCLE_INDICES,
     final_stabilizer_basis: FinalStabilizerMode = "x",
     add_ticks: bool = True,
@@ -71,6 +73,10 @@ def build_kickback_tomography_experiment(
     This parallels :func:`kickback_tomography_qiskit.build_kickback_tomography_experiment`
     with ``T -> S``. Every cultivation and KT round therefore measures the
     logical-Y axis of the Clifford ``S``-state proxy.
+
+    When ``measure_encoder_flags`` is true, the four Crumble-encoder flag
+    qubits are measured immediately after encoding, before any QED cycle. KT
+    postselection then requires each flag to be zero, flagging encoding faults.
 
     ``qed_cycle_indices`` uses the paper's one-based numbering and defaults to
     ``(1, 3)``. An empty tuple omits the QED cycles. The final stabilizer basis
@@ -104,8 +110,17 @@ def build_kickback_tomography_experiment(
         return bits
 
     append_patch_steane_state_injection_encoder_crumble_sequences(
-        circuit, injected_state=injected_state, add_ticks=add_ticks
+        circuit,
+        injected_state=injected_state,
+        measure_flags=measure_encoder_flags,
+        add_ticks=add_ticks,
     )
+    encoder_flag_positions: tuple[int, ...] = ()
+    if measure_encoder_flags:
+        encoder_flag_positions = tuple(
+            range(record_count, record_count + len(PATCH_HELPER_SITES))
+        )
+        record_count += len(PATCH_HELPER_SITES)
 
     if 1 in qed_indices:
         add_qed_cycle(1)
@@ -140,6 +155,7 @@ def build_kickback_tomography_experiment(
         tomography_check_round=check_bits,
         qed_cycles=tuple(qed_positions[index] for index in qed_indices),
         final_stabilizers=final_positions,
+        encoder_flags=encoder_flag_positions,
     )
     if circuit.num_measurements != record_count:
         raise RuntimeError("Kickback-tomography measurement layout does not match the circuit.")

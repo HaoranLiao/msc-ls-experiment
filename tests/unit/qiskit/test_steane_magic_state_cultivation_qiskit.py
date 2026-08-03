@@ -80,7 +80,7 @@ def _build_cultivation_with_logical_measurement(
 
     For one cultivation round, returns a circuit with 11 qubits and 18
     classical bits:
-      - bits 0–3: encoder helper checks (must be zero)
+      - bits 0–3: encoder flag checks (must be zero)
       - bits 4–9: post-injection Steane QED syndrome (must be zero)
       - bits 10–14: cultivation outcomes (must be zero)
       - bits 15–17: destructive logical measurement on 3-qubit support
@@ -127,7 +127,7 @@ def _postselect_and_compute_expectation(
         Qiskit counts dictionary.
     postselection_bit_positions
         Bit indices (Qiskit convention: 0 = rightmost) for postselection.
-        Defaults to the encoder-helper, post-injection QED, and cultivation
+        Defaults to the encoder-flag, post-injection QED, and cultivation
         bits.
     logical_bit_positions
         Bit indices for the logical measurement outcomes whose parity gives ⟨O_L⟩.
@@ -261,7 +261,7 @@ class TestStabilizerSyndromesAfterCultivation:
         counts = sim.run(circuit, shots=n_shots).result().get_counts()
 
         # Check all accepted shots have all-zero stabilizer outcomes.
-        # The postselection prefix contains 4 encoder-helper bits, 6
+        # The postselection prefix contains 4 encoder-flag bits, 6
         # post-injection QED bits, and 5 cultivation bits. The final 6 bits are
         # the additional stabilizer measurement under test.
         found_accepted = False
@@ -417,7 +417,7 @@ class TestNoisyCultivationWithRounds:
     def test_cultivation_improves_over_no_postselection(self, basis: str) -> None:
         """Cultivation improves on the noisy encoded state without postselection."""
         # Use the shared front end with both QED and cultivation disabled. The
-        # encoder-helper outcomes remain recorded but are deliberately ignored,
+        # encoder-flag outcomes remain recorded but are deliberately ignored,
         # giving the unpostselected baseline.
         uncultivated_circuit = build_steane_injection_and_cultivation_circuit(
             injected_state="T",

@@ -902,7 +902,7 @@ def test_patch_crumble_helper_sites_bit_value(state: InjectedStateName) -> None:
         circuit,
         patch_qubits=list(range(NUM_PATCH_QUBITS)),
         injected_state=state,
-        helper_classical_bits=list(range(n_helpers)),
+        flag_classical_bits=list(range(n_helpers)),
         add_barriers=False,
     )
     shots = 1024
