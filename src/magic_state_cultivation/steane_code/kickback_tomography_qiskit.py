@@ -425,8 +425,6 @@ def _interpret_kickback_tomography_round(
     # maps the expected raw double-check 0 back to the semantic root value.
     # With reset, clear that residual before interpreting the double-check.
     if not no_reset:
-        # The circuit resets site 7 to |0> before preparing |+> for unfolding,
-        # so its root outcome does not affect the later double-check readout.
         measurement_frame.reset(_KT_FOLDED_MEASUREMENT_QUBIT)
 
     double_check = measurement_frame.advance(
