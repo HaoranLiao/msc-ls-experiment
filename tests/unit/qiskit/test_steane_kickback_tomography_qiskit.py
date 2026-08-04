@@ -148,7 +148,7 @@ class TestKickbackTomographyCircuitConstruction:
         expected_bits: int,
     ) -> None:
         experiment = build_kickback_tomography_experiment(
-            include_preparation_cultivation=False,
+            include_prep_cultivation=False,
             qed_cycle_indices=(),
             final_stabilizer_basis=basis,
             add_barriers=False,
@@ -167,7 +167,7 @@ class TestKickbackTomographyCountsAnalysis:
     @pytest.mark.parametrize("no_reset", [False, True])
     def test_summary_classifies_retained_root_outcomes(self, no_reset: bool) -> None:
         experiment = build_kickback_tomography_experiment(
-            include_preparation_cultivation=False,
+            include_prep_cultivation=False,
             qed_cycle_indices=(),
             final_stabilizer_basis="none",
             no_reset=no_reset,
@@ -183,11 +183,11 @@ class TestKickbackTomographyCountsAnalysis:
                 bits[n_bits - 1 - position] = "1"
             return "".join(bits)
 
-        measurement_root = layout.tomography_measurement_round.folded_root
-        measurement_root_double_check = layout.tomography_measurement_round.folded_root_double_check
+        measurement_root = layout.tomography_measure_round.folded_root
+        measurement_root_double_check = layout.tomography_measure_round.folded_root_double_check
         check_root = layout.tomography_check_round.folded_root
         check_root_double_check = layout.tomography_check_round.folded_root_double_check
-        cultivation_flag = layout.tomography_measurement_round.flag_positions[0]
+        cultivation_flag = layout.tomography_measure_round.flag_positions[0]
 
         good_success = bitstring_with()
         expected_double_checks = (
@@ -292,7 +292,7 @@ class TestNoiselessKickbackTomography:
     ) -> None:
         experiment = build_kickback_tomography_experiment(
             injected_state=state,
-            include_preparation_cultivation=False,
+            include_prep_cultivation=False,
             qed_cycle_indices=(),
             final_stabilizer_basis="none",
             no_reset=no_reset,
@@ -316,7 +316,7 @@ class TestNoiselessKickbackTomography:
         """
         experiment = build_kickback_tomography_experiment(
             injected_state="1",
-            include_preparation_cultivation=True,
+            include_prep_cultivation=True,
             qed_cycle_indices=(),
             final_stabilizer_basis="none",
             no_reset=no_reset,

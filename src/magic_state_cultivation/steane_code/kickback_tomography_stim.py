@@ -151,7 +151,7 @@ def build_kickback_tomography_experiment(
 
     layout = KickbackTomographyBitLayout(
         preparation_round=preparation_bits,
-        tomography_measurement_round=measurement_bits,
+        tomography_measure_round=measurement_bits,
         tomography_check_round=check_bits,
         qed_cycles=tuple(qed_positions[index] for index in qed_indices),
         final_stabilizers=final_positions,
@@ -166,7 +166,7 @@ def _required_layout_positions(
     layout: KickbackTomographyBitLayout,
 ) -> tuple[int, ...]:
     """Return every measurement-record position read during analysis."""
-    measurement_round = layout.tomography_measurement_round
+    measurement_round = layout.tomography_measure_round
     check_round = layout.tomography_check_round
     return (
         *layout.detector_positions,
@@ -202,7 +202,7 @@ def _retained_shot_mask(
     if detector_positions:
         retained &= ~shots[:, detector_positions].any(axis=1)
 
-    measurement_round = layout.tomography_measurement_round
+    measurement_round = layout.tomography_measure_round
     check_round = layout.tomography_check_round
     measurement_root = shots[:, measurement_round.folded_root]
     check_root = shots[:, check_round.folded_root]
@@ -252,7 +252,7 @@ def summarize_kickback_tomography_shots(
     _validate_shots(shots, layout)
     total_shots = int(shots.shape[0])
 
-    measurement_round = layout.tomography_measurement_round
+    measurement_round = layout.tomography_measure_round
     check_round = layout.tomography_check_round
     measurement_root = shots[:, measurement_round.folded_root]
     check_root = shots[:, check_round.folded_root]

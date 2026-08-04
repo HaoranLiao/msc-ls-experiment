@@ -78,7 +78,7 @@ class KickbackTomographyBitLayout:
     """Classical-bit positions used by a KT experiment."""
 
     preparation_round: KickbackCultivationRoundBits | None
-    tomography_measurement_round: KickbackCultivationRoundBits
+    tomography_measure_round: KickbackCultivationRoundBits
     tomography_check_round: KickbackCultivationRoundBits
     qed_cycles: tuple[tuple[int, ...], ...]
     final_stabilizers: tuple[int, ...]
@@ -98,7 +98,7 @@ class KickbackTomographyBitLayout:
         positions.extend(self.encoder_flags)
         if self.preparation_round is not None:
             positions.extend(self.preparation_round.all_positions)
-        positions.extend(self.tomography_measurement_round.flag_positions)
+        positions.extend(self.tomography_measure_round.flag_positions)
         positions.extend(self.tomography_check_round.flag_positions)
         for cycle in self.qed_cycles:
             positions.extend(cycle)
@@ -189,7 +189,7 @@ def build_kickback_tomography_experiment(
     injected_state: InjectedStateName | None = None,
     *,
     injection_azimuth_angle: float | None = None,
-    include_preparation_cultivation: bool = True,
+    include_prep_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     qed_cycle_indices: Iterable[int] = KT_DEFAULT_QED_CYCLE_INDICES,
     final_stabilizer_basis: FinalStabilizerMode = "x",
@@ -247,7 +247,7 @@ def build_kickback_tomography_experiment(
     )
     prep_creg = (
         ClassicalRegister(CULTIVATION_MEASUREMENTS_PER_ROUND, "prep_cult")
-        if include_preparation_cultivation
+        if include_prep_cultivation
         else None
     )
     qed_cregs = {
@@ -291,7 +291,7 @@ def build_kickback_tomography_experiment(
             add_barriers=add_barriers,
         )
 
-    if include_preparation_cultivation:
+    if include_prep_cultivation:
         assert prep_creg is not None
         append_h_xy_projection_round(
             circuit,
@@ -364,7 +364,7 @@ def build_kickback_tomography_experiment(
     )
     layout = KickbackTomographyBitLayout(
         preparation_round=preparation_bits,
-        tomography_measurement_round=cultivation_round_bits_from_positions(
+        tomography_measure_round=cultivation_round_bits_from_positions(
             tuple(circuit.find_bit(bit).index for bit in kt_measure_creg),
         ),
         tomography_check_round=cultivation_round_bits_from_positions(
@@ -385,7 +385,7 @@ def build_kickback_tomography_experiment(
             "preparation_round": (
                 layout.preparation_round.all_positions if layout.preparation_round else None
             ),
-            "tomography_measurement_round": layout.tomography_measurement_round.all_positions,
+            "tomography_measure_round": layout.tomography_measure_round.all_positions,
             "tomography_check_round": layout.tomography_check_round.all_positions,
             "qed_cycles": layout.qed_cycles,
             "final_stabilizers": layout.final_stabilizers,
@@ -458,7 +458,7 @@ def kickback_tomography_shot_is_retained(
 
     measurement_round_root, measurement_round_double_check = _interpret_kickback_tomography_round(
         bitstring,
-        layout.tomography_measurement_round,
+        layout.tomography_measure_round,
         no_reset=layout.no_reset,
     )
     check_round_root, check_round_double_check = _interpret_kickback_tomography_round(
@@ -509,7 +509,7 @@ def summarize_kickback_tomography_counts(
         retained_shots += count
         measurement_root = qiskit_bit_value(
             bitstring,
-            layout.tomography_measurement_round.folded_root,
+            layout.tomography_measure_round.folded_root,
         )
         check_root = qiskit_bit_value(
             bitstring,

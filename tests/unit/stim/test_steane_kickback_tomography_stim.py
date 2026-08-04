@@ -43,7 +43,7 @@ def _measurement_record_order(
         label_positions("prep_cult", layout.preparation_round.all_positions)
     label_positions(
         "kt_measure",
-        layout.tomography_measurement_round.all_positions,
+        layout.tomography_measure_round.all_positions,
     )
     label_positions(
         "kt_check",
@@ -209,11 +209,11 @@ class TestKickbackTomographyShotAnalysis:
             shot[list(positions)] = True
             return shot
 
-        measurement_root = layout.tomography_measurement_round.folded_root
-        measurement_root_double_check = layout.tomography_measurement_round.folded_root_double_check
+        measurement_root = layout.tomography_measure_round.folded_root
+        measurement_root_double_check = layout.tomography_measure_round.folded_root_double_check
         check_root = layout.tomography_check_round.folded_root
         check_root_double_check = layout.tomography_check_round.folded_root_double_check
-        cultivation_flag = layout.tomography_measurement_round.flag_positions[0]
+        cultivation_flag = layout.tomography_measure_round.flag_positions[0]
 
         good_success = shot_with()
         good_error = shot_with(
