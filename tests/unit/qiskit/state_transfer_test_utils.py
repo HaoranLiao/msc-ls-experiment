@@ -7,13 +7,10 @@ from collections.abc import Sequence
 import pytest
 from qiskit import QuantumCircuit
 
-from magic_state_cultivation.state_transfer_by_lattice_surgery import (
-    state_transfer_analysis_qiskit as analysis,
+from msc.state_transfer_by_lattice_surgery import (
+    state_transfer_common as common,
 )
-from magic_state_cultivation.state_transfer_by_lattice_surgery import (
-    state_transfer_common_qiskit as common,
-)
-from magic_state_cultivation.surface_code.post_transfer import rotated_post_transfer
+from msc.surface_code import rotated_common
 
 
 def labeled_measurement_positions(
@@ -30,8 +27,7 @@ def labeled_measurement_positions(
     position_by_bit = {
         instruction.clbits[0]: position
         for position, instruction in enumerate(circuit.data)
-        if instruction.operation.name == "measure"
-        and instruction.clbits[0] in register_bits
+        if instruction.operation.name == "measure" and instruction.clbits[0] in register_bits
     }
     assert set(position_by_bit) == register_bits
     return {
@@ -71,14 +67,10 @@ def assert_merge_round_measurement_groups(
     )
 
     prefix = f"round{round_number}_"
-    selected_boundary_positions = [
-        boundary_positions[f"{prefix}{name}"] for name in boundary_names
-    ]
+    selected_boundary_positions = [boundary_positions[f"{prefix}{name}"] for name in boundary_names]
     selected_surface_positions = [
         surface_z_positions[f"{prefix}{label}"] for label in spec.z_labels
-    ] + [
-        surface_x_positions[f"{prefix}{label}"] for label in spec.merged_x_labels
-    ]
+    ] + [surface_x_positions[f"{prefix}{label}"] for label in spec.merged_x_labels]
     selected_steane_labels = tuple(
         label.removeprefix(prefix)
         for label in common.STEANE_LS_VERIFICATION_LABELS
@@ -90,9 +82,7 @@ def assert_merge_round_measurement_groups(
 
     assert selected_steane_labels == expected_steane_checks
     assert set(spec.z_labels) == set(spec.z_stabilizers)
-    assert set(spec.merged_x_labels) == set(spec.x_labels) - set(
-        spec.top_x_recovery_labels
-    )
+    assert set(spec.merged_x_labels) == set(spec.x_labels) - set(spec.top_x_recovery_labels)
     assert max(selected_boundary_positions) < min(selected_surface_positions)
 
     if selected_steane_positions:
@@ -128,14 +118,14 @@ def assert_optional_post_transfer_continuation(
     post_positions = labeled_measurement_positions(
         circuit,
         register_name="post_transfer_surface_z",
-        labels=rotated_post_transfer.repeated_round_labels(
+        labels=rotated_common.repeated_round_labels(
             spec.z_labels,
             rounds=spec.distance,
         ),
     ) | labeled_measurement_positions(
         circuit,
         register_name="post_transfer_surface_x",
-        labels=rotated_post_transfer.repeated_round_labels(
+        labels=rotated_common.repeated_round_labels(
             spec.x_labels,
             rounds=spec.distance,
         ),
@@ -146,12 +136,8 @@ def assert_optional_post_transfer_continuation(
         labels=logical_support,
     )
 
-    assert len(registers["post_transfer_surface_z"]) == (
-        spec.distance * len(spec.z_labels)
-    )
-    assert len(registers["post_transfer_surface_x"]) == (
-        spec.distance * len(spec.x_labels)
-    )
+    assert len(registers["post_transfer_surface_z"]) == (spec.distance * len(spec.z_labels))
+    assert len(registers["post_transfer_surface_x"]) == (spec.distance * len(spec.x_labels))
     assert max(post_positions.values()) < min(logical_positions.values())
 
 
@@ -183,9 +169,7 @@ def assert_demolition_measurement_groups(
         labels=spec.top_x_recovery_labels,
     )
 
-    round_three_positions = [
-        surface_z_positions[f"round3_{label}"] for label in spec.z_labels
-    ] + [
+    round_three_positions = [surface_z_positions[f"round3_{label}"] for label in spec.z_labels] + [
         surface_x_positions[f"round3_{label}"] for label in spec.merged_x_labels
     ]
     round_three_end = max(round_three_positions)
@@ -204,16 +188,14 @@ def assert_demolition_measurement_groups(
     assert measurements["final_x_verification_checks"] == {
         "X0235": common.parity(steane_x, ("0", "2", "3", "5")),
         "X0246": common.parity(steane_x, ("0", "2", "4", "6")),
-        "X0145ab": (
-            common.parity(steane_x, ("0", "1", "4", "5")) ^ recovered_x_ab
-        ),
+        "X0145ab": (common.parity(steane_x, ("0", "1", "4", "5")) ^ recovered_x_ab),
     }
 
 
 def assert_transfer_detection_policy(measurements: dict[str, object]) -> None:
     """Check hard boundary/color rejection versus decoded surface outcomes."""
     common_values = measurements["merged_zz_rounds"][-1]
-    assert analysis.merged_boundary_logical_zz_outcome(measurements) == (
+    assert common.merged_boundary_logical_zz_outcome(measurements) == (
         sum(common_values.values()) % 2
     )
 
@@ -221,16 +203,16 @@ def assert_transfer_detection_policy(measurements: dict[str, object]) -> None:
     for boundary_name in boundary_names[:2]:
         measurements["merged_zz_rounds"][1][boundary_name] ^= 1
 
-    assert not analysis.merged_boundary_checks_stable(measurements)
-    assert not analysis.transfer_acceptance_succeeds(measurements)
+    assert not common.merged_boundary_checks_stable(measurements)
+    assert not common.transfer_acceptance_succeeds(measurements)
     with pytest.raises(ValueError, match="individually stable"):
-        analysis.merged_boundary_logical_zz_outcome(measurements)
+        common.merged_boundary_logical_zz_outcome(measurements)
 
     for boundary_name in boundary_names[:2]:
         measurements["merged_zz_rounds"][1][boundary_name] ^= 1
     measurements["steane_verification"]["round1_Z0145"] ^= 1
-    assert not analysis.transfer_acceptance_succeeds(measurements)
+    assert not common.transfer_acceptance_succeeds(measurements)
 
     measurements["steane_verification"]["round1_Z0145"] ^= 1
     measurements["merged_surface_logical_x_byproduct"] ^= 1
-    assert analysis.transfer_acceptance_succeeds(measurements)
+    assert common.transfer_acceptance_succeeds(measurements)

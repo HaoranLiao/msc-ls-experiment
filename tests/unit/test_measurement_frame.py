@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from magic_state_cultivation.decoding import MeasurementFrame
+from msc.decoding import MeasurementFrame
 
 
 def test_first_measurement_starts_from_zero() -> None:
@@ -29,10 +29,7 @@ def test_frame_decodes_repeated_no_reset_parity_measurements() -> None:
 
     # Intended parities 1, 1, 0 give cumulative raw bits 1, 0, 0 when
     # the measurement ancilla is reused without reset.
-    interpreted = [
-        frame.advance("merged_boundary_ancilla", raw_bit)
-        for raw_bit in (1, 0, 0)
-    ]
+    interpreted = [frame.advance("merged_boundary_ancilla", raw_bit) for raw_bit in (1, 0, 0)]
 
     assert interpreted == [1, 1, 0]
 
