@@ -1,10 +1,10 @@
 """Stim parsing for Steane-to-surface lattice-surgery results.
 
 Circuit construction and global record positions live in
-``state_transfer_helper_stim``. This module converts one Stim record row into
+``ls_helper_stim``. This module converts one Stim record row into
 framework-neutral measurement families, then delegates detector
 reconstruction, acceptance, surface decoding, and Pauli-frame interpretation
-to ``state_transfer_common``.
+to ``ls_common``.
 """
 
 from __future__ import annotations
@@ -13,12 +13,12 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from msc.state_transfer_by_lattice_surgery.state_transfer_common import (
+from msc.lattice_surgery.ls_common import (
     SurfaceCodeTransferSpec,
     SurfaceReadoutBasis,
     interpret_transfer_measurement_families,
 )
-from msc.state_transfer_by_lattice_surgery.state_transfer_helper_stim import (
+from msc.lattice_surgery.ls_helper_stim import (
     TransferMeasurementLayout,
     transfer_measurement_layout,
 )

@@ -10,10 +10,10 @@ import pytest
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit_aer import AerSimulator
 
-import msc.surface_code.rotated_d3_qiskit as d3
-import msc.surface_code.rotated_d5_qiskit as d5
+import msc.rotated_surface_code.d3_qiskit as d3
+import msc.rotated_surface_code.d5_qiskit as d5
 from msc.noise import append_pauli_faults
-from msc.surface_code.decoding import (
+from msc.rotated_surface_code.decoding import (
     PauliFrame,
     RotatedDecoder,
     StabilizerFrame,

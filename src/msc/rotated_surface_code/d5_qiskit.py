@@ -1,9 +1,9 @@
 """Rotated distance-5 surface-code Qiskit API over shared patch geometry.
 
 The generated 25-qubit geometry, stabilizers, logical representatives,
-drawing metadata, and canonical schedules are owned by ``rotated_common``.
+drawing metadata, and canonical schedules are owned by ``common``.
 This module preserves the public d=5 circuit and drawing API while delegating
-Qiskit primitives to ``rotated_helper_qiskit``.
+Qiskit primitives to ``helper_qiskit``.
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from qiskit import QuantumCircuit
 
-from msc.surface_code import rotated_common
-from msc.surface_code import rotated_helper_qiskit as rotated_helper
+from msc.rotated_surface_code import common
+from msc.rotated_surface_code import helper_qiskit as helper
 
-PATCH_SPEC = rotated_common.D5_PATCH_SPEC
+PATCH_SPEC = common.D5_PATCH_SPEC
 DISTANCE = PATCH_SPEC.distance
 NUM_DATA_QUBITS = len(PATCH_SPEC.surface_order)
 SURFACE_ORDER = PATCH_SPEC.surface_order
@@ -39,17 +39,17 @@ FULL_STABILIZER_SCHEDULE = PATCH_SPEC.full_stabilizer_schedule
 
 def label2qubit(surface_qubits: Sequence[object]) -> dict[str, object]:
     """Map surface labels ``a..y`` to supplied Qiskit qubits."""
-    return rotated_common.label2qubit(surface_qubits, surface_index=SURFACE_INDEX)
+    return common.label2qubit(surface_qubits, surface_index=SURFACE_INDEX)
 
 
 def draw_patch(ax: Axes | None = None) -> tuple[plt.Figure, Axes]:
     """Draw the shared rotated distance-5 patch geometry."""
-    return rotated_common.draw_patch(PATCH_SPEC, ax)
+    return common.draw_patch(PATCH_SPEC, ax)
 
 
 # These two preparation helpers need no patch geometry, so expose them directly.
-reset_to_zero = rotated_helper.reset_to_zero
-prepare_product_plus = rotated_helper.prepare_product_plus
+reset_to_zero = helper.reset_to_zero
+prepare_product_plus = helper.prepare_product_plus
 
 
 def append_scheduled_stabilizer_round(
@@ -79,7 +79,7 @@ def append_scheduled_stabilizer_round(
     selected_stabilizer_names = tuple(selected_stabilizer_names)
     if len(selected_stabilizer_names) != len(set(selected_stabilizer_names)):
         raise ValueError("selected_stabilizer_names must be unique.")
-    rotated_helper.append_scheduled_stabilizer_round(
+    helper.append_scheduled_stabilizer_round(
         circuit,
         label_to_qubit=label2qubit(surface_qubits),
         ancillas=ancillas,
@@ -111,7 +111,7 @@ def append_logical_measurement(
     measurement requires one classical bit per qubit in their union. A
     non-destructive measurement requires ``ancilla_qubit`` and one result bit.
     """
-    rotated_helper.append_logical_measurement(
+    helper.append_logical_measurement(
         circuit,
         basis,
         surface_qubits=surface_qubits,

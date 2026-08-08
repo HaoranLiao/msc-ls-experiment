@@ -88,7 +88,9 @@ def _build_cultivation_with_logical_measurement(
     circuit = build_steane_injection_and_cultivation_circuit(
         injected_state=state,
         cultivation_rounds=n_rounds,
+        add_qed_round=True,
         add_barriers=False,
+        skip_cx_1_4=False,
     )
 
     # Append destructive logical measurement (3 classical bits)
@@ -205,7 +207,9 @@ class TestPostselectedLogicalExpectation:
         # Use the cultivation-only circuit (no logical measurement needed)
         circuit = build_steane_injection_and_cultivation_circuit(
             injected_state=state,
+            add_qed_round=True,
             add_barriers=False,
+            skip_cx_1_4=False,
         )
         sim = AerSimulator()
         counts = sim.run(circuit, shots=NUM_SHOTS).result().get_counts()
@@ -240,7 +244,9 @@ class TestStabilizerSyndromesAfterCultivation:
         """All 6 stabilizer measurements yield 0 (eigenvalue +1) after cultivation."""
         circuit = build_steane_injection_and_cultivation_circuit(
             injected_state=state,
+            add_qed_round=True,
             add_barriers=False,
+            skip_cx_1_4=False,
         )
 
         # Append stabilizer measurement
@@ -284,11 +290,6 @@ class TestStabilizerSyndromesAfterCultivation:
 # =============================================================================
 # Test Set 3: Noisy multi-round cultivation approaches ideal
 # =============================================================================
-
-NOISE_P_1Q = 0.0005
-NOISE_P_2Q = 0.005
-NOISE_MEASURE = 0.005
-NOISE_RESET = 0.005
 
 
 def _n_postselection_bits(n_rounds: int) -> int:
@@ -341,10 +342,6 @@ class TestNoisyCultivationWithRounds:
             )
             noisy_simulator = build_noisy_aer_simulator(
                 circuit,
-                p_1q=NOISE_P_1Q,
-                p_2q=NOISE_P_2Q,
-                p_measure=NOISE_MEASURE,
-                p_reset=NOISE_RESET,
                 seed_simulator=NOISY_TEST_SEED,
             )
             counts = noisy_simulator.run(circuit, shots=NUM_SHOTS).result().get_counts()
@@ -380,10 +377,6 @@ class TestNoisyCultivationWithRounds:
             )
             noisy_simulator = build_noisy_aer_simulator(
                 circuit,
-                p_1q=NOISE_P_1Q,
-                p_2q=NOISE_P_2Q,
-                p_measure=NOISE_MEASURE,
-                p_reset=NOISE_RESET,
                 seed_simulator=NOISY_TEST_SEED,
             )
             counts = noisy_simulator.run(circuit, shots=n_shots).result().get_counts()
@@ -424,6 +417,7 @@ class TestNoisyCultivationWithRounds:
             cultivation_rounds=0,
             add_qed_round=False,
             add_barriers=False,
+            skip_cx_1_4=False,
         )
         qreg = uncultivated_circuit.qregs[0]
         creg = ClassicalRegister(3, "c")
@@ -439,10 +433,6 @@ class TestNoisyCultivationWithRounds:
         )
         uncultivated_simulator = build_noisy_aer_simulator(
             uncultivated_circuit,
-            p_1q=NOISE_P_1Q,
-            p_2q=NOISE_P_2Q,
-            p_measure=NOISE_MEASURE,
-            p_reset=NOISE_RESET,
             seed_simulator=NOISY_TEST_SEED,
         )
         uncultivated_counts = (
@@ -470,10 +460,6 @@ class TestNoisyCultivationWithRounds:
         )
         cultivated_simulator = build_noisy_aer_simulator(
             cultivated_circuit,
-            p_1q=NOISE_P_1Q,
-            p_2q=NOISE_P_2Q,
-            p_measure=NOISE_MEASURE,
-            p_reset=NOISE_RESET,
             seed_simulator=NOISY_TEST_SEED,
         )
         cultivated_counts = (

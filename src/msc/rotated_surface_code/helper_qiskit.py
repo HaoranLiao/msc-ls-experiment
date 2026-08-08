@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 
 from qiskit import QuantumCircuit
 
-from msc.surface_code import rotated_common
+from msc.rotated_surface_code import common
 from msc.utils.circuit_qiskit import (
     append_logical_measurement_on_indexed_qubits,
     append_scheduled_parity_measurements,
@@ -70,11 +70,11 @@ def append_scheduled_stabilizer_round(
         └── select any same-basis or mixed-basis stabilizers
             └── selected_stabilizer_schedules
                 └── append_scheduled_stabilizer_round
-                    └── rotated_common.resolve_selected_stabilizer_schedules
+                    └── common.resolve_selected_stabilizer_schedules
                         └── append_scheduled_parity_measurements
 
     """
-    data_qubit_schedules, used_ancillas = rotated_common.resolve_selected_stabilizer_schedules(
+    data_qubit_schedules, used_ancillas = common.resolve_selected_stabilizer_schedules(
         label_to_qubit=label_to_qubit,
         selected_stabilizer_schedules=selected_stabilizer_schedules,
         ancillas=ancillas,

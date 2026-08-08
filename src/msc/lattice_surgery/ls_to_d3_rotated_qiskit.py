@@ -5,9 +5,9 @@ three-round protocol to the shorter distance-3 top boundary: its merged logical
 ``Z_L Z_L`` measurement is the product of ``Z1a`` and ``Z35bc``. All compatible
 surface checks and both paper-defined Steane check groups are still measured.
 
-Circuit construction lives in ``state_transfer_helper_qiskit``; parsing,
+Circuit construction lives in ``ls_helper_qiskit``; parsing,
 acceptance, decoding, and Pauli-frame interpretation live in
-``state_transfer_analysis_qiskit``. This module only binds those shared
+``ls_analysis_qiskit``. This module only binds those shared
 operations to the rotated-d3 geometry.
 """
 
@@ -15,17 +15,17 @@ from __future__ import annotations
 
 from qiskit import QuantumCircuit
 
-from msc.state_transfer_by_lattice_surgery import (
-    state_transfer_analysis_qiskit as analysis,
+from msc.lattice_surgery import (
+    ls_analysis_qiskit as analysis,
 )
-from msc.state_transfer_by_lattice_surgery import (
-    state_transfer_common as common,
+from msc.lattice_surgery import (
+    ls_common as common,
 )
-from msc.state_transfer_by_lattice_surgery import (
-    state_transfer_helper_qiskit as helper,
+from msc.lattice_surgery import (
+    ls_helper_qiskit as helper,
 )
+from msc.rotated_surface_code import d3_qiskit as d3
 from msc.steane_code.state_injection_qiskit import InjectedStateName
-from msc.surface_code import rotated_d3_qiskit as d3
 
 MERGED_BOUNDARY_CHECKS: tuple[common.MergedBoundaryCheck, ...] = (
     ("Z1a", ("1",), ("a",)),

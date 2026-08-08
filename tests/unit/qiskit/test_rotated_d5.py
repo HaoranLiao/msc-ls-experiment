@@ -6,7 +6,7 @@ import pytest
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit_aer import AerSimulator
 
-import msc.surface_code.rotated_d5_qiskit as d5
+import msc.rotated_surface_code.d5_qiskit as d5
 from msc.utils.circuit_qiskit import two_qubit_depth
 from msc.utils.normalize import parse_qiskit_registers
 

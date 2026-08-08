@@ -7,22 +7,22 @@ from collections.abc import Sequence
 import numpy as np
 import stim
 
-from msc.state_transfer_by_lattice_surgery import (
-    state_transfer_analysis_stim as analysis,
+from msc.lattice_surgery import (
+    ls_analysis_stim as analysis,
 )
-from msc.state_transfer_by_lattice_surgery import (
-    state_transfer_common as common,
+from msc.lattice_surgery import (
+    ls_common as common,
 )
-from msc.state_transfer_by_lattice_surgery import (
-    state_transfer_helper_stim as helper,
+from msc.lattice_surgery import (
+    ls_helper_stim as helper,
 )
+from msc.rotated_surface_code import d5_stim as d5
+from msc.rotated_surface_code import helper_stim as surface_helper
+from msc.rotated_surface_code.post_transfer import post_transfer_stim
 from msc.steane_code.state_injection_stim import (
     DEFAULT_STIM_INJECTED_STATE,
     StimInjectedStateName,
 )
-from msc.surface_code import rotated_d5_stim as d5
-from msc.surface_code import rotated_helper_stim as rotated_helper
-from msc.surface_code.post_transfer import rotated_post_transfer_stim
 from msc.utils.normalize import normalize_pauli_char
 
 IDEAL_POST_TRANSFER_SURFACE_Z_FAMILY = "ideal_post_transfer_surface_z"
@@ -95,7 +95,7 @@ def append_ideal_verification_and_destructive_readout(
     merged_z_reference = transfer_layout.record("merged_surface_z").round_positions(
         rounds=common.LATTICE_SURGERY_ROUNDS
     )[-1]
-    rotated_post_transfer_stim.append_rotated_post_transfer(
+    post_transfer_stim.append_rotated_post_transfer(
         circuit,
         surface_qubits=surface_qubits,
         z_ancillas=[
@@ -120,7 +120,7 @@ def append_ideal_verification_and_destructive_readout(
         ),
         add_ticks=add_ticks,
     )
-    rotated_helper.append_all_data_readout(
+    surface_helper.append_all_data_readout(
         circuit,
         data_qubits=surface_qubits,
         basis=readout_basis,

@@ -10,10 +10,10 @@ import stim
 from msc.decoding.pauli_frame import PauliFrame
 from msc.decoding.stabilizer_frame import StabilizerFrame
 from msc.noise.fault_injection_stim import append_pauli_faults
-from msc.surface_code import rotated_d3_stim as d3
-from msc.surface_code import rotated_d5_stim as d5
-from msc.surface_code import rotated_helper_stim as rotated_helper
-from msc.surface_code.decoding.rotated_decoder import (
+from msc.rotated_surface_code import d3_stim as d3
+from msc.rotated_surface_code import d5_stim as d5
+from msc.rotated_surface_code import helper_stim as helper
+from msc.rotated_surface_code.decoding.decoder import (
     RotatedDecoder,
     TemporalRotatedDecoder,
 )
@@ -124,12 +124,12 @@ def _run_single_fault(
     # sampler must then fire exactly the stabilizers the injected fault flips.
     detect_z_positions = tuple(range(len(z_names), 2 * len(z_names)))
     detect_x_positions = tuple(range(2 * len(z_names), 2 * len(z_names) + len(x_names)))
-    rotated_helper.append_stabilizer_detectors(
+    helper.append_stabilizer_detectors(
         circuit,
         rounds=(detect_z_positions,),
         first_round_reference=tuple(range(len(z_names))),
     )
-    rotated_helper.append_stabilizer_detectors(circuit, rounds=(detect_x_positions,))
+    helper.append_stabilizer_detectors(circuit, rounds=(detect_x_positions,))
 
     shot = circuit.compile_sampler(seed=1).sample(1)[0]
 
@@ -245,12 +245,12 @@ def _run_temporal_single_fault(
     ]
     # Z checks change-detect against the initialization reference; the
     # |+>-prepared X checks read their known +1 value on the first round.
-    rotated_helper.append_stabilizer_detectors(
+    helper.append_stabilizer_detectors(
         circuit,
         rounds=z_round_positions,
         first_round_reference=tuple(range(len(z_names))),
     )
-    rotated_helper.append_stabilizer_detectors(circuit, rounds=x_round_positions)
+    helper.append_stabilizer_detectors(circuit, rounds=x_round_positions)
 
     measurement_shot = circuit.compile_sampler(seed=1).sample(1)[0]
     detector_shot = circuit.compile_detector_sampler(seed=1).sample(1)[0]

@@ -14,6 +14,10 @@ import pytest
 import stim
 
 from msc.noise.fault_injection_stim import add_circuit_depolarizing_noise
+from msc.noise.fault_tolerance_stim import (
+    DetectorErrorModelShotAnalyzer,
+    assess_circuit_single_fault_tolerance,
+)
 from msc.steane_code.magic_state_cultivation_qiskit import (
     CULTIVATION_MEASUREMENTS_PER_ROUND,
     STEANE_QED_MEASUREMENTS_PER_ROUND,
@@ -75,7 +79,9 @@ def _build_cultivation_with_logical_measurement(
     circuit = build_steane_injection_and_cultivation_circuit(
         state,
         cultivation_rounds=n_rounds,
+        add_qed_round=True,
         add_ticks=False,
+        skip_cx_1_4=False,
     )
     support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
     append_patch_logical_measurement(
@@ -168,7 +174,9 @@ class TestPostselectedLogicalExpectation:
     def test_success_rate(self, state: StimInjectedStateName) -> None:
         circuit = build_steane_injection_and_cultivation_circuit(
             state,
+            add_qed_round=True,
             add_ticks=False,
+            skip_cx_1_4=False,
         )
         shots = _sample(circuit, shots=NUM_SHOTS)
 
@@ -186,7 +194,9 @@ class TestPostselectedLogicalExpectation:
     def test_builder_annotates_every_postselection_measurement(self) -> None:
         circuit = build_steane_injection_and_cultivation_circuit(
             "S",
+            add_qed_round=True,
             add_ticks=False,
+            skip_cx_1_4=False,
         )
         detection_events = circuit.compile_detector_sampler(seed=1).sample(32)
 
@@ -209,7 +219,9 @@ class TestStabilizerSyndromesAfterCultivation:
     ) -> None:
         circuit = build_steane_injection_and_cultivation_circuit(
             state,
+            add_qed_round=True,
             add_ticks=False,
+            skip_cx_1_4=False,
         )
         append_patch_stabilizer_measurement(circuit, add_ticks=False)
 
@@ -226,23 +238,6 @@ class TestStabilizerSyndromesAfterCultivation:
 # =============================================================================
 # Test Set 3: Noisy multi-round cultivation approaches the S-state proxy
 # =============================================================================
-
-
-NOISE_P_1Q = 0.0005
-NOISE_P_2Q = 0.005
-NOISE_MEASURE = 0.005
-NOISE_RESET = 0.005
-
-
-def _add_test_noise(circuit: stim.Circuit) -> stim.Circuit:
-    """Apply rates parallel to the Qiskit cultivation noise model."""
-    return add_circuit_depolarizing_noise(
-        circuit,
-        p_1q=NOISE_P_1Q,
-        p_2q=NOISE_P_2Q,
-        p_measure=NOISE_MEASURE,
-        p_reset=NOISE_RESET,
-    )
 
 
 def _postselect_multi_round(
@@ -263,7 +258,7 @@ class TestNoisyCultivationWithRounds:
         expected = 1.0 if basis == "Y" else 0.0
 
         for n_rounds in self.ROUNDS_TO_TEST:
-            circuit = _add_test_noise(
+            circuit = add_circuit_depolarizing_noise(
                 _build_cultivation_with_logical_measurement(
                     "S",
                     basis,
@@ -291,7 +286,7 @@ class TestNoisyCultivationWithRounds:
         acceptance_rates: list[float] = []
 
         for n_rounds in self.ROUNDS_TO_TEST:
-            circuit = _add_test_noise(
+            circuit = add_circuit_depolarizing_noise(
                 _build_cultivation_with_logical_measurement(
                     "S",
                     "Y",
@@ -324,6 +319,7 @@ class TestNoisyCultivationWithRounds:
             cultivation_rounds=0,
             add_qed_round=False,
             add_ticks=False,
+            skip_cx_1_4=False,
         )
         append_patch_logical_measurement(
             uncultivated_circuit,
@@ -332,7 +328,7 @@ class TestNoisyCultivationWithRounds:
             destructive=True,
         )
         uncultivated_shots = _sample(
-            _add_test_noise(uncultivated_circuit),
+            add_circuit_depolarizing_noise(uncultivated_circuit),
             shots=NUM_SHOTS,
         )
         uncultivated_parities = uncultivated_shots[:, -3:].sum(axis=1) % 2
@@ -340,7 +336,7 @@ class TestNoisyCultivationWithRounds:
         uncultivated_error = abs(uncultivated_expectation - 1.0)
 
         # Cultivation with postselection.
-        cultivated_circuit = _add_test_noise(
+        cultivated_circuit = add_circuit_depolarizing_noise(
             _build_cultivation_with_logical_measurement(
                 "S",
                 "Y",
@@ -355,3 +351,68 @@ class TestNoisyCultivationWithRounds:
 
         assert n_accepted > 50
         assert cultivated_error <= uncultivated_error + 0.10
+
+
+# =============================================================================
+# Test Set 4: Circuit-level single-fault tolerance
+# =============================================================================
+
+
+class TestCultivationFaultTolerance:
+    @pytest.mark.parametrize(
+        (
+            "skip_cx_1_4",
+            "expected_total_single_fault_cases",
+            "expected_benign_faults",
+            "expected_rejected_faults",
+        ),
+        (
+            (False, 1239, 88, 1151),
+            (True, 1209, 86, 1123),
+        ),
+    )
+    def test_all_single_faults_are_benign_or_rejected(
+        self,
+        skip_cx_1_4: bool,
+        expected_total_single_fault_cases: int,
+        expected_benign_faults: int,
+        expected_rejected_faults: int,
+    ) -> None:
+        protocol_circuit = build_steane_injection_and_cultivation_circuit(
+            "S",
+            cultivation_rounds=1,
+            add_qed_round=True,
+            add_ticks=True,
+            skip_cx_1_4=skip_cx_1_4,
+        )
+        circuit = add_circuit_depolarizing_noise(
+            protocol_circuit,
+            p_1q=1e-3,
+            p_2q=1e-3,
+            p_measure=1e-3,
+            p_reset=1e-3,
+        )
+        append_patch_stabilizer_measurement(circuit, basis="both", add_ticks=True)
+        append_patch_logical_measurement(
+            circuit,
+            "Y",
+            destructive=True,
+            observable_index=0,
+        )
+        analyzer = DetectorErrorModelShotAnalyzer(
+            circuit,
+            postselection_detector_indices=range(circuit.num_detectors),
+        )
+
+        result = assess_circuit_single_fault_tolerance(
+            experiment_name="steane_injection_and_cultivation",
+            analyzer=analyzer,
+        )
+
+        assert result.total_single_fault_cases == expected_total_single_fault_cases
+        assert result.benign_faults == expected_benign_faults
+        assert result.rejected_faults == expected_rejected_faults
+        assert result.correctly_decoded_faults == 0
+        assert result.malignant_faults == 0
+        assert result.graphlike_distance == 3
+        assert result.passes_single_fault_check

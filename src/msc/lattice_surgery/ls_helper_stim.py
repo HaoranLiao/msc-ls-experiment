@@ -5,7 +5,7 @@ This module owns the target-independent Stim pieces: deterministic qubit-index
 allocation, the global measurement-record layout, Hirano-to-Crumble mapping,
 mixed Steane/surface checks, and the caller-owned appender and circuit-owning
 builder. Framework-neutral labels and analysis live in
-``state_transfer_common``.
+``ls_common``.
 """
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ from dataclasses import dataclass
 
 import stim
 
-from msc.state_transfer_by_lattice_surgery import (
-    state_transfer_common as common,
+from msc.lattice_surgery import (
+    ls_common as common,
 )
+from msc.rotated_surface_code import helper_stim as helper
+from msc.rotated_surface_code.post_transfer import post_transfer_stim
 from msc.steane_code import magic_state_cultivation_stim as cultivation
 from msc.steane_code import state_injection_stim as steane
-from msc.surface_code import rotated_helper_stim as rotated_helper
-from msc.surface_code.post_transfer import rotated_post_transfer_stim
 from msc.utils import circuit_stim
 from msc.utils.normalize import normalize_pauli_char
 
@@ -374,7 +374,7 @@ def append_transfer_detectors(
         raise RuntimeError("transfer-local detector annotations are inconsistent.")
 
     boundary_rounds = _merge_round_positions(layout, "ls_zz")
-    rotated_helper.append_stabilizer_detectors(
+    helper.append_stabilizer_detectors(
         circuit,
         rounds=boundary_rounds[1:],
         first_round_reference=boundary_rounds[0],
@@ -396,12 +396,12 @@ def append_transfer_detectors(
         raise RuntimeError("transfer protocol detector layout is inconsistent.")
 
     first_surface_detector = circuit.num_detectors
-    rotated_helper.append_stabilizer_detectors(
+    helper.append_stabilizer_detectors(
         circuit,
         rounds=_merge_round_positions(layout, "merged_surface_z"),
         first_round_reference=layout.record("surface_init_z").positions,
     )
-    rotated_helper.append_stabilizer_detectors(
+    helper.append_stabilizer_detectors(
         circuit,
         rounds=_merge_round_positions(layout, "merged_surface_x"),
     )
@@ -426,14 +426,14 @@ def append_transfer_post_transfer_surface_detectors(
         rounds = spec.distance
     first_detector = circuit.num_detectors
     post_z_rounds = layout.record(z_record_name).round_positions(rounds=rounds)
-    rotated_helper.append_stabilizer_detectors(
+    helper.append_stabilizer_detectors(
         circuit,
         rounds=post_z_rounds,
         first_round_reference=_merge_round_positions(layout, "merged_surface_z")[-1],
     )
 
     post_x_rounds = layout.record(x_record_name).round_positions(rounds=rounds)
-    rotated_helper.append_stabilizer_detectors(
+    helper.append_stabilizer_detectors(
         circuit,
         rounds=post_x_rounds,
         first_round_reference=restored_surface_x_reference_positions(spec, layout),
@@ -731,6 +731,7 @@ def append_lattice_surgery_circuit(
         measure_encoder_flags=True,
         add_qed_round=True,
         add_ticks=add_ticks,
+        skip_cx_1_4=False,
     )
 
     surface_qubits = surface_data_qubits(registers, spec.surface_order)
@@ -780,7 +781,7 @@ def append_lattice_surgery_circuit(
         registers=registers,
         add_ticks=add_ticks,
     )
-    rotated_post_transfer_stim.append_rotated_post_transfer(
+    post_transfer_stim.append_rotated_post_transfer(
         circuit,
         surface_qubits=surface_qubits,
         z_ancillas=[registers.surface_z_ancillas[label.lower()] for label in spec.z_labels],

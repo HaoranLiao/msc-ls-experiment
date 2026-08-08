@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 import stim
 
-from msc.surface_code import rotated_d3_stim as d3
-from msc.surface_code import rotated_helper_stim as rotated_helper
+from msc.rotated_surface_code import d3_stim as d3
+from msc.rotated_surface_code import helper_stim as helper
 from msc.utils.circuit_stim import two_qubit_depth
 
 # ===========================================================================
@@ -293,7 +293,7 @@ class TestLogicalPlusPreparation:
             round_label="final X checks",
             add_ticks=False,
         )
-        rotated_helper.append_stabilizer_detectors(circuit, rounds=(final_x_positions,))
+        helper.append_stabilizer_detectors(circuit, rounds=(final_x_positions,))
         d3.append_logical_measurement(
             circuit,
             "X",

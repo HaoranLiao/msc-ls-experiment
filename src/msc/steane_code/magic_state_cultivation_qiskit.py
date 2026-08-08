@@ -391,22 +391,23 @@ def append_h_xy_projection_round(
 def append_steane_injection_and_cultivation(
     circuit: QuantumCircuit,
     *,
+    add_qed_round: bool,
+    skip_cx_1_4: bool,
     patch_qubits: Sequence,
     injected_state: InjectedStateName = "T",
     encoder_classical_bits: Sequence,
     cultivation_classical_bits: Sequence[Sequence],
     cultivation_rounds: int = 1,
     qed_classical_bits: Sequence | None = None,
-    add_qed_round: bool = True,
     add_barriers: bool = True,
-    skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
 ) -> None:
     """Append Steane injection, optional QED, and zero or more cultivation rounds.
 
-    By default, the appender measures all three X and all three Z Steane
-    stabilizers immediately after injection and before cultivation. Hirano and
-    Rosenfeld call this a QEC cycle, but its six outcomes are used only for
+    When ``add_qed_round`` is true, the appender measures all three X and all
+    three Z Steane stabilizers immediately after injection and before
+    cultivation. Hirano and Rosenfeld call this a QEC cycle, but its six
+    outcomes are used only for
     error detection and postselection; this helper applies no recovery.
 
     Parameters
@@ -492,10 +493,10 @@ def append_steane_injection_and_cultivation(
 def build_steane_injection_and_cultivation_circuit(
     injected_state: InjectedStateName = "T",
     *,
+    add_qed_round: bool,
+    skip_cx_1_4: bool,
     cultivation_rounds: int = 1,
-    add_qed_round: bool = True,
     add_barriers: bool = True,
-    skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
 ) -> QuantumCircuit:
     """This is the authoritative Qiskit register-allocation and appending example.
@@ -506,7 +507,7 @@ def build_steane_injection_and_cultivation_circuit(
     post-injection QED register, and one five-bit result register per
     cultivation round, then delegates all circuit construction to the appender.
 
-    The QED round is enabled by default to match Hirano's full protocol and the
+    When selected, the QED round matches Hirano's full protocol and the
     state-preparation block in Rosenfeld Fig. 3. Its syndrome is postselection
     data; the circuit performs no error correction.
 
@@ -531,7 +532,7 @@ def build_steane_injection_and_cultivation_circuit(
         QED without cultivation.
     add_qed_round
         Whether to measure all six Steane stabilizers after injection and
-        before cultivation. Enabled by default.
+        before cultivation.
     add_barriers
         Whether to insert barriers between conceptual circuit stages.
     skip_cx_1_4

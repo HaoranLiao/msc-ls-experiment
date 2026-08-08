@@ -1,12 +1,6 @@
 """Surface-code helpers and geometry utilities."""
 
-from msc.surface_code.decoding import (
-    PauliFrame,
-    RotatedDecoder,
-    RotatedDetectedErrors,
-    StabilizerFrame,
-)
-from msc.surface_code.rotated_d3_qiskit import (
+from msc.rotated_surface_code.d3_qiskit import (
     DEFAULT_LOGICAL_X,
     DEFAULT_LOGICAL_Z,
     INIT_Z_LABELS,
@@ -20,6 +14,12 @@ from msc.surface_code.rotated_d3_qiskit import (
     draw_patch,
     prepare_product_plus,
     reset_to_zero,
+)
+from msc.rotated_surface_code.decoding import (
+    PauliFrame,
+    RotatedDecoder,
+    RotatedDetectedErrors,
+    StabilizerFrame,
 )
 
 __all__ = [

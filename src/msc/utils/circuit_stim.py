@@ -351,3 +351,44 @@ def two_qubit_depth(circuit: stim.Circuit) -> int:
         and not stim.gate_data(instruction.name).is_noisy_gate
         for instruction in circuit.flattened()
     )
+
+
+# ---------------------------------------------------------------------------
+# Display
+# ---------------------------------------------------------------------------
+
+
+def show_timeline(
+    circuit: stim.Circuit,
+    *,
+    zoom: float = 1.0,
+    max_height: int = 600,
+    annotation_font_size: int = 18,
+):
+    """Return a notebook-renderable Stim timeline diagram of ``circuit``.
+
+    Prefer this over ``print(circuit)`` when inspecting a Stim circuit in a
+    notebook: gates, measurement records, detectors, and observables are shown
+    in execution order on a white background that stays legible under dark
+    editor themes.
+
+    Parameters
+    ----------
+    zoom
+        Horizontal scale factor; the surrounding box scrolls and is resizable.
+    max_height
+        Maximum rendered height in pixels before vertical scrolling.
+    annotation_font_size
+        Stim draws record, detector, and coordinate annotations at font size 8;
+        they are rescaled to this value. Large values can overlap neighbouring
+        columns, so raise ``zoom`` together with the font size.
+    """
+    from IPython.display import HTML
+
+    svg = str(circuit.diagram("timeline-svg"))
+    svg = svg.replace('font-size="8"', f'font-size="{annotation_font_size}"')
+    return HTML(
+        f'<div style="overflow:auto; max-height:{max_height}px; resize:both;'
+        f' background:#ffffff; border:1px solid #cccccc; padding:8px">'
+        f'<div style="width:{zoom * 100:.0f}%">{svg}</div></div>'
+    )

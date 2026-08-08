@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 
 import stim
 
-from msc.surface_code import rotated_helper_stim as rotated_helper
+from msc.rotated_surface_code import helper_stim as helper
 
 CircuitAppender = Callable[..., None]
 
@@ -74,10 +74,10 @@ def append_rotated_post_transfer(
                 x_rounds.append(
                     tuple(range(round_start + z_round_width, round_start + round_width))
                 )
-            rotated_helper.append_stabilizer_detectors(
+            helper.append_stabilizer_detectors(
                 circuit, rounds=z_rounds, first_round_reference=z_reference_measurement_positions
             )
-            rotated_helper.append_stabilizer_detectors(
+            helper.append_stabilizer_detectors(
                 circuit, rounds=x_rounds, first_round_reference=x_reference_measurement_positions
             )
 

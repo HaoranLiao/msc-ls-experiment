@@ -1,9 +1,4 @@
-"""Fault-injection and circuit-level noise helpers for Qiskit circuits.
-
-The helpers in this module are code-agnostic: callers supply either the
-physical-qubit mapping for deterministic Pauli faults or the circuit whose
-gate set should receive depolarizing noise.
-"""
+"""Fault-injection and circuit-level noise helpers for Qiskit circuits."""
 
 from __future__ import annotations
 
@@ -16,21 +11,32 @@ from qiskit_aer.noise import NoiseModel, ReadoutError, depolarizing_error
 
 from msc.utils.normalize import normalize_pauli_char
 
+NOISE_P_1Q = 0.0005
+NOISE_P_2Q = 0.005
+NOISE_MEASURE = 0.005
+NOISE_RESET = 0.005
+
+
+# ---------------------------------------------------------------------------
+# Stochastic circuit noise
+# ---------------------------------------------------------------------------
+
 
 def build_depolarizing_noise_model(
     circuit: QuantumCircuit,
     *,
-    p_1q: float,
-    p_2q: float,
-    p_measure: float | None = None,
-    p_reset: float | None = None,
+    p_1q: float = NOISE_P_1Q,
+    p_2q: float = NOISE_P_2Q,
+    p_measure: float = NOISE_MEASURE,
+    p_reset: float = NOISE_RESET,
 ) -> NoiseModel:
     """Build a circuit-level noise model for gates, measurements, and resets.
 
     Gate names are discovered from ``circuit`` instead of maintained in a
     hard-coded list. One- and two-qubit gates receive depolarizing errors,
     measurements receive symmetric readout errors, and resets receive
-    single-qubit depolarizing errors.
+    single-qubit depolarizing errors. The default rates are ``NOISE_P_1Q``,
+    ``NOISE_P_2Q``, ``NOISE_MEASURE``, and ``NOISE_RESET``.
 
     Parameters
     ----------
@@ -39,14 +45,10 @@ def build_depolarizing_noise_model(
     p_1q, p_2q
         Depolarizing probabilities after single- and two-qubit gates.
     p_measure
-        Probability that a measurement result is reported flipped. Defaults
-        to ``p_2q``.
+        Probability that a measurement result is reported flipped.
     p_reset
-        Depolarizing probability after a reset. Defaults to ``p_2q``.
+        Depolarizing probability after a reset.
     """
-    p_measure = p_2q if p_measure is None else p_measure
-    p_reset = p_2q if p_reset is None else p_reset
-
     gate_names_by_size: dict[int, set[str]] = {1: set(), 2: set()}
     has_measurements = False
     has_resets = False
@@ -91,10 +93,10 @@ def build_depolarizing_noise_model(
 def build_noisy_aer_simulator(
     circuit: QuantumCircuit,
     *,
-    p_1q: float,
-    p_2q: float,
-    p_measure: float | None = None,
-    p_reset: float | None = None,
+    p_1q: float = NOISE_P_1Q,
+    p_2q: float = NOISE_P_2Q,
+    p_measure: float = NOISE_MEASURE,
+    p_reset: float = NOISE_RESET,
     seed_simulator: int | None = None,
 ) -> AerSimulator:
     """Build an Aer simulator with circuit-aware depolarizing noise.
@@ -114,6 +116,11 @@ def build_noisy_aer_simulator(
         seed_simulator=seed_simulator,
     )
     return noisy_simulator
+
+
+# ---------------------------------------------------------------------------
+# Deterministic fault insertion
+# ---------------------------------------------------------------------------
 
 
 def append_pauli_faults(

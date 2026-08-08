@@ -226,19 +226,20 @@ def append_h_xy_projection_round(
 def append_steane_injection_and_cultivation(
     circuit: stim.Circuit,
     *,
+    add_qed_round: bool,
+    skip_cx_1_4: bool,
     patch_qubits: Sequence[int] = DEFAULT_STIM_PATCH_QUBITS,
     injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
     cultivation_rounds: int = 1,
     measure_encoder_flags: bool = False,
-    add_qed_round: bool = True,
     add_ticks: bool = True,
-    skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
 ) -> None:
     """Append injection, optional QED, and zero or more cultivation rounds.
 
-    By default, all three X and all three Z Steane stabilizers are measured
-    after injection and before cultivation. The papers call this a QEC cycle,
+    When ``add_qed_round`` is true, all three X and all three Z Steane
+    stabilizers are measured after injection and before cultivation. The papers
+    call this a QEC cycle,
     but this circuit uses its six outcomes only for error detection and
     postselection. When ``measure_encoder_flags`` is true, the four encoder
     flag outcomes come first; the six QED outcomes come next; each
@@ -304,10 +305,10 @@ def append_steane_injection_and_cultivation(
 def build_steane_injection_and_cultivation_circuit(
     injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
     *,
+    add_qed_round: bool,
+    skip_cx_1_4: bool,
     cultivation_rounds: int = 1,
-    add_qed_round: bool = True,
     add_ticks: bool = True,
-    skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
 ) -> stim.Circuit:
     """This is the authoritative Stim qubit-layout and appending example.
@@ -335,7 +336,6 @@ def build_steane_injection_and_cultivation_circuit(
         optional QED without cultivation.
     add_qed_round
         Whether to append the six-outcome post-injection Steane QED round.
-        Enabled by default.
     add_ticks
         Whether to insert ``TICK`` separators between conceptual stages.
     skip_cx_1_4

@@ -7,11 +7,11 @@ from collections.abc import Sequence
 import pytest
 import stim
 
-from msc.state_transfer_by_lattice_surgery import (
-    state_transfer_common as common,
+from msc.lattice_surgery import (
+    ls_common as common,
 )
-from msc.state_transfer_by_lattice_surgery import (
-    state_transfer_helper_stim as helper,
+from msc.lattice_surgery import (
+    ls_helper_stim as helper,
 )
 from msc.steane_code.state_injection_stim import (
     PATCH_STABILIZER_ANCILLA_SITES,

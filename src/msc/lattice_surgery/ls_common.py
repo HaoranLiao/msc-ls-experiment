@@ -16,14 +16,14 @@ from typing import Literal, assert_never
 
 from msc.decoding.pauli_frame import PauliFrame
 from msc.decoding.stabilizer_frame import StabilizerFrame
+from msc.rotated_surface_code import common
+from msc.rotated_surface_code.decoding.decoder import (
+    TemporalRotatedDecoder,
+    TemporalRotatedDetectedErrors,
+)
 from msc.steane_code.decoding.decoder import (
     X_STABILIZER_LABELS,
     Z_STABILIZER_LABELS,
-)
-from msc.surface_code import rotated_common
-from msc.surface_code.decoding.rotated_decoder import (
-    TemporalRotatedDecoder,
-    TemporalRotatedDetectedErrors,
 )
 from msc.utils.circuit_common import resolve_logical_measurement_terms
 from msc.utils.normalize import normalize_pauli_char
@@ -168,7 +168,7 @@ def parity(bits: Mapping[str, int], labels: Sequence[str]) -> int:
 
 def round_labels(labels: Sequence[str]) -> tuple[str, ...]:
     """Prefix three merge-round copies with ``roundN_`` for flat containers."""
-    return rotated_common.repeated_round_labels(labels, rounds=LATTICE_SURGERY_ROUNDS)
+    return common.repeated_round_labels(labels, rounds=LATTICE_SURGERY_ROUNDS)
 
 
 def transfer_measurement_specs(
@@ -215,14 +215,14 @@ def transfer_measurement_specs(
             (
                 MeasurementFamilySpec(
                     "post_transfer_surface_z",
-                    rotated_common.repeated_round_labels(
+                    common.repeated_round_labels(
                         spec.z_labels,
                         rounds=spec.distance,
                     ),
                 ),
                 MeasurementFamilySpec(
                     "post_transfer_surface_x",
-                    rotated_common.repeated_round_labels(
+                    common.repeated_round_labels(
                         spec.x_labels,
                         rounds=spec.distance,
                     ),

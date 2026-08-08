@@ -1,14 +1,14 @@
 """Qiskit parsing for Steane-to-surface lattice-surgery results.
 
-Circuit and register construction live in ``state_transfer_helper_qiskit``.
+Circuit and register construction live in ``ls_helper_qiskit``.
 This module converts Qiskit count keys into framework-neutral measurement
 families, then delegates detector reconstruction, acceptance, surface decoding,
-and Pauli-frame interpretation to ``state_transfer_common``.
+and Pauli-frame interpretation to ``ls_common``.
 """
 
 from __future__ import annotations
 
-from msc.state_transfer_by_lattice_surgery.state_transfer_common import (
+from msc.lattice_surgery.ls_common import (
     SurfaceCodeTransferSpec,
     SurfaceReadoutBasis,
     interpret_transfer_measurement_families,

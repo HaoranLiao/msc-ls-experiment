@@ -3,7 +3,7 @@
 This module is the single source of truth for d=3 and d=5 data-qubit labels,
 coordinates, stabilizers, logical representatives, drawing metadata, and the
 canonical four-step measurement schedules. Framework-specific gate appenders
-live in ``rotated_helper_qiskit`` and ``rotated_helper_stim``; the public
+live in ``helper_qiskit`` and ``helper_stim``; the public
 distance modules bind those helpers to the corresponding shared patch spec.
 """
 

@@ -7,10 +7,10 @@ from collections.abc import Sequence
 import pytest
 from qiskit import QuantumCircuit
 
-from msc.state_transfer_by_lattice_surgery import (
-    state_transfer_common as common,
+from msc.lattice_surgery import (
+    ls_common as common,
 )
-from msc.surface_code import rotated_common
+from msc.rotated_surface_code import common as surface_common
 
 
 def labeled_measurement_positions(
@@ -118,14 +118,14 @@ def assert_optional_post_transfer_continuation(
     post_positions = labeled_measurement_positions(
         circuit,
         register_name="post_transfer_surface_z",
-        labels=rotated_common.repeated_round_labels(
+        labels=surface_common.repeated_round_labels(
             spec.z_labels,
             rounds=spec.distance,
         ),
     ) | labeled_measurement_positions(
         circuit,
         register_name="post_transfer_surface_x",
-        labels=rotated_common.repeated_round_labels(
+        labels=surface_common.repeated_round_labels(
             spec.x_labels,
             rounds=spec.distance,
         ),

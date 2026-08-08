@@ -1,9 +1,9 @@
-"""Rotated distance-5 surface-code Stim API over shared patch geometry.
+"""Rotated distance-3 surface-code Stim API over shared patch geometry.
 
-The generated 25-qubit geometry, stabilizers, logical representatives,
-drawing metadata, and canonical schedules are owned by ``rotated_common``.
-This module parallels the public Qiskit d=5 API while delegating Stim circuit
-primitives to ``rotated_helper_stim``.
+Coordinates, stabilizers, logical operators, drawing metadata, and canonical
+schedules are owned by ``common``. This module parallels the public
+Qiskit d=3 API while delegating Stim circuit primitives to
+``helper_stim``.
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ import matplotlib.pyplot as plt
 import stim
 from matplotlib.axes import Axes
 
-from msc.surface_code import rotated_common
-from msc.surface_code import rotated_helper_stim as rotated_helper
+from msc.rotated_surface_code import common
+from msc.rotated_surface_code import helper_stim as helper
 
-PATCH_SPEC = rotated_common.D5_PATCH_SPEC
+PATCH_SPEC = common.D3_PATCH_SPEC
 DISTANCE = PATCH_SPEC.distance
 NUM_DATA_QUBITS = len(PATCH_SPEC.surface_order)
 SURFACE_ORDER = PATCH_SPEC.surface_order
@@ -38,18 +38,18 @@ FULL_STABILIZER_SCHEDULE = PATCH_SPEC.full_stabilizer_schedule
 
 
 def label2qubit(surface_qubits: Sequence[int]) -> dict[str, int]:
-    """Map surface labels ``a..y`` to supplied Stim qubit indices."""
-    return rotated_common.label2qubit(surface_qubits, surface_index=SURFACE_INDEX)
+    """Map surface labels ``a..i`` to supplied Stim qubit indices."""
+    return common.label2qubit(surface_qubits, surface_index=SURFACE_INDEX)
 
 
 def draw_patch(ax: Axes | None = None) -> tuple[plt.Figure, Axes]:
-    """Draw the shared rotated distance-5 patch geometry."""
-    return rotated_common.draw_patch(PATCH_SPEC, ax)
+    """Draw the shared rotated distance-3 patch geometry."""
+    return common.draw_patch(PATCH_SPEC, ax)
 
 
 # These two preparation helpers need no patch geometry, so expose them directly.
-reset_to_zero = rotated_helper.reset_to_zero
-prepare_product_plus = rotated_helper.prepare_product_plus
+reset_to_zero = helper.reset_to_zero
+prepare_product_plus = helper.prepare_product_plus
 
 
 def append_scheduled_stabilizer_round(
@@ -62,19 +62,20 @@ def append_scheduled_stabilizer_round(
     reset_ancillas_initially: bool = False,
     add_ticks: bool = True,
 ) -> tuple[int, ...]:
-    """Measure selected rotated-d=5 stabilizers in the canonical schedule.
+    """Measure selected rotated-d=3 stabilizers in the canonical schedule.
 
     For every position ``i``, ``selected_stabilizer_names[i]`` is measured
-    with ``ancillas[i]`` and appears in the same Stim record order. X-only,
-    Z-only, and mixed-basis subsets all retain their canonical rows and require
+    with ``ancillas[i]``. Their order is also the Stim measurement-record
+    order. The selection may contain X checks, Z checks, or any mixed-basis
+    subset; every selected check retains its canonical row and therefore uses
     at most four two-qubit layers.
 
-    ``surface_qubits`` must contain at least 25 indices in ``SURFACE_ORDER``;
+    ``surface_qubits`` must contain at least nine indices in ``SURFACE_ORDER``;
     names and used ancillas must be unique. An empty selection is valid. When
     ``add_ticks`` is true, layer separators and a trailing round separator are
-    appended. ``round_label`` is conceptual because Stim ticks have no labels.
-    Returns the round's Stim record positions for
-    :func:`rotated_helper.append_stabilizer_detectors`.
+    appended. ``round_label`` documents the conceptual round but Stim does not
+    store textual tick labels. Returns the round's Stim record positions for
+    :func:`helper.append_stabilizer_detectors`.
     """
     selected_stabilizer_names = tuple(selected_stabilizer_names)
     if len(selected_stabilizer_names) != len(set(selected_stabilizer_names)):
@@ -82,7 +83,7 @@ def append_scheduled_stabilizer_round(
     selected_stabilizer_schedules = {
         name: FULL_STABILIZER_SCHEDULE[name] for name in selected_stabilizer_names
     }
-    return rotated_helper.append_scheduled_stabilizer_round(
+    return helper.append_scheduled_stabilizer_round(
         circuit,
         label_to_qubit=label2qubit(surface_qubits),
         ancillas=ancillas,
@@ -103,16 +104,16 @@ def append_logical_measurement(
     destructive: bool = True,
     observable_index: int | None = None,
 ) -> None:
-    """Append an X, Y, or Z logical measurement on the d=5 patch.
+    """Append an X, Y, or Z logical measurement on the d=3 patch.
 
-    ``surface_qubits`` contains 25 indices in ``SURFACE_ORDER``. ``support``
-    overrides the default X or Z representative; for Y, omit it to measure
+    ``surface_qubits`` contains nine indices in ``SURFACE_ORDER``. ``support``
+    overrides the default representative for X or Z; for Y, omit it to measure
     ``i X_L Z_L`` from the distinct default supports. A destructive
-    measurement records one result per term. A non-destructive measurement
-    requires ``ancilla_qubit`` and records one parity result. Set
+    measurement records one result per physical term. A non-destructive
+    measurement requires ``ancilla_qubit`` and records one parity result. Set
     ``observable_index`` to include the result parity as a Stim observable.
     """
-    rotated_helper.append_logical_measurement(
+    helper.append_logical_measurement(
         circuit,
         basis,
         surface_qubits=surface_qubits,
@@ -135,8 +136,8 @@ def append_all_data_readout_detectors_and_observable(
     logical_frame_measurement_positions: Sequence[int] = (),
     observable_index: int = 0,
 ) -> tuple[int, ...]:
-    """Annotate a destructive d=5 X- or Z-basis all-data readout."""
-    return rotated_helper.append_all_data_readout_detectors_and_observable(
+    """Annotate a destructive d=3 X- or Z-basis all-data readout."""
+    return helper.append_all_data_readout_detectors_and_observable(
         circuit,
         basis,
         x_stabilizers=X_STABILIZERS,

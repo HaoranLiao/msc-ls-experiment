@@ -1,7 +1,7 @@
 """Qiskit circuit helpers for Steane-to-rotated-surface state transfer.
 
-The distance-specific modules (`state_transfer_to_d3_rotated_qiskit` and
-`state_transfer_to_d5_rotated_qiskit`) define the target patch geometry and
+The distance-specific modules (`ls_to_d3_rotated_qiskit` and
+`ls_to_d5_rotated_qiskit`) define the target patch geometry and
 which checks exist on that patch.  This module keeps the target-independent
 parts in one place:
 
@@ -12,7 +12,7 @@ parts in one place:
 - The target-independent caller-owned appender and register-owning builder.
 
 Framework-neutral protocol data and measurement-family labels live in
-``state_transfer_common``. Result parsing remains framework-specific, while
+``ls_common``. Result parsing remains framework-specific, while
 acceptance policy, syndrome decoding, and Pauli-frame interpretation are
 shared by both backends through that common module.
 """
@@ -24,12 +24,12 @@ from dataclasses import dataclass
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
-from msc.state_transfer_by_lattice_surgery import (
-    state_transfer_common as common,
+from msc.lattice_surgery import (
+    ls_common as common,
 )
+from msc.rotated_surface_code.post_transfer import post_transfer_qiskit
 from msc.steane_code import magic_state_cultivation_qiskit as cultivation
 from msc.steane_code import state_injection_qiskit as steane
-from msc.surface_code.post_transfer import rotated_post_transfer_qiskit
 
 
 @dataclass(frozen=True)
@@ -352,7 +352,7 @@ def append_lattice_surgery_circuit(
     not reproduce the paper's hardware-level superdense interleaving,
     circuit-level detector error model, or later code expansion. Optional
     fixed-patch stabilization is delegated to
-    ``surface_code.post_transfer.rotated_post_transfer_qiskit``.
+    ``surface_code.post_transfer.post_transfer_qiskit``.
     """
     # Prepare the accepted color-code input through the shared Steane front end.
     patch_qubits = hirano_labeled_patch_qubits(qregs)
@@ -364,7 +364,9 @@ def append_lattice_surgery_circuit(
         qed_classical_bits=list(cregs["steane_qed"]),
         cultivation_classical_bits=([list(cregs["cult"])] if include_cultivation else []),
         cultivation_rounds=(1 if include_cultivation else 0),
+        add_qed_round=True,
         add_barriers=add_barriers,
+        skip_cx_1_4=False,
     )
 
     # Prepare the target in logical |+_L>. The product |+> state fixes every X
@@ -450,7 +452,7 @@ def append_lattice_surgery_circuit(
         add_barriers=add_barriers,
     )
 
-    rotated_post_transfer_qiskit.append_rotated_post_transfer(
+    post_transfer_qiskit.append_rotated_post_transfer(
         circuit,
         surface_qubits=surface_qubits,
         z_ancillas=[qregs.surface_z_ancillas[label.lower()][0] for label in spec.z_labels],

@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 
 import stim
 
-from msc.surface_code import rotated_common
+from msc.rotated_surface_code import common
 from msc.utils import circuit_stim
 from msc.utils.circuit_stim import (
     append_logical_measurement_on_indexed_qubits,
@@ -76,12 +76,12 @@ def append_scheduled_stabilizer_round(
 
         full X and Z stabilizer schedules
         └── selected_stabilizer_schedules
-            └── rotated_common.resolve_selected_stabilizer_schedules
+            └── common.resolve_selected_stabilizer_schedules
                 └── append_scheduled_parity_measurements
     """
     del tick_label
     first_measurement_position = circuit.num_measurements
-    data_qubit_schedules, used_ancillas = rotated_common.resolve_selected_stabilizer_schedules(
+    data_qubit_schedules, used_ancillas = common.resolve_selected_stabilizer_schedules(
         label_to_qubit=label_to_qubit,
         selected_stabilizer_schedules=selected_stabilizer_schedules,
         ancillas=ancillas,

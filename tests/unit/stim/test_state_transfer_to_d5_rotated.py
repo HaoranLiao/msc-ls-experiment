@@ -15,14 +15,14 @@ from state_transfer_test_utils import (
     assert_transfer_detection_policy,
 )
 
-from msc.state_transfer_by_lattice_surgery import (
-    state_transfer_common as common,
+from msc.lattice_surgery import (
+    ls_common as common,
 )
-from msc.state_transfer_by_lattice_surgery import (
-    state_transfer_helper_stim as helper,
+from msc.lattice_surgery import (
+    ls_helper_stim as helper,
 )
-from msc.state_transfer_by_lattice_surgery import (
-    state_transfer_to_d5_rotated_stim as d5t,
+from msc.lattice_surgery import (
+    ls_to_d5_rotated_stim as d5t,
 )
 
 # ===========================================================================
