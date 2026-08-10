@@ -115,33 +115,54 @@ def sample_detector_logical_error_probability(
     batch_size: int = 100_000,
     seed: int | None = None,
 ) -> LogicalErrorEstimate:
-    """Sample detector batches and return LER counts conditioned on acceptance.
+    """Estimate logical error rate conditioned on detector-based acceptance.
+
+    Detector and observable records are sampled in batches. With partial or no
+    postselection, ``analyzer.analyze`` applies the requested rejection policy
+    and PyMatching-decodes accepted detector events.
+
+    Experiments that postselect every detector use a sampling-only fast path:
+    Stim returns bit-packed records, an accepted row must have zero detector
+    events, and no matching call or unpacked Boolean detector matrix is needed.
+    This optimization does not change the postselection or decoding policy.
 
     Call structure::
 
-        analyzer = DetectorErrorModelShotAnalyzer(circuit, ...)
-        └── sample_detector_logical_error_probability(
-                analyzer=analyzer, ...
-            )
-            ├── stored circuit.compile_detector_sampler().sample(...)
-            ├── analyzer.analyze(detection_events, observable_flips)
-            └── LogicalErrorEstimate
+        analyzer._circuit.compile_detector_sampler().sample(...)
+        ├── all detectors postselected
+        │   └── bit-packed zero-syndrome acceptance and observable count
+        ├── partial or no postselection
+        │   └── analyzer.analyze(...)
+        │       └── PyMatching.decode_batch(...)
+        └── LogicalErrorEstimate
     """
     if shots <= 0:
         raise ValueError("shots must be positive.")
     if batch_size <= 0:
         raise ValueError("batch_size must be positive.")
     sampler = analyzer._circuit.compile_detector_sampler(seed=seed)
+    postselects_all = (
+        analyzer._postselection_detector_indices.size == analyzer._num_detectors
+    )
     accepted_shots = 0
     logical_errors = 0
     shots_remaining = shots
     while shots_remaining:
         selected_batch_size = min(batch_size, shots_remaining)
-        detection_events, observable_flips = sampler.sample(
-            selected_batch_size,
-            separate_observables=True,
-        )
-        accepted, error_mask = analyzer.analyze(detection_events, observable_flips)
+        if postselects_all:
+            packed_detectors, packed_observables = sampler.sample(
+                selected_batch_size,
+                separate_observables=True,
+                bit_packed=True,
+            )
+            accepted = ~packed_detectors.any(axis=1)
+            error_mask = accepted & ((packed_observables[:, 0] & 1) != 0)
+        else:
+            detection_events, observable_flips = sampler.sample(
+                selected_batch_size,
+                separate_observables=True,
+            )
+            accepted, error_mask = analyzer.analyze(detection_events, observable_flips)
         accepted_shots += int(np.count_nonzero(accepted))
         logical_errors += int(np.count_nonzero(error_mask))
         shots_remaining -= selected_batch_size
@@ -252,9 +273,7 @@ def assess_circuit_single_fault_tolerance(
     Call structure::
 
         analyzer = DetectorErrorModelShotAnalyzer(circuit, ...)
-        └── assess_circuit_single_fault_tolerance(
-                analyzer=analyzer, ...
-            )
+        └── assess_circuit_single_fault_tolerance(analyzer=analyzer, ...)
             ├── count single-fault cases represented by stochastic noise
             ├── circuit.explain_detector_error_model_errors()
             ├── analyzer.analyze(each nontrivial fault effect)

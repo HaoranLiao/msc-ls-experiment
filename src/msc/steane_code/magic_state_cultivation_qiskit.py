@@ -419,7 +419,7 @@ def append_steane_injection_and_cultivation(
     injected_state
         Physical state injected on the center data site before encoding.
     encoder_classical_bits
-        Four classical bits for encoder helper postselection.
+        Four classical bits for encoder-flag postselection.
     cultivation_classical_bits
         Exactly ``cultivation_rounds`` 5-bit sequences, one per cultivation
         round.
@@ -503,7 +503,7 @@ def build_steane_injection_and_cultivation_circuit(
 
     It is the register-owning counterpart to
     :func:`append_steane_injection_and_cultivation`. It allocates one 11-qubit
-    patch register, one four-bit encoder-helper register, an optional six-bit
+    patch register, one four-bit encoder-flag register, an optional six-bit
     post-injection QED register, and one five-bit result register per
     cultivation round, then delegates all circuit construction to the appender.
 
@@ -516,7 +516,7 @@ def build_steane_injection_and_cultivation_circuit(
     ``q``
         Eleven qubits ordered by the cultivation patch site labels ``0..10``.
     ``enc``
-        Four encoder-helper postselection bits.
+        Four encoder-flag postselection bits.
     ``qed``
         Six post-injection Steane stabilizer outcomes when ``add_qed_round`` is
         true, ordered as the three X checks followed by the three Z checks.
@@ -553,11 +553,11 @@ def build_steane_injection_and_cultivation_circuit(
     qreg = QuantumRegister(NUM_PATCH_QUBITS, "q")
 
     # Classical allocation:
-    # - one 4-bit creg for the state-injection encoder helper measurements;
+    # - one 4-bit creg for the state-injection encoder-flag measurements;
     # - one 6-bit creg for post-injection Steane QED, when enabled;
     # - one 5-bit creg for each cultivation round's root and four helper
     #   measurements.
-    enc_creg = ClassicalRegister(len(HELPER_SITES), "enc")
+    enc_flags_creg = ClassicalRegister(len(HELPER_SITES), "enc_flags")
     qed_creg = (
         ClassicalRegister(STEANE_QED_MEASUREMENTS_PER_ROUND, "qed") if add_qed_round else None
     )
@@ -568,7 +568,7 @@ def build_steane_injection_and_cultivation_circuit(
         )
         for round_index in range(cultivation_rounds)
     ]
-    cregs = [enc_creg]
+    cregs = [enc_flags_creg]
     if qed_creg is not None:
         cregs.append(qed_creg)
     cregs.extend(cult_cregs)
@@ -578,7 +578,7 @@ def build_steane_injection_and_cultivation_circuit(
         circuit,
         patch_qubits=list(qreg),
         injected_state=injected_state,
-        encoder_classical_bits=list(enc_creg),
+        encoder_classical_bits=list(enc_flags_creg),
         cultivation_classical_bits=[list(cult_creg) for cult_creg in cult_cregs],
         cultivation_rounds=cultivation_rounds,
         qed_classical_bits=(list(qed_creg) if qed_creg is not None else None),
@@ -602,7 +602,7 @@ def postselect_success_counts(
     """Filter counts to shots passing the selected error-detection checks.
 
     In Qiskit's convention, X-basis measurement outcome 0 means eigenvalue +1.
-    Successful injection and cultivation requires zero-valued encoder-helper,
+    Successful injection and cultivation requires zero-valued encoder-flag,
     post-injection QED, folded-logical, and cultivation-helper outcomes.
 
     Parameters

@@ -5,8 +5,8 @@ from msc.decoding.stabilizer_frame import StabilizerFrame
 from msc.rotated_surface_code.decoding.decoder import (
     RotatedDecoder,
     RotatedDetectedErrors,
-    TemporalRotatedDecoder,
-    TemporalRotatedDetectedErrors,
+    SpaceTimeRotatedDecoder,
+    SpaceTimeRotatedDetectedErrors,
 )
 
 __all__ = [
@@ -14,6 +14,6 @@ __all__ = [
     "RotatedDetectedErrors",
     "RotatedDecoder",
     "StabilizerFrame",
-    "TemporalRotatedDecoder",
-    "TemporalRotatedDetectedErrors",
+    "SpaceTimeRotatedDecoder",
+    "SpaceTimeRotatedDetectedErrors",
 ]

@@ -1,10 +1,11 @@
-"""Stim port of the Steane-patch kickback tomography (KT) experiment.
+"""Stim logical-Y Steane-patch kickback tomography (KT) experiment.
 
 Clifford model of :mod:`kickback_tomography_qiskit`. The KT circuit reuses the
-Stim injection encoder and the S-state cultivation round (``T -> S``), so it
-prepares and verifies the Clifford ``S``-state proxy for ``|T>``. All returned
-summaries report the native ``S``-state logical error rate; no conversion to a
-``T``-state estimate is applied.
+Stim injection encoder and logical-Y cultivation round. Because this is
+logical-Y cultivation (proxy for logical ``H_XY``), the circuit prepares and
+verifies ``|S>`` instead of ``|T>``. All returned summaries report
+the native ``S``-state logical error rate; no conversion to a ``T``-state
+estimate is applied.
 
 The public builder and experiment container intentionally use the same names as
 their Qiskit counterparts. The module name identifies the framework. Shared
@@ -35,7 +36,7 @@ from msc.steane_code.magic_state_cultivation_qiskit import (
     CULTIVATION_MEASUREMENTS_PER_ROUND,
 )
 from msc.steane_code.magic_state_cultivation_stim import (
-    append_h_xy_projection_round,
+    append_y_projection_round,
 )
 from msc.steane_code.state_injection_stim import (
     DEFAULT_STIM_INJECTED_STATE,
@@ -72,8 +73,8 @@ def build_kickback_tomography_experiment(
     -> KT check -> QED4 -> final stabilizer check``.
 
     This parallels :func:`kickback_tomography_qiskit.build_kickback_tomography_experiment`
-    with ``T -> S``. Every cultivation and KT round therefore measures the
-    logical-Y axis of the Clifford ``S``-state proxy.
+    with logical-Y cultivation (proxy for logical ``H_XY``).
+    Every cultivation and KT round therefore measures the logical-Y axis.
 
     When ``measure_encoder_flags`` is true, the four Crumble-encoder flag
     qubits are measured immediately after encoding, before any QED cycle. KT
@@ -105,7 +106,7 @@ def build_kickback_tomography_experiment(
         tomography: bool = False,
     ) -> KickbackCultivationRoundBits:
         nonlocal record_count
-        append_h_xy_projection_round(
+        append_y_projection_round(
             circuit,
             add_ticks=add_ticks,
             pin_folded_root=not tomography,

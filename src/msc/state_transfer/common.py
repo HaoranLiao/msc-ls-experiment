@@ -1,0 +1,457 @@
+"""Framework-neutral Steane-to-surface lattice-surgery protocol semantics.
+
+This module is the single source of truth for paper/Hirano labels, target
+specifications, measurement-family labels, detector reconstruction, transfer
+acceptance, spacetime surface decoding, and logical Pauli-frame interpretation.
+Qiskit and Stim allocation, construction, and raw parsing live in the matching
+``helper_<framework>`` and ``analysis_<framework>`` modules.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Literal, assert_never
+
+from msc.decoding.pauli_frame import PauliFrame
+from msc.decoding.stabilizer_frame import StabilizerFrame
+from msc.rotated_surface_code import common as surface_common
+from msc.rotated_surface_code.decoding.decoder import SpaceTimeRotatedDecoder
+from msc.steane_code.decoding.decoder import X_STABILIZER_LABELS, Z_STABILIZER_LABELS
+from msc.utils.circuit_common import resolve_logical_measurement_terms
+from msc.utils.normalize import normalize_pauli_char
+
+SurfaceReadoutBasis = Literal["X", "Y", "Z"]
+LATTICE_SURGERY_ROUNDS = 3
+MergedBoundaryCheck = tuple[str, tuple[str, ...], tuple[str, ...]]
+CircuitAppender = Callable[..., None]
+
+
+# =============================================================================
+# Protocol labels and target specification
+# =============================================================================
+
+HIRANO_STEANE_DATA_ORDER: tuple[str, ...] = ("0", "1", "2", "3", "4", "5", "6")
+HIRANO_STEANE_GEOMETRIC_ORDER: tuple[str, ...] = ("6", "4", "0", "2", "1", "5", "3")
+HIRANO_STEANE_LOGICAL_X: tuple[str, ...] = ("1", "4", "6")
+HIRANO_STEANE_LOGICAL_Z: tuple[str, ...] = ("1", "5", "3")
+POST_INJECTION_QED_STABILIZER_LABELS: tuple[str, ...] = X_STABILIZER_LABELS + Z_STABILIZER_LABELS
+
+STEANE_MERGE_VERIFICATION_STABILIZER_INDICES: dict[str, int] = {
+    "Z0145": 1,
+    "Z0235": 2,
+    "X0235": 2,
+    "Z0246": 0,
+    "X0246": 0,
+}
+STEANE_MERGE_VERIFICATION_ROUNDS: tuple[tuple[str, ...], ...] = (
+    ("Z0145", "Z0235", "X0235", "Z0246", "X0246"),
+    ("Z0145", "Z0235", "Z0246"),
+    (),
+)
+STEANE_MERGE_VERIFICATION_LABELS: tuple[str, ...] = tuple(
+    f"round{round_index + 1}_{check_name}"
+    for round_index, round_checks in enumerate(STEANE_MERGE_VERIFICATION_ROUNDS)
+    for check_name in round_checks
+)
+FINAL_X_VERIFICATION_CHECKS: dict[str, tuple[str, ...]] = {
+    "X0235": ("0", "2", "3", "5"),
+    "X0246": ("0", "2", "4", "6"),
+    "X0145ab": ("0", "1", "4", "5", "X_ab"),
+}
+GOOGLE_SITE_TO_HIRANO_LABEL: dict[int, str] = {
+    0: "6",
+    3: "4",
+    4: "0",
+    5: "2",
+    8: "1",
+    9: "5",
+    10: "3",
+}
+HIRANO_LABEL_TO_GOOGLE_SITE: dict[str, int] = {
+    label: site for site, label in GOOGLE_SITE_TO_HIRANO_LABEL.items()
+}
+STEANE_HELPER_LABEL_TO_GOOGLE_SITE: dict[str, int] = {
+    "h1": 1,
+    "h2": 2,
+    "h6": 6,
+    "h7": 7,
+}
+HIRANO_PATCH_LABEL_BY_GOOGLE_SITE: dict[int, str] = {
+    **GOOGLE_SITE_TO_HIRANO_LABEL,
+    **{site: label for label, site in STEANE_HELPER_LABEL_TO_GOOGLE_SITE.items()},
+}
+
+
+@dataclass(frozen=True)
+class SurfaceCodeOperations:
+    """Distance-specific surface-code operations used by transfer builders.
+
+    Grouping these callables keeps ownership explicit without adding transfer-
+    level wrappers around the d=3 and d=5 modules. Each framework supplies its
+    own matching operation set.
+    """
+
+    prepare_product_plus: CircuitAppender
+    append_scheduled_stabilizer_round: CircuitAppender
+    append_logical_measurement: CircuitAppender
+
+
+@dataclass(frozen=True)
+class SurfaceCodeTransferSpec:
+    """Distance-specific data and circuit operations for one transfer target.
+
+    The d=3 and d=5 targets differ only in patch geometry, logical supports,
+    merged-boundary checks, and top-edge X checks. Binding those values once
+    avoids duplicate protocol builders. Distance- and framework-specific
+    circuit callables are namespaced under ``surface_code_operations``.
+
+    ``top_x_recovery_labels`` preserves paper-style measurement order, such as
+    ``X_ab`` and ``X_cd``. Canonical supports and schedules remain owned by the
+    distance-specific surface-code modules.
+    """
+
+    name: str
+    distance: int
+    surface_order: tuple[str, ...]
+    logical_x: tuple[str, ...]
+    logical_z: tuple[str, ...]
+    z_stabilizers: Mapping[str, tuple[str, ...]]
+    x_stabilizers: Mapping[str, tuple[str, ...]]
+    merged_boundary_checks: tuple[MergedBoundaryCheck, ...]
+    top_x_recovery_labels: tuple[str, ...]
+    surface_code_operations: SurfaceCodeOperations
+
+    @property
+    def z_labels(self) -> tuple[str, ...]:
+        """All ordinary surface Z-stabilizer labels in circuit order."""
+        return tuple(self.z_stabilizers)
+
+    @property
+    def x_labels(self) -> tuple[str, ...]:
+        """All ordinary surface X-stabilizer labels in circuit order."""
+        return tuple(self.x_stabilizers)
+
+    @property
+    def merged_x_labels(self) -> tuple[str, ...]:
+        """Surface X checks commuting with the active boundary-Z checks."""
+        withheld = set(self.top_x_recovery_labels)
+        return tuple(label for label in self.x_stabilizers if label not in withheld)
+
+
+# =============================================================================
+# Measurement schema and shot interpretation
+# =============================================================================
+
+
+def parity(bits: Mapping[str, int], labels: Sequence[str]) -> int:
+    """Return the mod-2 parity over selected entries of a labeled bit mapping."""
+    return sum(bits[label] for label in labels) % 2
+
+
+def transfer_measurement_labels(
+    spec: SurfaceCodeTransferSpec,
+    *,
+    include_cultivation: bool,
+    surface_readout_basis: SurfaceReadoutBasis | None,
+    include_post_transfer_stabilizer_rounds: bool = False,
+) -> dict[str, tuple[str, ...]]:
+    """Return ordered measurement-family labels for construction and parsing.
+
+    The result is authoritative for Qiskit register allocation and parsing and
+    for Stim family labels. Stim separately maps these labels to global record
+    positions because physical append order interleaves families within every
+    merged round.
+    """
+    labels = {
+        "enc_flags": ("enc_f1", "enc_f2", "enc_f6", "enc_f7"),
+        "steane_qed": POST_INJECTION_QED_STABILIZER_LABELS,
+    }
+    if include_cultivation:
+        labels["cult"] = (
+            "root_x",
+            "helper_h1",
+            "helper_h2",
+            "helper_h6",
+            "helper_h7",
+        )
+    labels.update(
+        surface_init_z=spec.z_labels,
+        interface_z=surface_common.repeated_round_labels(
+            tuple(name for name, _, _ in spec.merged_boundary_checks),
+            rounds=LATTICE_SURGERY_ROUNDS,
+        ),
+        merged_surface_z=surface_common.repeated_round_labels(
+            spec.z_labels, rounds=LATTICE_SURGERY_ROUNDS
+        ),
+        merged_surface_x=surface_common.repeated_round_labels(
+            spec.merged_x_labels, rounds=LATTICE_SURGERY_ROUNDS
+        ),
+        steane_verify=STEANE_MERGE_VERIFICATION_LABELS,
+        steane_x=HIRANO_STEANE_DATA_ORDER,
+        surface_x_recovery=spec.top_x_recovery_labels,
+    )
+    if include_post_transfer_stabilizer_rounds:
+        labels.update(
+            post_transfer_surface_z=surface_common.repeated_round_labels(
+                spec.z_labels, rounds=spec.distance
+            ),
+            post_transfer_surface_x=surface_common.repeated_round_labels(
+                spec.x_labels, rounds=spec.distance
+            ),
+        )
+    if surface_readout_basis is not None:
+        surface_readout_basis = normalize_pauli_char(surface_readout_basis)
+        measurement_terms, _ = resolve_logical_measurement_terms(
+            surface_readout_basis,
+            logical_x_support=spec.logical_x,
+            logical_z_support=spec.logical_z,
+        )
+        labels[f"surface_logical_{surface_readout_basis.lower()}"] = tuple(
+            support_item for support_item, _ in measurement_terms
+        )
+    return labels
+
+
+def interpret_transfer_measurements(
+    bits: Mapping[str, Mapping[str, int]],
+    *,
+    spec: SurfaceCodeTransferSpec,
+    include_cultivation: bool = True,
+    include_post_transfer_stabilizer_rounds: bool = False,
+    surface_readout_basis: SurfaceReadoutBasis | None = None,
+) -> dict[str, object]:
+    """Interpret one labeled shot and derive all shared protocol state.
+
+    Call structure:: label raw families -> split repeated rounds -> reconstruct
+    detector histories and the restored surface frame -> decode the noisy merge
+    -> record logical byproducts. Framework-specific parsers only need to
+    produce the labeled input mapping.
+    """
+    interface_z_rounds = _round_bits(
+        bits["interface_z"],
+        tuple(name for name, _, _ in spec.merged_boundary_checks),
+        rounds=LATTICE_SURGERY_ROUNDS,
+    )
+    merged_surface_z_rounds = _round_bits(
+        bits["merged_surface_z"], spec.z_labels, rounds=LATTICE_SURGERY_ROUNDS
+    )
+    merged_surface_x_rounds = _round_bits(
+        bits["merged_surface_x"], spec.merged_x_labels, rounds=LATTICE_SURGERY_ROUNDS
+    )
+    parsed: dict[str, object] = {
+        "enc_flags": bits["enc_flags"],
+        "post_injection_qed": bits["steane_qed"],
+        "surface_init_z": bits["surface_init_z"],
+        "surface_x_recovery": bits["surface_x_recovery"],
+        "steane_x": bits["steane_x"],
+        "steane_verification": bits["steane_verify"],
+        "interface_z_rounds": interface_z_rounds,
+        "merged_surface_z_rounds": merged_surface_z_rounds,
+        "merged_surface_x_rounds": merged_surface_x_rounds,
+    }
+    if include_cultivation:
+        parsed["cultivation"] = bits["cult"]
+    if include_post_transfer_stabilizer_rounds:
+        post_transfer_z_rounds = _round_bits(
+            bits["post_transfer_surface_z"], spec.z_labels, rounds=spec.distance
+        )
+        post_transfer_x_rounds = _round_bits(
+            bits["post_transfer_surface_x"], spec.x_labels, rounds=spec.distance
+        )
+        parsed["post_transfer_surface_z_rounds"] = post_transfer_z_rounds
+        parsed["post_transfer_surface_x_rounds"] = post_transfer_x_rounds
+    if surface_readout_basis is not None:
+        parsed["surface_logical_readout"] = bits[f"surface_logical_{surface_readout_basis.lower()}"]
+
+    # Change-detect the three merge rounds from the appropriate X/Z boundaries.
+    x_frame = StabilizerFrame()
+    x_frame.record_many(dict.fromkeys(spec.merged_x_labels, 0))
+    z_frame = StabilizerFrame()
+    z_frame.record_many(bits["surface_init_z"])
+    merged_delta_history = []
+    for merged_z, merged_x in zip(
+        merged_surface_z_rounds,
+        merged_surface_x_rounds,
+        strict=True,
+    ):
+        z_delta_layer = z_frame.advance(merged_z)
+        x_delta_layer = x_frame.advance(merged_x)
+        merged_delta_history.append(
+            {
+                "z": dict(z_delta_layer),
+                "x": {label: x_delta_layer[label] for label in spec.merged_x_labels},
+            }
+        )
+    parsed["merged_surface_syndrome_delta_history"] = merged_delta_history
+
+    # Complete the final surface frame with the top-edge X recovery checks.
+    surface_stabilizer_values = {
+        **merged_surface_z_rounds[-1],
+        **merged_surface_x_rounds[-1],
+        **bits["surface_x_recovery"],
+    }
+    if set(surface_stabilizer_values) != set(spec.z_labels) | set(spec.x_labels):
+        raise ValueError("post-transfer surface stabilizer frame is incomplete.")
+    surface_stabilizer_frame = StabilizerFrame()
+    surface_stabilizer_frame.record_many(surface_stabilizer_values)
+    parsed["post_transfer_surface_stabilizer_frame"] = surface_stabilizer_frame
+    if include_post_transfer_stabilizer_rounds:
+        post_transfer_frame = StabilizerFrame()
+        post_transfer_frame.record_many(surface_stabilizer_frame.as_dict())
+        parsed["post_transfer_surface_syndrome_delta_history"] = [
+            {
+                "z": post_transfer_frame.advance(z_round),
+                "x": post_transfer_frame.advance(x_round),
+            }
+            for z_round, x_round in zip(
+                post_transfer_z_rounds,
+                post_transfer_x_rounds,
+                strict=True,
+            )
+        ]
+
+    # Reconstruct the missing color X checks from demolition and X_ab recovery.
+    final_x_bits = {
+        **bits["steane_x"],
+        "X_ab": bits["surface_x_recovery"]["X_ab"],
+    }
+    parsed["final_x_verification_checks"] = {
+        name: parity(final_x_bits, support)
+        for name, support in FINAL_X_VERIFICATION_CHECKS.items()
+    }
+
+    # Decode surface detector layers jointly so timelike edges remain available.
+    decoder = SpaceTimeRotatedDecoder(
+        data_qubits=spec.surface_order,
+        z_stabilizers=spec.z_stabilizers,
+        x_stabilizers={label: spec.x_stabilizers[label] for label in spec.merged_x_labels},
+    )
+    recovery = decoder.decode(
+        z_delta_history=[delta_layer["z"] for delta_layer in merged_delta_history],
+        x_delta_history=[delta_layer["x"] for delta_layer in merged_delta_history],
+    )
+    parsed["merged_surface_qec_recovery"] = recovery
+    parsed["merged_surface_logical_x_byproduct"] = (
+        len(recovery.x_error_sites & frozenset(spec.logical_z)) % 2
+    )
+    parsed["merged_surface_logical_z_byproduct"] = (
+        len(recovery.z_error_sites & frozenset(spec.logical_x)) % 2
+    )
+    return parsed
+
+
+def _round_bits(
+    bits: Mapping[str, int],
+    labels: Sequence[str],
+    *,
+    rounds: int,
+) -> list[dict[str, int]]:
+    return [
+        {label: bits[f"round{round_index + 1}_{label}"] for label in labels}
+        for round_index in range(rounds)
+    ]
+
+
+# =============================================================================
+# Postselection and logical frame
+# =============================================================================
+
+
+def merged_boundary_checks_stable(measurements: dict[str, object]) -> bool:
+    """Return whether each interface check is unchanged across all three rounds.
+
+    Stability is checked per interface component before their product is
+    interpreted as the logical ``Z_L Z_L`` teleportation outcome.
+    """
+    rounds = measurements["interface_z_rounds"]
+    if not rounds:
+        return False
+    check_names = tuple(rounds[0])
+    if any(set(round_bits) != set(check_names) for round_bits in rounds[1:]):
+        return False
+    return all(
+        round_bits[check_name] == rounds[0][check_name]
+        for check_name in check_names
+        for round_bits in rounds[1:]
+    )
+
+
+def merged_boundary_logical_zz_outcome(measurements: dict[str, object]) -> int:
+    """Return the logical ``Z_L Z_L`` outcome of stable interface checks.
+
+    A measurement bit ``b`` represents eigenvalue ``(-1)^b``, so multiplying
+    the stable interface-check eigenvalues is their mod-2 parity. An unstable
+    history is a postselection failure and has no logical interpretation.
+    """
+    if not merged_boundary_checks_stable(measurements):
+        raise ValueError("Merged-boundary checks are not individually stable.")
+    stable_boundary_bits = measurements["interface_z_rounds"][0]
+    return parity(stable_boundary_bits, tuple(stable_boundary_bits))
+
+
+def transfer_acceptance_succeeds(measurements: dict[str, object]) -> bool:
+    """Apply the transfer protocol's hybrid error-handling policy.
+
+    Encoder flags, post-injection QED, optional cultivation, color-code
+    verification, final demolition checks, and interface changes all cause
+    rejection. Surface detector events do not: their spacetime history is
+    decoded into the Pauli frame.
+    """
+    return not any(
+        (
+            *measurements["enc_flags"].values(),
+            *measurements["post_injection_qed"].values(),
+            *measurements.get("cultivation", {}).values(),
+            *measurements["steane_verification"].values(),
+            *measurements["final_x_verification_checks"].values(),
+        )
+    ) and merged_boundary_checks_stable(measurements)
+
+
+# =============================================================================
+# Pauli frame and logical readout
+# =============================================================================
+
+
+def transfer_pauli_frame(measurements: dict[str, object]) -> PauliFrame:
+    """Build the target Pauli frame from teleportation and decoded-QEC outcomes.
+
+    The logical ``Z_L Z_L`` interface outcome toggles an X byproduct, while the
+    destructive Steane ``X146`` outcome toggles a Z byproduct. Spacetime surface
+    decoding independently contributes logical X and Z corrections. Future
+    logical readout is interpreted through this frame instead of applying
+    physical correction gates.
+    """
+    frame = PauliFrame()
+    frame.register("surface")
+    frame.update_x("surface", bool(merged_boundary_logical_zz_outcome(measurements)))
+    frame.update_x("surface", bool(measurements["merged_surface_logical_x_byproduct"]))
+    frame.update_z("surface", bool(parity(measurements["steane_x"], HIRANO_STEANE_LOGICAL_X)))
+    frame.update_z("surface", bool(measurements["merged_surface_logical_z_byproduct"]))
+    return frame
+
+
+def corrected_surface_logical_readout(
+    measurements: dict[str, object],
+    *,
+    basis: SurfaceReadoutBasis,
+) -> int:
+    """Interpret destructive logical-support parity through the transfer frame.
+
+    The raw bit is the parity of the measured physical logical terms. This
+    operation applies the same shot's teleportation and spacetime-decoder
+    byproducts before returning the logical X, Y, or Z outcome.
+    """
+    if "surface_logical_readout" not in measurements:
+        raise ValueError("measurements do not include a surface logical readout.")
+    raw_bit = sum(measurements["surface_logical_readout"].values()) % 2
+    pauli_frame = transfer_pauli_frame(measurements)
+    match basis:
+        case "X":
+            return pauli_frame.interpret_x_readout("surface", raw_bit)
+        case "Y":
+            return pauli_frame.interpret_y_readout("surface", raw_bit)
+        case "Z":
+            return pauli_frame.interpret_z_readout("surface", raw_bit)
+    assert_never(basis)

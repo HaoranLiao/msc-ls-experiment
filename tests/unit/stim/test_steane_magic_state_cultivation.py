@@ -1,8 +1,8 @@
 """Parallel Stim tests for the Steane-code cultivation helpers.
 
 The Qiskit circuit projects onto logical ``H_XY`` and cultivates ``|T>``.
-Stim replaces ``T/T_DAG`` with ``S/S_DAG``, so these tests apply the same
-checks to the Clifford logical-Y projection and its ``|S>`` target state.
+Stim instead performs logical-Y cultivation as the stabilizer proxy for that
+protocol, so these tests check the logical-Y projection and its ``|S>`` target.
 """
 
 from __future__ import annotations
@@ -236,7 +236,7 @@ class TestStabilizerSyndromesAfterCultivation:
 
 
 # =============================================================================
-# Test Set 3: Noisy multi-round cultivation approaches the S-state proxy
+# Test Set 3: Noisy multi-round logical-Y cultivation approaches |S>
 # =============================================================================
 
 

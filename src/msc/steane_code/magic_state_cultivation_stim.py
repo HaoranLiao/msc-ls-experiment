@@ -1,10 +1,10 @@
-"""Stim port of Steane fold-measure-unfold magic-state cultivation.
+"""Stim logical-Y cultivation on the Steane patch.
 
 This module parallels :mod:`magic_state_cultivation_qiskit`. The fold schedule,
 patch sites, measurement count, and optional-CX filtering are shared with that
 module. Qiskit's transversal ``T``/``T_DAG`` rotations are replaced by
-``S``/``S_DAG``, so Stim projects onto the logical Pauli-Y axis of the
-Clifford ``S``-state proxy instead of the non-Clifford ``H_XY`` axis.
+``S``/``S_DAG``, so Stim performs logical-Y cultivation (proxy for logical
+``H_XY``) and cultivates the logical Pauli-Y eigenstate.
 
 Each round appends five measurements to Stim's record in this order:
 
@@ -113,7 +113,7 @@ def append_unfold_network(
             circuit.append("TICK", [])
 
 
-def append_h_xy_projection_round(
+def append_y_projection_round(
     circuit: stim.Circuit,
     *,
     patch_qubits: Sequence[int] = DEFAULT_STIM_PATCH_QUBITS,
@@ -122,11 +122,11 @@ def append_h_xy_projection_round(
     skip_cx: tuple[int, int] | None = None,
     pin_folded_root: bool = True,
 ) -> tuple[int, ...]:
-    """Append one detector-annotated Clifford-proxy cultivation round.
+    """Append one detector-annotated logical-Y cultivation round.
 
-    The stage order and fold network parallel Qiskit's
-    :func:`append_h_xy_projection_round`. Stim replaces transversal ``T`` and
-    ``T_DAG`` with ``S`` and ``S_DAG``, thereby projecting onto logical Y.
+    Stim replaces the non-Clifford transversal rotations with ``S`` and
+    ``S_DAG`` while preserving the fold network. The result is logical-Y
+    cultivation (proxy for logical ``H_XY``).
 
     Three detectors always hold: the flags at sites 1, 2, and 6 are zero for
     every input state, and the site-7 double check agrees with the folded root.
@@ -257,7 +257,8 @@ def append_steane_injection_and_cultivation(
     injected_state
         Clifford state injected on the center data site before encoding.
     cultivation_rounds
-        Number of Clifford-proxy cultivation rounds. Must be non-negative.
+        Number of logical-Y cultivation rounds (proxy for logical ``H_XY``).
+        Must be non-negative.
     measure_encoder_flags
         Whether to record the four encoder-flag outcomes.
     add_qed_round
@@ -293,7 +294,7 @@ def append_steane_injection_and_cultivation(
             circuit.append("TICK", [])
 
     for _ in range(cultivation_rounds):
-        append_h_xy_projection_round(
+        append_y_projection_round(
             circuit,
             patch_qubits=patch_qubits,
             add_ticks=add_ticks,
@@ -320,7 +321,7 @@ def build_steane_injection_and_cultivation_circuit(
 
     Measurement-record layout
     -------------------------
-    The first four entries are the state-injection encoder-helper
+    The first four entries are the state-injection encoder-flag
     measurements. When ``add_qed_round`` is true, the next six entries are the
     three X and three Z Steane stabilizer outcomes. Each cultivation round then
     appends five entries: the folded root measurement followed by the four
@@ -332,8 +333,8 @@ def build_steane_injection_and_cultivation_circuit(
     injected_state
         Clifford state injected on the center data site before encoding.
     cultivation_rounds
-        Number of Clifford-proxy cultivation rounds. Zero appends injection and
-        optional QED without cultivation.
+        Number of logical-Y cultivation rounds (proxy for logical ``H_XY``).
+        Zero appends injection and optional QED without cultivation.
     add_qed_round
         Whether to append the six-outcome post-injection Steane QED round.
     add_ticks
