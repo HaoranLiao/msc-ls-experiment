@@ -8,10 +8,7 @@ import stim
 
 from msc.utils.normalize import normalize_pauli_char
 
-NOISE_P_1Q = 0.0005
-NOISE_P_2Q = 0.005
-NOISE_MEASURE = 0.005
-NOISE_RESET = 0.005
+DEFAULT_PHYSICAL_ERROR_PROBABILITY = 0.001
 
 
 # ---------------------------------------------------------------------------
@@ -22,77 +19,89 @@ NOISE_RESET = 0.005
 def add_circuit_depolarizing_noise(
     circuit: stim.Circuit,
     *,
-    p_1q: float = NOISE_P_1Q,
-    p_2q: float = NOISE_P_2Q,
-    p_measure: float = NOISE_MEASURE,
-    p_reset: float = NOISE_RESET,
+    p: float = DEFAULT_PHYSICAL_ERROR_PROBABILITY,
 ) -> stim.Circuit:
-    """Return a noisy copy of a circuit, including nested ``REPEAT`` bodies.
+    """Return a uniformly noised circuit without an idle-error model.
 
-    Adds ``DEPOLARIZE1`` after one-qubit gates and resets,
-    ``DEPOLARIZE2`` after two-qubit gates, and measurement-result flips.
-    The default rates are ``NOISE_P_1Q``, ``NOISE_P_2Q``, ``NOISE_MEASURE``,
-    and ``NOISE_RESET``.
-
-    Call structure::
-
-        noiseless circuit
-        └── add_circuit_depolarizing_noise(...)
-            ├── recursively add noise inside each REPEAT body
-            └── noisy circuit with the same REPEAT structure
+    Every active location uses the same ``p``. One-qubit gates
+    receive ``DEPOLARIZE1`` and two-qubit gates receive ``DEPOLARIZE2``.
+    Z- and X-basis resets receive post-reset ``X_ERROR`` and ``Z_ERROR``,
+    respectively. Measurements receive result flips; each MPP term receives an
+    independent anticommuting Pauli fault. ``TICK`` instructions are preserved
+    as schedule boundaries but do not produce noise. ``REPEAT`` bodies are
+    transformed recursively without changing their structure.
     """
-    for probability_name, probability in (
-        ("p_1q", p_1q),
-        ("p_2q", p_2q),
-        ("p_measure", p_measure),
-        ("p_reset", p_reset),
-    ):
-        if not 0 <= probability <= 1:
-            raise ValueError(f"{probability_name} must be in [0, 1].")
+    if not 0 <= p <= 1:
+        raise ValueError("p must be in [0, 1].")
 
-    noisy_circuit = stim.Circuit()
-    for instruction in circuit:
-        if isinstance(instruction, stim.CircuitRepeatBlock):
-            noisy_circuit.append(
-                stim.CircuitRepeatBlock(
-                    instruction.repeat_count,
-                    add_circuit_depolarizing_noise(
-                        instruction.body_copy(),
-                        p_1q=p_1q,
-                        p_2q=p_2q,
-                        p_measure=p_measure,
-                        p_reset=p_reset,
-                    ),
+    def add_noise(selected_circuit: stim.Circuit) -> stim.Circuit:
+        noisy_circuit = stim.Circuit()
+        for instruction in selected_circuit:
+            if isinstance(instruction, stim.CircuitRepeatBlock):
+                noisy_circuit.append(
+                    stim.CircuitRepeatBlock(
+                        instruction.repeat_count,
+                        add_noise(instruction.body_copy()),
+                        tag=instruction.tag,
+                    )
+                )
+                continue
+
+            instruction_name = instruction.name
+            gate = stim.gate_data(instruction_name)
+            targets = instruction.targets_copy()
+            qubits = [
+                target.qubit_value
+                for target in targets
+                if (
+                    target.is_qubit_target
+                    or target.is_x_target
+                    or target.is_y_target
+                    or target.is_z_target
+                )
+            ]
+
+            if instruction_name == "MPP" and p > 0:
+                # Fault each Pauli term with an anticommuting error, matching
+                # Hirano's product-measurement model.
+                for target in targets:
+                    if target.is_x_target or target.is_y_target:
+                        noisy_circuit.append("Z_ERROR", [target.qubit_value], p)
+                    elif target.is_z_target:
+                        noisy_circuit.append("X_ERROR", [target.qubit_value], p)
+                noisy_circuit.append(instruction)
+            elif gate.produces_measurements and p > 0:
+                # A Stim measurement argument flips the reported result.
+                noisy_circuit.append(
+                    instruction_name,
+                    targets,
+                    p,
                     tag=instruction.tag,
                 )
-            )
-            continue
+            else:
+                noisy_circuit.append(instruction)
 
-        instruction_name = instruction.name
-        gate = stim.gate_data(instruction_name)
-        targets = instruction.targets_copy()
+            if not p:
+                continue
+            if gate.is_reset:
+                # Apply reset noise afterward so it corrupts the prepared state.
+                reset_error = {
+                    "R": "X_ERROR",
+                    "RZ": "X_ERROR",
+                    "RX": "Z_ERROR",
+                    "RY": "X_ERROR",
+                }.get(instruction_name)
+                if reset_error is None:
+                    raise ValueError(f"unsupported reset gate for Hirano noise: {instruction_name}")
+                noisy_circuit.append(reset_error, qubits, p)
+            elif gate.is_unitary and gate.is_single_qubit_gate:
+                noisy_circuit.append("DEPOLARIZE1", qubits, p)
+            elif gate.is_unitary and gate.is_two_qubit_gate:
+                noisy_circuit.append("DEPOLARIZE2", qubits, p)
 
-        if gate.produces_measurements and p_measure > 0:
-            noisy_circuit.append(instruction_name, targets, p_measure, tag=instruction.tag)
-        else:
-            noisy_circuit.append(
-                instruction_name,
-                targets,
-                instruction.gate_args_copy(),
-                tag=instruction.tag,
-            )
+        return noisy_circuit
 
-        if gate.is_reset and p_reset > 0:
-            qubits = [target.qubit_value for target in targets]
-            noisy_circuit.append("DEPOLARIZE1", qubits, p_reset)
-        elif gate.is_unitary and gate.is_single_qubit_gate and p_1q > 0:
-            qubits = [target.qubit_value for target in targets]
-            noisy_circuit.append("DEPOLARIZE1", qubits, p_1q)
-        elif gate.is_unitary and gate.is_two_qubit_gate and p_2q > 0:
-            qubits = [target.qubit_value for target in targets]
-            noisy_circuit.append("DEPOLARIZE2", qubits, p_2q)
-
-    return noisy_circuit
+    return add_noise(circuit)
 
 
 # ---------------------------------------------------------------------------

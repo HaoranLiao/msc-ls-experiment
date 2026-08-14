@@ -1,12 +1,17 @@
 """Stim analysis of the noisy lattice-surgery stage alone.
 
-The encoded Steane input and the closing surface round/readout are ideal. Only
-surface preparation, three merged rounds, demolition, and boundary recovery
-are noisy. Transfer-local checks reject while PyMatching corrects surface-code
-detector events, and the ideal closing-round changes are postselected. Rejecting
-every detector remains optional. This hybrid mode follows the literal closing
-policy in the Fig. 9 prose but does not reproduce the authors' fully
-postselected Fig. 9 data or their concurrent superdense circuit.
+The encoded Steane prefix is ideal. Noise covers surface ``|+>`` preparation
+and its initial X/Z-check round; all interface, compatible surface, and
+scheduled Steane checks in the three merge rounds; Steane-X demolition; and
+top-edge-X recovery. The closing full surface round and destructive readout
+are ideal. Only operation locations are noisy; ``TICK`` intervals add no idle
+errors.
+
+This is not the exact noise boundary of Hirano's released Fig. 9 builder. That
+code includes per-tick idle noise and, for ``full_post_selection=False``, five
+noisy full surface rounds followed by a noisy destructive readout. This
+experiment instead omits idle noise and uses one ideal closing round followed
+by an ideal readout.
 """
 
 from __future__ import annotations
@@ -21,17 +26,38 @@ from msc.noise.fault_injection_stim import add_circuit_depolarizing_noise
 from msc.noise.fault_tolerance_stim import (
     DetectorErrorModelShotAnalyzer,
     LogicalErrorEstimate,
-    SingleFaultAssessmentResult as CircuitSingleFaultAssessmentResult,
     assess_circuit_single_fault_tolerance,
     sample_detector_logical_error_probability,
 )
+from msc.noise.fault_tolerance_stim import (
+    SingleFaultAssessmentResult as CircuitSingleFaultAssessmentResult,
+)
+from msc.state_transfer import common
 from msc.state_transfer import helper_stim as transfer_helper
 from msc.state_transfer import to_d5_rotated_stim as transfer
 
-from .stim_logical_error_rate import (
-    TRANSFER_X_ERROR,
-    TRANSFER_Z_ERROR,
-    LogicalErrorExperiment,
+
+@dataclass(frozen=True)
+class LogicalErrorExperiment:
+    """One stabilizer-basis probe of lattice-surgery transfer errors."""
+
+    name: str
+    injected_state: str
+    readout_basis: str
+    plot_label: str
+
+
+TRANSFER_Z_ERROR = LogicalErrorExperiment(
+    name="transfer_z_error",
+    injected_state="+",
+    readout_basis="X",
+    plot_label=r"Injected $|+_L\rangle$ (detecting Z errors)",
+)
+TRANSFER_X_ERROR = LogicalErrorExperiment(
+    name="transfer_x_error",
+    injected_state="0",
+    readout_basis="Z",
+    plot_label=r"Injected $|0_L\rangle$ (detecting X errors)",
 )
 
 LATTICE_SURGERY_EXPERIMENTS = (TRANSFER_Z_ERROR, TRANSFER_X_ERROR)
@@ -49,17 +75,38 @@ def build_lattice_surgery_only_circuit(
 ) -> tuple[stim.Circuit, transfer_helper.TransferMeasurementLayout]:
     """Build the detector-annotated lattice-surgery-only experiment.
 
-    The Steane encoder and post-injection QED are ideal. Noise begins with
-    surface preparation and covers the three merge rounds, Steane demolition,
-    and top-edge X-check recovery. One ideal full surface round then closes the
-    detector history before an ideal destructive logical readout. All detector
-    annotations remain available so ``LatticeSurgeryOnlyShotAnalyzer`` can use
-    the protocol's hybrid postselection-plus-decoding policy or, for diagnostic
-    comparisons only, reject every detector event.
+    This builder applies noise in the following places:
 
-    Call structure: build an ideal transfer -> split after Steane QED -> noise
-    the surface/merge/demolition suffix -> append an ideal closing round and
-    logical readout.
+    1. Surface initialization: noisy Hadamards prepare the 25 surface-data
+       qubits in ``|+>`` from Stim's initial ``|0>`` state. One noisy
+       combined X/Z-stabilizer round then establishes the Z reference and the
+       known-``+1`` X detector layer. Its ancilla resets, basis changes, four
+       CNOT layers, and ancilla measurements are all noisy.
+    2. All three merge rounds: the interface-Z checks, every surface-Z check,
+       every compatible surface-X check, and every scheduled Steane check are
+       noisy. The noisy Steane checks are
+       ``Z0145``, ``Z0235``, ``X0235``, ``Z0246``, and ``X0246`` in round 1;
+       ``Z0145``, ``Z0235``, and ``Z0246`` in round 2; and none in round 3.
+    3. Transfer completion: Steane-X demolition and recovery of ``X_ab`` and
+       ``X_cd`` are noisy.
+
+    The Crumble encoder and post-injection Steane QED before these phases are
+    ideal. One ideal full surface round and an ideal destructive readout close
+    the circuit afterward. The closing round supplies the final detectors; the
+    ideal logical-support readout supplies only the logical observable.
+
+    Hirano's released Fig. 9 builder likewise uses an ideal Steane preparation,
+    a noisy complete X/Z surface round before the merge, and noisy scheduled
+    Steane and surface operations during lattice surgery. Our operation noise
+    covers the same phases. The remaining differences are that we omit idle
+    noise, serialize the interface/surface/Steane groups instead of using the
+    interleaved superdense schedule, and replace Hirano's five noisy closing
+    rounds and noisy readout with one ideal closing round and ideal readout.
+
+    The circuit itself only defines detector records. The persistent
+    postselection of the ``X_bcgh`` and ``X_fgkl`` streams is applied by
+    ``LatticeSurgeryOnlyShotAnalyzer``, which selects their initialization
+    detectors and their detectors in all three merge rounds.
     """
     if experiment not in LATTICE_SURGERY_EXPERIMENTS:
         raise ValueError("experiment must be one of LATTICE_SURGERY_EXPERIMENTS.")
@@ -83,40 +130,36 @@ def build_lattice_surgery_only_circuit(
     if circuit.num_measurements != transfer_layout.num_measurements:
         raise RuntimeError("transfer measurement layout does not match the circuit.")
 
-    # Split exactly after QED so only the lattice-surgery suffix receives noise.
+    # Keep injection and QED ideal; noise starts at surface initialization.
     ideal_input_measurement_count = transfer_layout.positions["steane_qed"][-1] + 1
     ideal_input = stim.Circuit()
     noisy_transfer = stim.Circuit()
     observed_measurements = 0
+    phase = "ideal_input"
     for instruction in circuit:
         if isinstance(instruction, stim.CircuitRepeatBlock):
-            raise ValueError(
-                "the lattice-surgery noise boundary requires no repeat blocks."
-            )
+            raise ValueError("the lattice-surgery noise boundary requires no repeat blocks.")
         instruction_circuit = stim.Circuit()
         instruction_circuit.append(instruction)
-        next_measurement_count = (
-            observed_measurements + instruction_circuit.num_measurements
-        )
+        next_measurement_count = observed_measurements + instruction_circuit.num_measurements
         if observed_measurements < ideal_input_measurement_count < next_measurement_count:
             raise ValueError("the QED boundary splits a multi-result instruction.")
-        target = (
-            ideal_input
-            if observed_measurements < ideal_input_measurement_count
-            else noisy_transfer
-        )
+        target = {
+            "ideal_input": ideal_input,
+            "noisy_transfer": noisy_transfer,
+        }[phase]
         target.append(instruction)
         observed_measurements = next_measurement_count
+        if instruction.name == "TICK":
+            if phase == "ideal_input" and observed_measurements >= ideal_input_measurement_count:
+                phase = "noisy_transfer"
     if observed_measurements != circuit.num_measurements:
         raise RuntimeError("failed to traverse the complete circuit record.")
 
     # Noise the transfer, then append the noise-free closing round and readout.
     circuit = ideal_input + add_circuit_depolarizing_noise(
         noisy_transfer,
-        p_1q=physical_error_probability,
-        p_2q=physical_error_probability,
-        p_measure=physical_error_probability,
-        p_reset=physical_error_probability,
+        p=physical_error_probability,
     )
     layout = transfer.append_ideal_verification_and_readout(
         circuit,
@@ -128,14 +171,19 @@ def build_lattice_surgery_only_circuit(
 
 
 class LatticeSurgeryOnlyShotAnalyzer(DetectorErrorModelShotAnalyzer):
-    """Apply hybrid surface correction with an ideal closing postselection.
+    """Apply surface correction with two always-postselected X streams.
 
-    By default, the color-code, interface, and reconstructed final-X prefix
-    rejects, noisy surface-history events are decoded by PyMatching, and every
-    detector from the noise-free closing surface round is postselected. Final
-    destructive-readout boundary detectors remain decoder inputs. Setting
-    ``full_post_selection=True`` additionally rejects every noisy surface and
-    readout-boundary detector as a diagnostic comparison.
+    ``full_post_selection=False`` is not pure surface-code QEC. The color-code,
+    interface, and reconstructed final-X detectors reject. In addition, Hirano
+    sets one persistent postselection flag on the ``X_bcgh`` and ``X_fgkl``
+    check objects: their initial known-+1 detectors and their detector in every
+    merge round reject. All surface-Z detectors and all other compatible
+    surface-X detectors from the merge rounds are decoded by PyMatching.
+
+    Every detector from the noise-free closing surface round is postselected.
+    The adjacent ideal logical-support readout contributes only the logical
+    observable; it adds no redundant readout-boundary detectors. Setting
+    ``full_post_selection=True`` rejects every detector.
     """
 
     def __init__(
@@ -151,10 +199,42 @@ class LatticeSurgeryOnlyShotAnalyzer(DetectorErrorModelShotAnalyzer):
             protocol_postselection_count = (
                 transfer_helper.num_transfer_protocol_postselection_detectors(layout)
             )
-            noisy_surface_history_detector_count = sum(
+            noisy_surface_history_detector_count = len(layout.positions["surface_init_x"]) + sum(
                 len(round_positions)
                 for family in ("merged_surface_z", "merged_surface_x")
                 for round_positions in layout.rounds(family)
+            )
+            # Detector order is protocol prefix -> initial surface X -> all
+            # merged surface Z -> all merged surface X -> ideal closing round.
+            initial_x_detector_start = protocol_postselection_count
+            merged_x_detector_start = (
+                initial_x_detector_start
+                + len(layout.positions["surface_init_x"])
+                + len(layout.positions["merged_surface_z"])
+            )
+            # Offsets within the pre-merge surface-X detector block.
+            initial_x_detector_offset_by_label = {
+                label: offset for offset, label in enumerate(layout.labels["surface_init_x"])
+            }
+            # Offsets within each merge round's surface-X detector block.
+            merged_x_detector_offset_by_label = {
+                label: offset for offset, label in enumerate(transfer.TRANSFER_SPEC.merged_x_labels)
+            }
+            # Hirano's two persistently postselected surface-X initialization
+            # detectors; merge-round detectors from the same streams follow.
+            postselected_surface_x_detector_indices = [
+                initial_x_detector_start + initial_x_detector_offset_by_label[label]
+                for label in transfer.HIRANO_POSTSELECTED_SURFACE_X_LABELS
+            ]
+            merged_x_round_width = len(transfer.TRANSFER_SPEC.merged_x_labels)
+            # Reproduce Hirano's persistent object flag in the analyzer: reject
+            # these two X streams at initialization and in every merge round.
+            postselected_surface_x_detector_indices.extend(
+                merged_x_detector_start
+                + round_index * merged_x_round_width
+                + merged_x_detector_offset_by_label[label]
+                for round_index in range(common.LATTICE_SURGERY_ROUNDS)
+                for label in transfer.HIRANO_POSTSELECTED_SURFACE_X_LABELS
             )
             closing_detector_start = (
                 protocol_postselection_count + noisy_surface_history_detector_count
@@ -171,6 +251,7 @@ class LatticeSurgeryOnlyShotAnalyzer(DetectorErrorModelShotAnalyzer):
                 raise RuntimeError("ideal closing detector layout exceeds the circuit.")
             postselection_detector_indices = (
                 *range(protocol_postselection_count),
+                *postselected_surface_x_detector_indices,
                 *range(closing_detector_start, closing_detector_stop),
             )
         super().__init__(
@@ -234,9 +315,10 @@ def estimate_lattice_surgery_logical_error_probability(
 ) -> LogicalErrorEstimate:
     """Sample one lattice-surgery LER conditioned on the selected policy.
 
-    Full postselection uses the detector sampler's packed zero-event fast path;
-    Hybrid handling rejects the ideal closing-round syndrome changes and sends
-    accepted noisy surface-history records to PyMatching.
+    Full postselection uses the detector sampler's packed zero-event fast path.
+    Surface correction, with ``X_bcgh`` and ``X_fgkl`` always postselected,
+    rejects ideal closing-round changes and sends accepted noisy
+    surface-history records to PyMatching.
     """
     circuit, layout = build_lattice_surgery_only_circuit(
         physical_error_probability,
@@ -278,9 +360,11 @@ def estimate_lattice_surgery_logical_error_curves(
         (
             experiment,
             probability,
-            None
-            if seed is None
-            else seed + experiment_index * len(probabilities) + probability_index,
+            (
+                None
+                if seed is None
+                else seed + experiment_index * len(probabilities) + probability_index
+            ),
         )
         for experiment_index, experiment in enumerate(experiments)
         for probability_index, probability in enumerate(probabilities)

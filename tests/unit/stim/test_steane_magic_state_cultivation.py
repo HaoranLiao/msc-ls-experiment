@@ -367,8 +367,8 @@ class TestCultivationFaultTolerance:
             "expected_rejected_faults",
         ),
         (
-            (False, 1239, 88, 1151),
-            (True, 1209, 86, 1123),
+            (False, 1206, 66, 1140),
+            (True, 1176, 64, 1112),
         ),
     )
     def test_all_single_faults_are_benign_or_rejected(
@@ -387,10 +387,7 @@ class TestCultivationFaultTolerance:
         )
         circuit = add_circuit_depolarizing_noise(
             protocol_circuit,
-            p_1q=1e-3,
-            p_2q=1e-3,
-            p_measure=1e-3,
-            p_reset=1e-3,
+            p=1e-3,
         )
         append_patch_stabilizer_measurement(circuit, basis="both", add_ticks=True)
         append_patch_logical_measurement(

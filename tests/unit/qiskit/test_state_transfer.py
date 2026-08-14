@@ -11,7 +11,6 @@ from msc.state_transfer import to_d3_rotated_qiskit as d3
 from msc.state_transfer import to_d5_rotated_qiskit as d5
 from msc.steane_code.state_injection_qiskit import PATCH_STABILIZER_ANCILLA_SITES
 
-
 TARGETS = (
     pytest.param(d3, d3.build_steane_to_rotated_d3_lattice_surgery_circuit, id="d3"),
     pytest.param(d5, d5.build_steane_to_rotated_d5_lattice_surgery_circuit, id="d5"),
@@ -132,17 +131,18 @@ def test_measurements_follow_hirano_merge_table(module, build) -> None:
             assert max(surface_positions) < min(color_positions)
         assert tuple(
             qubit_names[circuit.data[position].qubits[0]] for position in interface_positions
-        ) == tuple(
-            f"zz_{check_name[1:].lower()}" for check_name, _, _ in expected_interface_checks
-        )
+        ) == tuple(f"zz_{check_name[1:].lower()}" for check_name, _, _ in expected_interface_checks)
         assert tuple(
             qubit_names[circuit.data[position].qubits[0]] for position in surface_positions
         ) == tuple(label.lower() for label in spec.z_labels + spec.merged_x_labels)
-        assert tuple(
-            label.removeprefix(prefix)
-            for label in labels["steane_verify"]
-            if label.startswith(prefix)
-        ) == color_checks
+        assert (
+            tuple(
+                label.removeprefix(prefix)
+                for label in labels["steane_verify"]
+                if label.startswith(prefix)
+            )
+            == color_checks
+        )
         assert tuple(
             qubit_names[circuit.data[position].qubits[0]] for position in color_positions
         ) == tuple(
@@ -157,20 +157,24 @@ def test_measurements_follow_hirano_merge_table(module, build) -> None:
 
     # Verify the alternating mixed-code path used to suppress Z35bc hooks.
     z35bc_ancilla = next(register[0] for register in circuit.qregs if register.name == "zz_35bc")
-    assert tuple(
-        qubit_names[instruction.qubits[0]]
-        for instruction in circuit.data
-        if instruction.operation.name == "cx" and instruction.qubits[1] == z35bc_ancilla
-    ) == ("3", "b", "5", "c") * common.LATTICE_SURGERY_ROUNDS
+    assert (
+        tuple(
+            qubit_names[instruction.qubits[0]]
+            for instruction in circuit.data
+            if instruction.operation.name == "cx" and instruction.qubits[1] == z35bc_ancilla
+        )
+        == ("3", "b", "5", "c") * common.LATTICE_SURGERY_ROUNDS
+    )
 
     # Verify X-basis Steane demolition precedes top-edge X-check recovery.
     demolition_positions = tuple(positions["steane_x"].values())
     recovery_positions = tuple(positions["surface_x_recovery"].values())
     assert previous_round_end < min(demolition_positions)
     assert max(demolition_positions) < min(recovery_positions)
-    assert tuple(
-        qubit_names[circuit.data[position].qubits[0]] for position in demolition_positions
-    ) == common.HIRANO_STEANE_DATA_ORDER
+    assert (
+        tuple(qubit_names[circuit.data[position].qubits[0]] for position in demolition_positions)
+        == common.HIRANO_STEANE_DATA_ORDER
+    )
     assert tuple(
         qubit_names[circuit.data[position].qubits[0]] for position in recovery_positions
     ) == tuple(label.lower() for label in expected_top_x_checks)
@@ -212,15 +216,17 @@ def test_transferred_pauli_expectation_values_without_cultivation(module, build)
         )
         for state, basis, _ in experiments
     ]
-    result = AerSimulator(method="stabilizer").run(
-        circuits,
-        shots=256,
-        seed_simulator=42,
-    ).result()
+    result = (
+        AerSimulator(method="stabilizer")
+        .run(
+            circuits,
+            shots=256,
+            seed_simulator=42,
+        )
+        .result()
+    )
 
-    for (state, basis, expected), counts in zip(
-        experiments, result.get_counts(), strict=True
-    ):
+    for (state, basis, expected), counts in zip(experiments, result.get_counts(), strict=True):
         logical_counts: Counter[int] = Counter()
         for bitstring, count in counts.items():
             measurements = module.parse_transfer_measurements(
@@ -255,11 +261,15 @@ def test_cultivated_t_state_pauli_expectation_values() -> None:
         )
         for basis in expected_by_basis
     ]
-    result = AerSimulator(method="matrix_product_state").run(
-        circuits,
-        shots=128,
-        seed_simulator=42,
-    ).result()
+    result = (
+        AerSimulator(method="matrix_product_state")
+        .run(
+            circuits,
+            shots=128,
+            seed_simulator=42,
+        )
+        .result()
+    )
 
     for basis, counts in zip(expected_by_basis, result.get_counts(), strict=True):
         logical_counts: Counter[int] = Counter()

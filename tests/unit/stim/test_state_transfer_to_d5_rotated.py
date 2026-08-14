@@ -10,10 +10,10 @@ from examples.state_transfer.stim_logical_error_rate_ls import (
     LatticeSurgeryOnlyShotAnalyzer,
     build_lattice_surgery_only_circuit,
 )
-from msc.state_transfer import common, helper_stim as helper
+from msc.state_transfer import common
+from msc.state_transfer import helper_stim as helper
 from msc.state_transfer import to_d5_rotated_stim as transfer
 from msc.steane_code.state_injection_stim import PATCH_STABILIZER_ANCILLA_SITES
-
 
 LOGICAL_EXPECTATIONS = {
     "0": {"X": 0.0, "Y": 0.0, "Z": 1.0},
@@ -88,10 +88,12 @@ def test_measurements_follow_hirano_merge_table() -> None:
     assert len(measurements) == circuit.num_measurements == layout.num_measurements
 
     # Verify interface -> surface -> color-code ordering in all three rounds.
-    previous_round_end = max(layout.positions["surface_init_z"])
+    assert tuple(
+        measurements[position][1] for position in layout.positions["surface_init_x"]
+    ) == tuple(qubits[label.lower()] for label in spec.x_labels)
+    previous_round_end = max(layout.positions["surface_init_x"])
     steane_patch = tuple(
-        qubits[common.HIRANO_PATCH_LABEL_BY_GOOGLE_SITE[site]]
-        for site in range(11)
+        qubits[common.HIRANO_PATCH_LABEL_BY_GOOGLE_SITE[site]] for site in range(11)
     )
     for round_index, color_checks in enumerate(expected_color_checks):
         interface_positions = layout.rounds("interface_z")[round_index]
@@ -101,8 +103,7 @@ def test_measurements_follow_hirano_merge_table() -> None:
         )
         prefix = f"round{round_index + 1}_"
         color_positions = tuple(
-            layout.by_label("steane_verify")[prefix + check_name]
-            for check_name in color_checks
+            layout.by_label("steane_verify")[prefix + check_name] for check_name in color_checks
         )
 
         assert previous_round_end < min(interface_positions)
@@ -110,17 +111,19 @@ def test_measurements_follow_hirano_merge_table() -> None:
         if color_positions:
             assert max(surface_positions) < min(color_positions)
         assert tuple(measurements[position][1] for position in interface_positions) == tuple(
-            qubits[f"zz_{check_name[1:].lower()}"]
-            for check_name, _, _ in expected_interface_checks
+            qubits[f"zz_{check_name[1:].lower()}"] for check_name, _, _ in expected_interface_checks
         )
         assert tuple(measurements[position][1] for position in surface_positions) == tuple(
             qubits[label.lower()] for label in spec.z_labels + spec.merged_x_labels
         )
-        assert tuple(
-            label.removeprefix(prefix)
-            for label in layout.labels["steane_verify"]
-            if label.startswith(prefix)
-        ) == color_checks
+        assert (
+            tuple(
+                label.removeprefix(prefix)
+                for label in layout.labels["steane_verify"]
+                if label.startswith(prefix)
+            )
+            == color_checks
+        )
         assert tuple(measurements[position][1] for position in color_positions) == tuple(
             steane_patch[
                 PATCH_STABILIZER_ANCILLA_SITES[
@@ -133,14 +136,17 @@ def test_measurements_follow_hirano_merge_table() -> None:
 
     # Verify the alternating mixed-code path used to suppress Z35bc hooks.
     z35bc_ancilla = qubits["zz_35bc"]
-    assert tuple(
-        targets[index].qubit_value
-        for instruction in circuit
-        if instruction.name == "CX"
-        for targets in (instruction.targets_copy(),)
-        for index in range(0, len(targets), 2)
-        if targets[index + 1].qubit_value == z35bc_ancilla
-    ) == tuple(qubits[label] for label in ("3", "b", "5", "c")) * common.LATTICE_SURGERY_ROUNDS
+    assert (
+        tuple(
+            targets[index].qubit_value
+            for instruction in circuit
+            if instruction.name == "CX"
+            for targets in (instruction.targets_copy(),)
+            for index in range(0, len(targets), 2)
+            if targets[index + 1].qubit_value == z35bc_ancilla
+        )
+        == tuple(qubits[label] for label in ("3", "b", "5", "c")) * common.LATTICE_SURGERY_ROUNDS
+    )
 
     # Verify X-basis Steane demolition precedes top-edge X-check recovery.
     demolition_positions = layout.positions["steane_x"]
@@ -211,34 +217,41 @@ def test_postselected_color_interface_and_decoded_surface_distance_three(experim
     """Verify closing postselection, noisy-surface decoding, and distance three.
 
     Encoder, color-code, repeated-interface, and demolition checks form one
-    leading postselection block. Noisy surface detector layers follow that
-    block and are accepted for spacetime PyMatching correction. The ideal
-    closing-round changes are postselected, while final readout-boundary
-    detectors remain decoder inputs. Both logical-X- and logical-Z-error probes
-    must require three graphlike circuit faults.
+    leading postselection block. The pre-merge surface-code X-detector layer
+    follows: ordinary surface-X events are decoded, while Hirano's two selected
+    surface-X streams reject. The ideal closing-round changes are postselected,
+    and the ideal logical-support readout adds no redundant boundary detectors.
+    Both probes must require three graphlike faults.
     """
     circuit, layout = build_lattice_surgery_only_circuit(1e-3, experiment=experiment)
-    postselection_count = helper.num_transfer_protocol_postselection_detectors(layout)
+    protocol_postselection_count = helper.num_transfer_protocol_postselection_detectors(layout)
+    assert layout.labels[f"surface_logical_{experiment.readout_basis.lower()}"] == (
+        transfer.TRANSFER_SPEC.logical_x
+        if experiment.readout_basis == "X"
+        else transfer.TRANSFER_SPEC.logical_z
+    )
 
     # steane_verify contains the five round-1 and three round-2 color-code
     # checks; round 3 has no additional color-code verification measurements.
-    expected_postselection_count = (
+    expected_protocol_postselection_count = (
         sum(
-            len(layout.positions[family])
-            for family in ("enc_flags", "steane_qed", "steane_verify")
+            len(layout.positions[family]) for family in ("enc_flags", "steane_qed", "steane_verify")
         )
-        + (common.LATTICE_SURGERY_ROUNDS - 1)
-        * len(transfer.TRANSFER_SPEC.merged_boundary_checks)
+        + (common.LATTICE_SURGERY_ROUNDS - 1) * len(transfer.TRANSFER_SPEC.merged_boundary_checks)
         + len(common.FINAL_X_VERIFICATION_CHECKS)
     )
-    assert postselection_count == expected_postselection_count < circuit.num_detectors
+    assert (
+        protocol_postselection_count
+        == expected_protocol_postselection_count
+        < circuit.num_detectors
+    )
 
-    noisy_surface_detector_count = sum(
+    noisy_surface_history_detector_count = len(layout.positions["surface_init_x"]) + sum(
         len(round_positions)
         for family in ("merged_surface_z", "merged_surface_x")
         for round_positions in layout.rounds(family)
     )
-    closing_detector_start = postselection_count + noisy_surface_detector_count
+    closing_detector_start = protocol_postselection_count + noisy_surface_history_detector_count
     closing_detector_count = sum(
         len(layout.positions[family])
         for family in (
@@ -246,17 +259,63 @@ def test_postselected_color_interface_and_decoded_surface_distance_three(experim
             transfer.IDEAL_POST_TRANSFER_SURFACE_X_FAMILY,
         )
     )
-    assert closing_detector_start + closing_detector_count < circuit.num_detectors
+    assert closing_detector_start + closing_detector_count == circuit.num_detectors
 
-    detection_events = np.zeros((3, circuit.num_detectors), dtype=bool)
-    detection_events[0, 0] = True
-    detection_events[1, postselection_count] = True
-    detection_events[2, closing_detector_start] = True
+    # Detector order is protocol prefix -> initial surface X -> all merged
+    # surface Z -> all merged surface X -> ideal closing round.
+    # Map the initial surface-X labels to absolute detector indices.
+    initial_x_detector_by_label = {
+        label: protocol_postselection_count + offset
+        for offset, label in enumerate(layout.labels["surface_init_x"])
+    }
+    merged_x_detector_start = (
+        protocol_postselection_count
+        + len(layout.positions["surface_init_x"])
+        + len(layout.positions["merged_surface_z"])
+    )
+    # Offsets within each merge round's surface-X detector block.
+    merged_x_detector_offset_by_label = {
+        label: offset for offset, label in enumerate(transfer.TRANSFER_SPEC.merged_x_labels)
+    }
+    merged_x_round_width = len(transfer.TRANSFER_SPEC.merged_x_labels)
+    # All eight surface-X detectors postselected by Hirano's persistent flags:
+    # two initialization detectors plus the same two streams in three rounds.
+    postselected_surface_x_detector_indices = [
+        initial_x_detector_by_label[label]
+        for label in transfer.HIRANO_POSTSELECTED_SURFACE_X_LABELS
+    ]
+    postselected_surface_x_detector_indices.extend(
+        merged_x_detector_start
+        + round_index * merged_x_round_width
+        + merged_x_detector_offset_by_label[label]
+        for round_index in range(common.LATTICE_SURGERY_ROUNDS)
+        for label in transfer.HIRANO_POSTSELECTED_SURFACE_X_LABELS
+    )
+    # One-hot test cases: protocol reject, decoded initialization event, all
+    # persistent-X rejects, decoded merge event, then closing-round reject.
+    one_hot_detector_indices = [
+        0,
+        initial_x_detector_by_label["X_ab"],
+        *postselected_surface_x_detector_indices,
+        merged_x_detector_start + merged_x_detector_offset_by_label["X_deij"],
+        closing_detector_start,
+    ]
+    detection_events = np.zeros((len(one_hot_detector_indices), circuit.num_detectors), dtype=bool)
+    detection_events[np.arange(len(one_hot_detector_indices)), one_hot_detector_indices] = True
     accepted, logical_errors = LatticeSurgeryOnlyShotAnalyzer(
         circuit,
         layout=layout,
         full_post_selection=False,
-    ).analyze(detection_events, np.zeros((3, 1), dtype=bool))
-    assert accepted.tolist() == [False, True, False]
+    ).analyze(
+        detection_events,
+        np.zeros((len(one_hot_detector_indices), 1), dtype=bool),
+    )
+    assert accepted.tolist() == [
+        False,
+        True,
+        *([False] * len(postselected_surface_x_detector_indices)),
+        True,
+        False,
+    ]
     assert not logical_errors.any()
     assert len(circuit.shortest_graphlike_error(canonicalize_circuit_errors=True)) == 3

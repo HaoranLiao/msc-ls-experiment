@@ -317,8 +317,7 @@ def interpret_transfer_measurements(
         "X_ab": bits["surface_x_recovery"]["X_ab"],
     }
     parsed["final_x_verification_checks"] = {
-        name: parity(final_x_bits, support)
-        for name, support in FINAL_X_VERIFICATION_CHECKS.items()
+        name: parity(final_x_bits, support) for name, support in FINAL_X_VERIFICATION_CHECKS.items()
     }
 
     # Decode surface detector layers jointly so timelike edges remain available.
@@ -391,7 +390,7 @@ def merged_boundary_logical_zz_outcome(measurements: dict[str, object]) -> int:
 
 
 def transfer_acceptance_succeeds(measurements: dict[str, object]) -> bool:
-    """Apply the transfer protocol's hybrid error-handling policy.
+    """Apply protocol postselection before surface-code correction.
 
     Encoder flags, post-injection QED, optional cultivation, color-code
     verification, final demolition checks, and interface changes all cause

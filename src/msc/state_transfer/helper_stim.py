@@ -52,8 +52,7 @@ def transfer_qubits(spec: common.SurfaceCodeTransferSpec) -> dict[str, int]:
 
 @dataclass(frozen=True)
 class TransferMeasurementLayout:
-    """Relate semantic measurement families to Stim's global record.
-    """
+    """Relate semantic measurement families to Stim's global record."""
 
     labels: dict[str, tuple[str, ...]]
     positions: dict[str, tuple[int, ...]]
@@ -69,10 +68,7 @@ class TransferMeasurementLayout:
         if rounds <= 0 or len(positions) % rounds:
             raise ValueError(f"{name} cannot be divided into {rounds} rounds.")
         width = len(positions) // rounds
-        return tuple(
-            positions[start : start + width]
-            for start in range(0, len(positions), width)
-        )
+        return tuple(positions[start : start + width] for start in range(0, len(positions), width))
 
     def by_label(self, name: str) -> dict[str, int]:
         """Return one family's global positions keyed by semantic label."""
@@ -100,9 +96,7 @@ class TransferMeasurementLayout:
             if name in labels:
                 raise ValueError(f"duplicate measurement family {name!r}.")
             labels[name] = tuple(family_labels)
-            positions[name] = tuple(
-                range(next_position, next_position + len(family_labels))
-            )
+            positions[name] = tuple(range(next_position, next_position + len(family_labels)))
             next_position += len(family_labels)
         return TransferMeasurementLayout(labels, positions, next_position)
 
@@ -128,12 +122,15 @@ def transfer_measurement_layout(
         surface_readout_basis=surface_readout_basis,
         include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
     )
+    # Stim physically measures the known +1 surface-X checks before merging so
+    # their circuit faults and first detector layer remain in the DEM.
+    labels["surface_init_x"] = spec.x_labels
     measurement_chunks: list[tuple[str, tuple[str, ...]]] = [
         (name, labels[name]) for name in ("enc_flags", "steane_qed")
     ]
     if include_cultivation:
         measurement_chunks.append(("cult", labels["cult"]))
-    measurement_chunks.append(("surface_init_z", labels["surface_init_z"]))
+    measurement_chunks.extend((name, labels[name]) for name in ("surface_init_z", "surface_init_x"))
 
     cursors = {name: 0 for name in labels}
     for name, chunk in measurement_chunks:
@@ -180,23 +177,17 @@ def transfer_measurement_layout(
                 (
                     (
                         "post_transfer_surface_z",
-                        take_measurement_labels(
-                            "post_transfer_surface_z", len(spec.z_labels)
-                        ),
+                        take_measurement_labels("post_transfer_surface_z", len(spec.z_labels)),
                     ),
                     (
                         "post_transfer_surface_x",
-                        take_measurement_labels(
-                            "post_transfer_surface_x", len(spec.x_labels)
-                        ),
+                        take_measurement_labels("post_transfer_surface_x", len(spec.x_labels)),
                     ),
                 )
             )
     if surface_readout_basis is not None:
         name = f"surface_logical_{normalize_pauli_char(surface_readout_basis).lower()}"
-        measurement_chunks.append(
-            (name, take_measurement_labels(name, len(labels[name])))
-        )
+        measurement_chunks.append((name, take_measurement_labels(name, len(labels[name]))))
 
     family_labels: dict[str, list[str]] = {}
     family_positions: dict[str, list[int]] = {}
@@ -240,8 +231,9 @@ def build_lattice_surgery_circuit(
     2. Measure every Steane X and Z stabilizer for post-injection QED.
     3. Optionally apply logical-Y cultivation, the Stim proxy for H_XY
        cultivation.
-    4. Prepare the target in product ``|+>`` and measure all Z stabilizers,
-       projecting logical ``|+_L>`` and establishing its Z reference.
+    4. Prepare the target in product ``|+>`` and measure a complete X/Z
+       stabilizer round. Z checks project logical ``|+_L>`` and establish its
+       Z reference; X checks are compared with their known +1 values.
     5. Perform exactly three merged rounds. Each measures interface-Z checks,
        compatible surface Z/X checks, and the paper-defined Steane groups in
        rounds one and two.
@@ -283,8 +275,17 @@ def build_lattice_surgery_circuit(
     surface_qubits = [qubits[label] for label in spec.surface_order]
     circuit = stim.Circuit()
     patch_coords = (
-        (2, 0), (1, 1), (3, 1), (0, 2), (2, 2), (4, 2),
-        (1, 3), (3, 3), (0, 4), (2, 4), (4, 4),
+        (2, 0),
+        (1, 1),
+        (3, 1),
+        (0, 2),
+        (2, 2),
+        (4, 2),
+        (1, 3),
+        (3, 3),
+        (0, 4),
+        (2, 4),
+        (4, 4),
     )
     for qubit, coords in enumerate(patch_coords):
         circuit.append("QUBIT_COORDS", [qubit], coords)
@@ -307,9 +308,9 @@ def build_lattice_surgery_circuit(
         skip_cx_1_4=False,
     )
 
-    # 2. Prepare surface |+_L>. Product |+> fixes every X check to +1; the
-    # initial Z measurements project into the code space and establish its
-    # nondeterministic Z-check reference before the merge.
+    # 2. Prepare surface |+_L>. Product |+> fixes every X check to +1; measure
+    # them physically for Hirano's initial detector layer. The simultaneous Z
+    # checks project into the code space and establish their reference.
     operations = spec.surface_code_operations
     operations.prepare_product_plus(
         circuit,
@@ -320,8 +321,8 @@ def build_lattice_surgery_circuit(
     operations.append_scheduled_stabilizer_round(
         circuit,
         surface_qubits=surface_qubits,
-        selected_stabilizer_names=spec.z_labels,
-        ancillas=[qubits[label.lower()] for label in spec.z_labels],
+        selected_stabilizer_names=spec.z_labels + spec.x_labels,
+        ancillas=[qubits[label.lower()] for label in spec.z_labels + spec.x_labels],
         round_label=f"initialize {spec.name} |+_L>",
         reset_ancillas_initially=True,
         add_ticks=add_ticks,
@@ -364,8 +365,7 @@ def build_lattice_surgery_circuit(
         "X",
         patch_qubits=steane_patch,
         support=tuple(
-            common.HIRANO_LABEL_TO_GOOGLE_SITE[label]
-            for label in common.HIRANO_STEANE_DATA_ORDER
+            common.HIRANO_LABEL_TO_GOOGLE_SITE[label] for label in common.HIRANO_STEANE_DATA_ORDER
         ),
         destructive=True,
     )
@@ -426,6 +426,10 @@ def build_lattice_surgery_circuit(
     if circuit.num_detectors != num_transfer_protocol_postselection_detectors(layout):
         raise RuntimeError("transfer protocol detector layout is inconsistent.")
 
+    surface_helper.append_stabilizer_detectors(
+        circuit,
+        rounds=(layout.positions["surface_init_x"],),
+    )
     merged_z_rounds = layout.rounds("merged_surface_z")
     surface_helper.append_stabilizer_detectors(
         circuit,
@@ -435,6 +439,9 @@ def build_lattice_surgery_circuit(
     surface_helper.append_stabilizer_detectors(
         circuit,
         rounds=layout.rounds("merged_surface_x"),
+        first_round_reference=tuple(
+            layout.by_label("surface_init_x")[label] for label in spec.merged_x_labels
+        ),
     )
     if include_post_transfer_stabilizer_rounds:
         surface_helper.append_stabilizer_detectors(
@@ -537,6 +544,15 @@ def append_transfer_logical_observable(
 
     Stim observables combine the destructive support parity with the accepted
     interface and Steane-demolition outcomes that define its Pauli byproducts.
+    Explicitly, the included measurement-record parities are:
+
+    - X: surface logical-X readout plus Steane demolition ``X146``;
+    - Z: surface logical-Z readout plus the final ``Z1a``, ``Z35bc``, and
+      ``Zde`` interface outcomes;
+    - Y: surface logical-Y readout plus all the X- and Z-correction records
+      listed above.
+
+    Here “plus” means addition modulo two in one Stim ``OBSERVABLE_INCLUDE``.
     """
     basis = normalize_pauli_char(basis)
     circuit_stim.append_observable_include(

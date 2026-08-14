@@ -6,7 +6,6 @@ import numpy as np
 import stim
 
 from msc.rotated_surface_code import d5_stim as d5
-from msc.rotated_surface_code import helper_stim as surface_helper
 from msc.rotated_surface_code.post_transfer import post_transfer_stim
 from msc.state_transfer import analysis_stim as analysis
 from msc.state_transfer import common
@@ -43,6 +42,10 @@ TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
     ),
 )
 MERGED_BOUNDARY_CHECKS = TRANSFER_SPEC.merged_boundary_checks
+# Hirano sets post_selection=True on these two bulk-X measurement objects. The
+# persistent flag rejects the initial known-+1 detector and all three merge-
+# round detectors in each stream; other noisy surface streams remain decodable.
+HIRANO_POSTSELECTED_SURFACE_X_LABELS = ("X_bcgh", "X_fgkl")
 
 
 # =============================================================================
@@ -86,9 +89,9 @@ def append_ideal_verification_and_readout(
 
     Call structure: close the restored surface-check frame with one full round
     -> read out the requested logical basis -> include the transfer-frame-
-    corrected observable. X/Z use all-data readout and final-boundary
-    detectors; Y uses its logical support because no single-basis all-data
-    measurement can close both CSS sectors.
+    corrected observable. The final X, Y, or Z measurement is restricted to
+    the corresponding logical representative because the preceding ideal full
+    syndrome round already closes the detector history.
     """
     readout_basis = normalize_pauli_char(readout_basis)
 
@@ -119,51 +122,33 @@ def append_ideal_verification_and_readout(
         (IDEAL_POST_TRANSFER_SURFACE_Z_FAMILY, TRANSFER_SPEC.z_labels),
         (IDEAL_POST_TRANSFER_SURFACE_X_FAMILY, TRANSFER_SPEC.x_labels),
     )
-    if readout_basis == "Y":
-        measurement_terms, _ = resolve_logical_measurement_terms(
-            "Y",
-            logical_x_support=TRANSFER_SPEC.logical_x,
-            logical_z_support=TRANSFER_SPEC.logical_z,
-        )
-        d5.append_logical_measurement(
-            circuit,
-            "Y",
-            surface_qubits=surface_qubits,
-            destructive=True,
-        )
-        if add_ticks:
-            circuit.append("TICK", [])
-        layout = transfer_layout.appended(
-            ideal_round_records
-            + (("surface_logical_y", tuple(label for label, _ in measurement_terms)),)
-        )
-        helper.append_transfer_logical_observable(circuit, layout=layout, basis="Y")
-    else:
-        # X/Z all-data readout also closes matching-basis stabilizers.
-        surface_helper.append_all_data_readout(
-            circuit,
-            data_qubits=surface_qubits,
-            basis=readout_basis,
-            add_ticks=add_ticks,
-        )
-        data_family = f"ideal_surface_data_{readout_basis.lower()}"
-        layout = transfer_layout.appended(
-            ideal_round_records + ((data_family, TRANSFER_SPEC.surface_order),)
-        )
-        final_family = (
-            IDEAL_POST_TRANSFER_SURFACE_X_FAMILY
-            if readout_basis == "X"
-            else IDEAL_POST_TRANSFER_SURFACE_Z_FAMILY
-        )
-        d5.append_all_data_readout_detectors_and_observable(
-            circuit,
-            readout_basis,
-            final_stabilizer_measurement_positions=layout.by_label(final_family),
-            data_measurement_positions=layout.by_label(data_family),
-            logical_frame_measurement_positions=helper.transfer_logical_frame_positions(
-                transfer_layout, readout_basis
+    measurement_terms, _ = resolve_logical_measurement_terms(
+        readout_basis,
+        logical_x_support=TRANSFER_SPEC.logical_x,
+        logical_z_support=TRANSFER_SPEC.logical_z,
+    )
+    d5.append_logical_measurement(
+        circuit,
+        readout_basis,
+        surface_qubits=surface_qubits,
+        destructive=True,
+    )
+    if add_ticks:
+        circuit.append("TICK", [])
+    layout = transfer_layout.appended(
+        ideal_round_records
+        + (
+            (
+                f"surface_logical_{readout_basis.lower()}",
+                tuple(label for label, _ in measurement_terms),
             ),
         )
+    )
+    helper.append_transfer_logical_observable(
+        circuit,
+        layout=layout,
+        basis=readout_basis,
+    )
     if circuit.num_measurements != layout.num_measurements:
         raise RuntimeError("ideal verification layout does not match the circuit.")
     return layout

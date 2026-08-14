@@ -4,7 +4,8 @@ from qiskit import QuantumCircuit
 
 from msc.rotated_surface_code import d5_qiskit as d5
 from msc.state_transfer import analysis_qiskit as analysis
-from msc.state_transfer import common, helper_qiskit as helper
+from msc.state_transfer import common
+from msc.state_transfer import helper_qiskit as helper
 from msc.steane_code.state_injection_qiskit import InjectedStateName
 
 TRANSFER_SPEC = common.SurfaceCodeTransferSpec(

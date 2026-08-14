@@ -98,8 +98,7 @@ def build_lattice_surgery_circuit(
         surface_readout_basis=surface_readout_basis,
     )
     cregs = {
-        name: ClassicalRegister(len(labels), name)
-        for name, labels in measurement_labels.items()
+        name: ClassicalRegister(len(labels), name) for name, labels in measurement_labels.items()
     }
     circuit = QuantumCircuit(*qregs.values(), *cregs.values())
 
@@ -204,8 +203,7 @@ def build_lattice_surgery_circuit(
         "X",
         patch_qubits=steane_patch,
         support=tuple(
-            common.HIRANO_LABEL_TO_GOOGLE_SITE[label]
-            for label in common.HIRANO_STEANE_DATA_ORDER
+            common.HIRANO_LABEL_TO_GOOGLE_SITE[label] for label in common.HIRANO_STEANE_DATA_ORDER
         ),
         classical_bits=list(cregs["steane_x"]),
         destructive=True,

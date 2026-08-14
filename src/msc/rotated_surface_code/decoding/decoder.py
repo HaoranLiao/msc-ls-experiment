@@ -20,7 +20,6 @@ from msc.decoding.pauli_frame import PauliFrame
 from msc.decoding.stabilizer_frame import StabilizerFrame
 from msc.utils.normalize import normalize_bit
 
-
 # =============================================================================
 # Decoding results data structure
 # =============================================================================
@@ -336,12 +335,8 @@ class SpaceTimeRotatedDecoder(_RotatedDecoderBase):
         Each sector is a sequence of ``{stabilizer_name: bit}`` mappings and
         may contain a different number of measurement rounds.
         """
-        z_delta_history = self._normalize_syndrome_history(
-            z_delta_history, self.z_stabilizer_names
-        )
-        x_delta_history = self._normalize_syndrome_history(
-            x_delta_history, self.x_stabilizer_names
-        )
+        z_delta_history = self._normalize_syndrome_history(z_delta_history, self.z_stabilizer_names)
+        x_delta_history = self._normalize_syndrome_history(x_delta_history, self.x_stabilizer_names)
         z_delta_history_array = np.asarray(
             [
                 [delta_round[name] for delta_round in z_delta_history]
@@ -390,18 +385,10 @@ class SpaceTimeRotatedDecoder(_RotatedDecoderBase):
         :meth:`decode` jointly in spacetime -> apply the decoded logical
         correction to ``pauli_frame``.
         """
-        x_raw_history = self._normalize_syndrome_history(
-            x_raw_history, self.x_stabilizer_names
-        )
-        z_raw_history = self._normalize_syndrome_history(
-            z_raw_history, self.z_stabilizer_names
-        )
-        x_delta_history = tuple(
-            stab_frame.advance(raw_round) for raw_round in x_raw_history
-        )
-        z_delta_history = tuple(
-            stab_frame.advance(raw_round) for raw_round in z_raw_history
-        )
+        x_raw_history = self._normalize_syndrome_history(x_raw_history, self.x_stabilizer_names)
+        z_raw_history = self._normalize_syndrome_history(z_raw_history, self.z_stabilizer_names)
+        x_delta_history = tuple(stab_frame.advance(raw_round) for raw_round in x_raw_history)
+        z_delta_history = tuple(stab_frame.advance(raw_round) for raw_round in z_raw_history)
         detected_errors = self.decode(
             z_delta_history=z_delta_history,
             x_delta_history=x_delta_history,
@@ -439,17 +426,13 @@ class SpaceTimeRotatedDecoder(_RotatedDecoderBase):
                     f"(shots, rounds, {check_count}) shape."
                 )
             if not np.all((delta_history_batch == 0) | (delta_history_batch == 1)):
-                raise ValueError(
-                    f"{sector}_delta_histories must contain only 0 or 1."
-                )
+                raise ValueError(f"{sector}_delta_histories must contain only 0 or 1.")
             normalized_delta_history_batches.append(
                 delta_history_batch.astype(np.uint8, copy=False)
             )
         z_delta_histories, x_delta_histories = normalized_delta_history_batches
         if z_delta_histories.shape[0] != x_delta_histories.shape[0]:
-            raise ValueError(
-                "Z and X delta-history batches must have the same shot count."
-            )
+            raise ValueError("Z and X delta-history batches must have the same shot count.")
 
         x_corrections = self._build_spacetime_matching_graph(
             self._z_check_matrix,

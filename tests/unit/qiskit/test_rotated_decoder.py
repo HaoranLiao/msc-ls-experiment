@@ -20,7 +20,6 @@ from msc.rotated_surface_code.decoding import (
 )
 from msc.utils.normalize import parse_qiskit_registers
 
-
 # =============================================================================
 # Single-round decoding (d=3 and d=5)
 # =============================================================================
@@ -180,12 +179,10 @@ def _run_repeated_faults(
     x_ancillas = QuantumRegister(len(x_names), "x_anc")
     init_z = ClassicalRegister(len(z_names), "init_z")
     round_z_registers = [
-        ClassicalRegister(len(z_names), f"z_round_{round_index}")
-        for round_index in range(rounds)
+        ClassicalRegister(len(z_names), f"z_round_{round_index}") for round_index in range(rounds)
     ]
     round_x_registers = [
-        ClassicalRegister(len(x_names), f"x_round_{round_index}")
-        for round_index in range(rounds)
+        ClassicalRegister(len(x_names), f"x_round_{round_index}") for round_index in range(rounds)
     ]
     logical_x = ClassicalRegister(len(code.DEFAULT_LOGICAL_X), "logical_x")
     circuit = QuantumCircuit(
@@ -339,9 +336,7 @@ def test_spacetime_data_faults_use_spatial_edges(
     )
     zero_z_deltas = dict.fromkeys(code.Z_STABILIZERS, 0)
     zero_x_deltas = dict.fromkeys(measured_x_stabilizers, 0)
-    x_fault_z_deltas = {
-        name: int("a" in support) for name, support in code.Z_STABILIZERS.items()
-    }
+    x_fault_z_deltas = {name: int("a" in support) for name, support in code.Z_STABILIZERS.items()}
     z_fault_x_deltas = {
         name: int("d" in support) for name, support in measured_x_stabilizers.items()
     }
@@ -493,9 +488,7 @@ def test_spacetime_decodes_selected_data_and_measurement_fault_pairs(
     }
     zero_z_deltas = dict.fromkeys(code.Z_STABILIZERS, 0)
     zero_x_deltas = dict.fromkeys(measured_x_stabilizers, 0)
-    x_fault_z_deltas = {
-        name: int("a" in support) for name, support in code.Z_STABILIZERS.items()
-    }
+    x_fault_z_deltas = {name: int("a" in support) for name, support in code.Z_STABILIZERS.items()}
     measurement_fault_z_deltas = {
         **zero_z_deltas,
         measurement_stabilizer_name: 1,

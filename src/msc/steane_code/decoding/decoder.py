@@ -37,12 +37,12 @@ SYNDROME_BIT_LABELS: tuple[str, ...] = ("x0", "x1", "x2", "z0", "z1", "z2")
 _Z_SYNDROME_TABLE: dict[tuple[int, ...], int | None] = {(0, 0, 0): None}
 _X_SYNDROME_TABLE: dict[tuple[int, ...], int | None] = {(0, 0, 0): None}
 for data_site in PATCH_DATA_SITES:
-    _Z_SYNDROME_TABLE[
-        tuple(int(data_site in support) for support in PATCH_Z_STABILIZERS)
-    ] = data_site
-    _X_SYNDROME_TABLE[
-        tuple(int(data_site in support) for support in PATCH_X_STABILIZERS)
-    ] = data_site
+    _Z_SYNDROME_TABLE[tuple(int(data_site in support) for support in PATCH_Z_STABILIZERS)] = (
+        data_site
+    )
+    _X_SYNDROME_TABLE[tuple(int(data_site in support) for support in PATCH_X_STABILIZERS)] = (
+        data_site
+    )
 
 
 # =============================================================================
@@ -117,12 +117,8 @@ class SteaneDecoder:
         stab_frame: StabilizerFrame,
     ) -> SteaneDetectedError:
         """Advance both frames from one raw syndrome round and return its recovery."""
-        x_deltas = stab_frame.advance(
-            dict(zip(X_STABILIZER_LABELS, x_raw, strict=True))
-        )
-        z_deltas = stab_frame.advance(
-            dict(zip(Z_STABILIZER_LABELS, z_raw, strict=True))
-        )
+        x_deltas = stab_frame.advance(dict(zip(X_STABILIZER_LABELS, x_raw, strict=True)))
+        z_deltas = stab_frame.advance(dict(zip(Z_STABILIZER_LABELS, z_raw, strict=True)))
         x_delta_syndrome = tuple(x_deltas[label] for label in X_STABILIZER_LABELS)
         z_delta_syndrome = tuple(z_deltas[label] for label in Z_STABILIZER_LABELS)
         detected_errors = self.decode(

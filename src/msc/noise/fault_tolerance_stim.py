@@ -141,9 +141,7 @@ def sample_detector_logical_error_probability(
     if batch_size <= 0:
         raise ValueError("batch_size must be positive.")
     sampler = analyzer._circuit.compile_detector_sampler(seed=seed)
-    postselects_all = (
-        analyzer._postselection_detector_indices.size == analyzer._num_detectors
-    )
+    postselects_all = analyzer._postselection_detector_indices.size == analyzer._num_detectors
     accepted_shots = 0
     logical_errors = 0
     shots_remaining = shots

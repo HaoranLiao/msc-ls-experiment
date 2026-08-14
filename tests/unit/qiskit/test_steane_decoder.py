@@ -36,9 +36,7 @@ EXPECTED_LOGICAL_EXPECTATIONS: dict[str, tuple[float, float]] = {
     "Ty": (INVERSE_SQRT_TWO, INVERSE_SQRT_TWO),
 }
 SINGLE_QUBIT_FAULTS = tuple(
-    (pauli, data_site)
-    for pauli in ("X", "Y", "Z")
-    for data_site in PATCH_DATA_SITES
+    (pauli, data_site) for pauli in ("X", "Y", "Z") for data_site in PATCH_DATA_SITES
 )
 TWO_ROUND_FAULTS = (
     # Same site, same Pauli.
@@ -134,9 +132,7 @@ def test_one_round_logical_expectations(
     # Decode the syndrome into the logical Pauli frame.
     x_raw, z_raw = _parse_syndrome_round(syndrome_counts_key)
     stabilizer_frame = StabilizerFrame()
-    stabilizer_frame.record_many(
-        dict.fromkeys((*X_STABILIZER_LABELS, *Z_STABILIZER_LABELS), 0)
-    )
+    stabilizer_frame.record_many(dict.fromkeys((*X_STABILIZER_LABELS, *Z_STABILIZER_LABELS), 0))
     pauli_frame = PauliFrame()
     pauli_frame.register("L0")
     SteaneDecoder().decode_raw_syndromes(
@@ -148,26 +144,16 @@ def test_one_round_logical_expectations(
     )
 
     # Verify the frame-corrected logical expectations.
-    raw_logical_z = statevector.expectation_value(
-        _Z_LOGICAL, _PATCH_QUBIT_INDICES
-    ).real
-    raw_logical_x = statevector.expectation_value(
-        _X_LOGICAL, _PATCH_QUBIT_INDICES
-    ).real
+    raw_logical_z = statevector.expectation_value(_Z_LOGICAL, _PATCH_QUBIT_INDICES).real
+    raw_logical_x = statevector.expectation_value(_X_LOGICAL, _PATCH_QUBIT_INDICES).real
     corrected_logical_z = pauli_frame.correct_z_expectation("L0", raw_logical_z)
     corrected_logical_x = pauli_frame.correct_x_expectation("L0", raw_logical_x)
-    expected_logical_z, expected_logical_x = EXPECTED_LOGICAL_EXPECTATIONS[
-        injected_state
-    ]
-    assert corrected_logical_z == pytest.approx(
-        expected_logical_z, abs=TOLERANCE
-    ), (
+    expected_logical_z, expected_logical_x = EXPECTED_LOGICAL_EXPECTATIONS[injected_state]
+    assert corrected_logical_z == pytest.approx(expected_logical_z, abs=TOLERANCE), (
         f"state {injected_state!r}, fault {fault}: logical Z = "
         f"{corrected_logical_z:.6f}, expected {expected_logical_z:.6f}"
     )
-    assert corrected_logical_x == pytest.approx(
-        expected_logical_x, abs=TOLERANCE
-    ), (
+    assert corrected_logical_x == pytest.approx(expected_logical_x, abs=TOLERANCE), (
         f"state {injected_state!r}, fault {fault}: logical X = "
         f"{corrected_logical_x:.6f}, expected {expected_logical_x:.6f}"
     )
@@ -230,9 +216,7 @@ def test_two_round_logical_expectations(
 
     # Decode both rounds; the stabilizer frame converts raw values into changes.
     stabilizer_frame = StabilizerFrame()
-    stabilizer_frame.record_many(
-        dict.fromkeys((*X_STABILIZER_LABELS, *Z_STABILIZER_LABELS), 0)
-    )
+    stabilizer_frame.record_many(dict.fromkeys((*X_STABILIZER_LABELS, *Z_STABILIZER_LABELS), 0))
     pauli_frame = PauliFrame()
     pauli_frame.register("L0")
     decoder = SteaneDecoder()
@@ -254,27 +238,17 @@ def test_two_round_logical_expectations(
     )
 
     # Verify the accumulated frame against the final logical state.
-    raw_logical_z = statevector.expectation_value(
-        _Z_LOGICAL, _PATCH_QUBIT_INDICES
-    ).real
-    raw_logical_x = statevector.expectation_value(
-        _X_LOGICAL, _PATCH_QUBIT_INDICES
-    ).real
+    raw_logical_z = statevector.expectation_value(_Z_LOGICAL, _PATCH_QUBIT_INDICES).real
+    raw_logical_x = statevector.expectation_value(_X_LOGICAL, _PATCH_QUBIT_INDICES).real
     corrected_logical_z = pauli_frame.correct_z_expectation("L0", raw_logical_z)
     corrected_logical_x = pauli_frame.correct_x_expectation("L0", raw_logical_x)
-    expected_logical_z, expected_logical_x = EXPECTED_LOGICAL_EXPECTATIONS[
-        injected_state
-    ]
+    expected_logical_z, expected_logical_x = EXPECTED_LOGICAL_EXPECTATIONS[injected_state]
     fault_label = f"state {injected_state!r}, faults {first_fault} then {second_fault}"
-    assert corrected_logical_z == pytest.approx(
-        expected_logical_z, abs=TOLERANCE
-    ), (
+    assert corrected_logical_z == pytest.approx(expected_logical_z, abs=TOLERANCE), (
         f"{fault_label}: logical Z = {corrected_logical_z:.6f}, "
         f"expected {expected_logical_z:.6f}"
     )
-    assert corrected_logical_x == pytest.approx(
-        expected_logical_x, abs=TOLERANCE
-    ), (
+    assert corrected_logical_x == pytest.approx(expected_logical_x, abs=TOLERANCE), (
         f"{fault_label}: logical X = {corrected_logical_x:.6f}, "
         f"expected {expected_logical_x:.6f}"
     )

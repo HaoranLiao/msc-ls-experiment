@@ -12,7 +12,6 @@ from msc.utils.circuit_stim import (
     append_logical_measurement_on_indexed_qubits,
     append_scheduled_parity_measurements,
 )
-from msc.utils.normalize import normalize_pauli_char
 
 
 def reset_to_zero(
@@ -182,87 +181,3 @@ def append_logical_measurement(
             ),
             observable_index=observable_index,
         )
-
-
-def append_all_data_readout(
-    circuit: stim.Circuit,
-    *,
-    data_qubits: Sequence[int],
-    basis: str,
-    add_ticks: bool = True,
-) -> None:
-    """Destructively measure every surface data qubit in a single Pauli basis.
-
-    Unlike a logical-support readout, this records one result per data qubit in
-    ``data_qubits`` order, so the full record both supplies a logical
-    representative and closes matching-basis stabilizer detectors. Pair an
-    ``X``- or ``Z``-basis readout with
-    :func:`append_all_data_readout_detectors_and_observable` to annotate those
-    detectors and the logical observable. When ``add_ticks`` is true a trailing
-    ``TICK`` separates this readout from any following layer.
-    """
-    basis = normalize_pauli_char(basis)
-    selected_qubits = tuple(data_qubits)
-    if selected_qubits:
-        circuit.append({"X": "MX", "Y": "MY", "Z": "M"}[basis], selected_qubits)
-    if add_ticks:
-        circuit.append("TICK", [])
-
-
-def append_all_data_readout_detectors_and_observable(
-    circuit: stim.Circuit,
-    basis: str,
-    *,
-    x_stabilizers: Mapping[str, Sequence[str]],
-    z_stabilizers: Mapping[str, Sequence[str]],
-    logical_x: Sequence[str],
-    logical_z: Sequence[str],
-    final_stabilizer_measurement_positions: Mapping[str, int],
-    data_measurement_positions: Mapping[str, int],
-    logical_frame_measurement_positions: Sequence[int] = (),
-    observable_index: int = 0,
-) -> tuple[int, ...]:
-    """Annotate a completed destructive all-data readout with detectors and an observable.
-
-    Appends no measurements. It assumes every surface data qubit was just
-    measured destructively in the ``X`` or ``Z`` basis, with the final
-    stabilizer ancillas measured in the preceding round.
-
-    Each matching-basis stabilizer gets one detector comparing its ancilla
-    record with the parity of its measured data support, so a fault-free
-    stabilizer stays consistent across the readout. The logical observable is
-    the parity of the basis representative's data qubits plus any
-    caller-supplied Pauli-frame correction records
-    (``logical_frame_measurement_positions``).
-
-    ``basis`` must be ``X`` or ``Z``; ``Y`` is rejected because an all-data
-    readout is single-basis. Returns the detector indices added by this call.
-    """
-    basis = normalize_pauli_char(basis)
-    if basis == "Y":
-        raise ValueError("all-data surface detectors require an X or Z basis.")
-    stabilizers = x_stabilizers if basis == "X" else z_stabilizers
-    logical_support = logical_x if basis == "X" else logical_z
-
-    if set(final_stabilizer_measurement_positions) != set(stabilizers):
-        raise ValueError("final stabilizer positions do not match the stabilizer labels.")
-    required_data_labels = set(logical_support)
-    for support in stabilizers.values():
-        required_data_labels.update(support)
-    if not required_data_labels <= set(data_measurement_positions):
-        raise ValueError("data measurement positions do not cover every required label.")
-
-    first_detector = circuit.num_detectors
-    for label, support in stabilizers.items():
-        circuit_stim.append_detector(
-            circuit,
-            measurement_positions=(final_stabilizer_measurement_positions[label],)
-            + tuple(data_measurement_positions[data_label] for data_label in support),
-        )
-    circuit_stim.append_observable_include(
-        circuit,
-        measurement_positions=tuple(data_measurement_positions[label] for label in logical_support)
-        + tuple(logical_frame_measurement_positions),
-        observable_index=observable_index,
-    )
-    return tuple(range(first_detector, circuit.num_detectors))

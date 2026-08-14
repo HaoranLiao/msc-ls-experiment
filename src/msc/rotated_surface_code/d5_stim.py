@@ -8,7 +8,7 @@ primitives to ``helper_stim``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 
 import matplotlib.pyplot as plt
 import stim
@@ -122,29 +122,5 @@ def append_logical_measurement(
         support=support,
         ancilla_qubit=ancilla_qubit,
         destructive=destructive,
-        observable_index=observable_index,
-    )
-
-
-def append_all_data_readout_detectors_and_observable(
-    circuit: stim.Circuit,
-    basis: str,
-    *,
-    final_stabilizer_measurement_positions: Mapping[str, int],
-    data_measurement_positions: Mapping[str, int],
-    logical_frame_measurement_positions: Sequence[int] = (),
-    observable_index: int = 0,
-) -> tuple[int, ...]:
-    """Annotate a destructive d=5 X- or Z-basis all-data readout."""
-    return helper.append_all_data_readout_detectors_and_observable(
-        circuit,
-        basis,
-        x_stabilizers=X_STABILIZERS,
-        z_stabilizers=Z_STABILIZERS,
-        logical_x=DEFAULT_LOGICAL_X,
-        logical_z=DEFAULT_LOGICAL_Z,
-        final_stabilizer_measurement_positions=final_stabilizer_measurement_positions,
-        data_measurement_positions=data_measurement_positions,
-        logical_frame_measurement_positions=logical_frame_measurement_positions,
         observable_index=observable_index,
     )

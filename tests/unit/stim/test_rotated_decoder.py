@@ -19,7 +19,6 @@ from msc.rotated_surface_code.decoding.decoder import (
     SpaceTimeRotatedDecoder,
 )
 
-
 # ===========================================================================
 # Single-round decoding (d=3 and d=5)
 # ===========================================================================
@@ -118,12 +117,8 @@ def _run_single_fault(
     corrected_logical_x = pauli_frame.interpret_x_readout("L0", raw_logical_x)
 
     detector_shot = circuit.compile_detector_sampler(seed=1).sample(1)[0]
-    detector_z_deltas = dict(
-        zip(z_names, map(int, detector_shot[: len(z_names)]), strict=True)
-    )
-    detector_x_deltas = dict(
-        zip(x_names, map(int, detector_shot[len(z_names) :]), strict=True)
-    )
+    detector_z_deltas = dict(zip(z_names, map(int, detector_shot[: len(z_names)]), strict=True))
+    detector_x_deltas = dict(zip(x_names, map(int, detector_shot[len(z_names) :]), strict=True))
     return (
         z_deltas,
         x_deltas,
@@ -238,12 +233,9 @@ def _run_spacetime_single_fault(
 
     # Record layout: the init Z round, then `rounds` interleaved Z+X rounds.
     round_width = len(z_names) + len(x_names)
-    round_starts = [
-        len(z_names) + round_index * round_width for round_index in range(rounds)
-    ]
+    round_starts = [len(z_names) + round_index * round_width for round_index in range(rounds)]
     z_round_positions = [
-        tuple(range(round_start, round_start + len(z_names)))
-        for round_start in round_starts
+        tuple(range(round_start, round_start + len(z_names))) for round_start in round_starts
     ]
     x_round_positions = [
         tuple(range(round_start + len(z_names), round_start + round_width))
@@ -343,12 +335,8 @@ def test_spacetime_batch_logical_corrections_match_scalar_decoding() -> None:
         logical_z=d5.DEFAULT_LOGICAL_Z,
     )
     rng = np.random.default_rng(1234)
-    z_delta_histories = rng.binomial(
-        1, 0.08, (32, 4, len(d5.Z_STABILIZERS))
-    ).astype(bool)
-    x_delta_histories = rng.binomial(
-        1, 0.08, (32, 4, len(d5.X_STABILIZERS))
-    ).astype(bool)
+    z_delta_histories = rng.binomial(1, 0.08, (32, 4, len(d5.Z_STABILIZERS))).astype(bool)
+    x_delta_histories = rng.binomial(1, 0.08, (32, 4, len(d5.X_STABILIZERS))).astype(bool)
 
     batch_logical_x_corrections, batch_logical_z_corrections = (
         decoder.decode_logical_corrections_batch(
@@ -359,12 +347,10 @@ def test_spacetime_batch_logical_corrections_match_scalar_decoding() -> None:
     recoveries = [
         decoder.decode(
             z_delta_history=[
-                dict(zip(d5.Z_STABILIZERS, delta_round, strict=True))
-                for delta_round in z_history
+                dict(zip(d5.Z_STABILIZERS, delta_round, strict=True)) for delta_round in z_history
             ],
             x_delta_history=[
-                dict(zip(d5.X_STABILIZERS, delta_round, strict=True))
-                for delta_round in x_history
+                dict(zip(d5.X_STABILIZERS, delta_round, strict=True)) for delta_round in x_history
             ],
         )
         for z_history, x_history in zip(
