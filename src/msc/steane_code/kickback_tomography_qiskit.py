@@ -81,6 +81,7 @@ class KickbackTomographyBitLayout:
     tomography_measure_round: KickbackCultivationRoundBits
     tomography_check_round: KickbackCultivationRoundBits
     qed_cycles: tuple[tuple[int, ...], ...]
+    qed_cycle_indices: tuple[int, ...]
     final_stabilizers: tuple[int, ...]
     encoder_flags: tuple[int, ...] = ()
     no_reset: bool = False
@@ -367,6 +368,7 @@ def build_kickback_tomography_experiment(
             tuple(circuit.find_bit(bit).index for bit in kt_check_creg),
         ),
         qed_cycles=qed_positions,
+        qed_cycle_indices=qed_indices,
         final_stabilizers=(
             tuple(circuit.find_bit(bit).index for bit in final_creg)
             if final_creg is not None

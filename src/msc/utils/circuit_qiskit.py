@@ -388,7 +388,7 @@ def two_qubit_depth(circuit: QuantumCircuit) -> int:
 # IBM device access
 # ---------------------------------------------------------------------------
 
-IBM_RUNTIME_ACCOUNT = "QR"
+IBM_RUNTIME_ACCOUNT = "QR_SD"
 IBM_RUNTIME_BACKEND = "ibm_miami"
 _IBM_RUNTIME_ACCOUNT_KWARGS = {
     "channel",

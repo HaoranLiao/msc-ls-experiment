@@ -164,6 +164,7 @@ class TestKickbackTomographyCircuitConstruction:
         assert layout.preparation_round is not None
         assert len(layout.qed_cycles) == len(expected_indices)
         assert all(len(cycle) == KT_STABILIZER_BITS_PER_CYCLE for cycle in layout.qed_cycles)
+        assert layout.qed_cycle_indices == expected_indices
         assert len(layout.final_stabilizers) == (KT_STABILIZER_BITS_PER_CYCLE // 2)
         assert _measurement_record_order(experiment, expected_indices) == expected_measurement_order
 

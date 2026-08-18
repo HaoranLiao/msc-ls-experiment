@@ -166,6 +166,7 @@ def build_kickback_tomography_experiment(
         tomography_measure_round=measurement_bits,
         tomography_check_round=check_bits,
         qed_cycles=tuple(qed_positions[index] for index in qed_indices),
+        qed_cycle_indices=qed_indices,
         final_stabilizers=final_positions,
         encoder_flags=encoder_flag_positions,
     )

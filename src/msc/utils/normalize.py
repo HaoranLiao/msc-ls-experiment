@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import TypeVar
 
 _QubitT = TypeVar("_QubitT")
@@ -38,6 +38,23 @@ def normalize_pauli_char(pauli: str | None) -> str | None:
     if normalized not in {"I", "X", "Y", "Z"}:
         raise ValueError(f"unsupported Pauli {pauli!r}")
     return normalized
+
+
+def merge_counts(counts: Iterable[Mapping[str, int]]) -> dict[str, int]:
+    """Sum any number of Qiskit-format counts dicts into one joint counts dict.
+
+    Twirling splits a submitted circuit into several randomized variants, each
+    run for a fraction of the requested shots; the platform returns one counts
+    dict per variant instead of merging them, so downstream analysis only sees
+    a fraction of the shot budget unless the variants are combined first. This
+    sums matching bitstrings key-wise across all dicts; a single-entry input
+    is returned unchanged.
+    """
+    merged: dict[str, int] = {}
+    for counts_dict in counts:
+        for bitstring, count in counts_dict.items():
+            merged[bitstring] = merged.get(bitstring, 0) + count
+    return merged
 
 
 def _flatten_qiskit_bitstring(bitstring: str) -> str:
