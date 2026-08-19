@@ -16,11 +16,11 @@ from msc.steane_code.magic_state_cultivation_qiskit import (
     postselect_success_counts,
 )
 from msc.steane_code.state_injection_qiskit import (
-    PATCH_DEFAULT_LOGICAL_X,
-    PATCH_DEFAULT_LOGICAL_Z,
+    PATCH_11_SITE_DEFAULT_LOGICAL_X,
+    PATCH_11_SITE_DEFAULT_LOGICAL_Z,
     InjectedStateName,
-    append_patch_logical_measurement,
-    append_patch_stabilizer_measurement,
+    append_11_site_patch_logical_measurement,
+    append_11_site_patch_stabilizer_measurement,
 )
 from msc.utils.normalize import qiskit_bit_value
 
@@ -94,10 +94,10 @@ def _build_cultivation_with_logical_measurement(
     )
 
     # Append destructive logical measurement (3 classical bits)
-    support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
+    support = PATCH_11_SITE_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_11_SITE_DEFAULT_LOGICAL_X
     logical_creg = ClassicalRegister(len(support), "logical")
     circuit.add_register(logical_creg)
-    append_patch_logical_measurement(
+    append_11_site_patch_logical_measurement(
         circuit,
         basis,
         patch_qubits=list(circuit.qregs[0]),
@@ -253,7 +253,7 @@ class TestStabilizerSyndromesAfterCultivation:
         n_stab = 6
         stab_creg = ClassicalRegister(n_stab, "stab")
         circuit.add_register(stab_creg)
-        append_patch_stabilizer_measurement(
+        append_11_site_patch_stabilizer_measurement(
             circuit,
             patch_qubits=list(circuit.qregs[0]),
             classical_bits=list(stab_creg),
@@ -422,8 +422,10 @@ class TestNoisyCultivationWithRounds:
         qreg = uncultivated_circuit.qregs[0]
         creg = ClassicalRegister(3, "c")
         uncultivated_circuit.add_register(creg)
-        support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
-        append_patch_logical_measurement(
+        support = (
+            PATCH_11_SITE_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_11_SITE_DEFAULT_LOGICAL_X
+        )
+        append_11_site_patch_logical_measurement(
             uncultivated_circuit,
             basis,
             patch_qubits=list(qreg),

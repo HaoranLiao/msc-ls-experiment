@@ -16,14 +16,16 @@ from msc.steane_code.decoding.decoder import (
     X_STABILIZER_LABELS,
     Z_STABILIZER_LABELS,
 )
+from msc.steane_code.state_injection_common import (
+    NUM_QUBITS_PATCH_11_SITES,
+    PATCH_11_SITE_DATA_SITES,
+    PATCH_11_SITE_DEFAULT_LOGICAL_X,
+    PATCH_11_SITE_DEFAULT_LOGICAL_Z,
+)
 from msc.steane_code.state_injection_qiskit import (
-    NUM_PATCH_QUBITS,
-    PATCH_DATA_SITES,
-    PATCH_DEFAULT_LOGICAL_X,
-    PATCH_DEFAULT_LOGICAL_Z,
     InjectedStateName,
-    append_patch_stabilizer_measurement,
-    append_patch_steane_state_injection_encoder_crumble_sequences,
+    append_11_site_patch_rosenfeld_encoder,
+    append_11_site_patch_stabilizer_measurement,
 )
 from msc.utils.normalize import parse_qiskit_bitstring
 
@@ -36,7 +38,7 @@ EXPECTED_LOGICAL_EXPECTATIONS: dict[str, tuple[float, float]] = {
     "Ty": (INVERSE_SQRT_TWO, INVERSE_SQRT_TWO),
 }
 SINGLE_QUBIT_FAULTS = tuple(
-    (pauli, data_site) for pauli in ("X", "Y", "Z") for data_site in PATCH_DATA_SITES
+    (pauli, data_site) for pauli in ("X", "Y", "Z") for data_site in PATCH_11_SITE_DATA_SITES
 )
 TWO_ROUND_FAULTS = (
     # Same site, same Pauli.
@@ -66,18 +68,18 @@ TWO_ROUND_FAULTS = (
 
 _Z_LOGICAL = SparsePauliOp(
     "".join(
-        "Z" if data_site in PATCH_DEFAULT_LOGICAL_Z else "I"
-        for data_site in reversed(range(NUM_PATCH_QUBITS))
+        "Z" if data_site in PATCH_11_SITE_DEFAULT_LOGICAL_Z else "I"
+        for data_site in reversed(range(NUM_QUBITS_PATCH_11_SITES))
     )
 )
 _X_LOGICAL = SparsePauliOp(
     "".join(
-        "X" if data_site in PATCH_DEFAULT_LOGICAL_X else "I"
-        for data_site in reversed(range(NUM_PATCH_QUBITS))
+        "X" if data_site in PATCH_11_SITE_DEFAULT_LOGICAL_X else "I"
+        for data_site in reversed(range(NUM_QUBITS_PATCH_11_SITES))
     )
 )
 # Patch indices select the data subsystem from the data-plus-ancilla statevector.
-_PATCH_QUBIT_INDICES = list(range(NUM_PATCH_QUBITS))
+_PATCH_QUBIT_INDICES = list(range(NUM_QUBITS_PATCH_11_SITES))
 
 
 def _parse_syndrome_round(
@@ -107,18 +109,18 @@ def test_one_round_logical_expectations(
     fault: tuple[str, int],
 ) -> None:
     # Inject the state, apply one data fault, and measure its syndrome.
-    patch = QuantumRegister(NUM_PATCH_QUBITS, "patch")
+    patch = QuantumRegister(NUM_QUBITS_PATCH_11_SITES, "patch")
     syndrome = ClassicalRegister(6, "syndrome")
     circuit = QuantumCircuit(patch, syndrome)
     patch_qubits = list(patch)
-    append_patch_steane_state_injection_encoder_crumble_sequences(
+    append_11_site_patch_rosenfeld_encoder(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
         add_barriers=False,
     )
     append_pauli_faults(circuit, [fault], qubit_map=patch_qubits)
-    append_patch_stabilizer_measurement(
+    append_11_site_patch_stabilizer_measurement(
         circuit,
         patch_qubits=patch_qubits,
         classical_bits=list(syndrome),
@@ -179,26 +181,26 @@ def test_two_round_logical_expectations(
     second_fault: tuple[str, int],
 ) -> None:
     # Inject the state and measure after each of two data faults.
-    patch = QuantumRegister(NUM_PATCH_QUBITS, "patch")
+    patch = QuantumRegister(NUM_QUBITS_PATCH_11_SITES, "patch")
     first_syndrome = ClassicalRegister(6, "first_syndrome")
     second_syndrome = ClassicalRegister(6, "second_syndrome")
     circuit = QuantumCircuit(patch, first_syndrome, second_syndrome)
     patch_qubits = list(patch)
-    append_patch_steane_state_injection_encoder_crumble_sequences(
+    append_11_site_patch_rosenfeld_encoder(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
         add_barriers=False,
     )
     append_pauli_faults(circuit, [first_fault], qubit_map=patch_qubits)
-    append_patch_stabilizer_measurement(
+    append_11_site_patch_stabilizer_measurement(
         circuit,
         patch_qubits=patch_qubits,
         classical_bits=list(first_syndrome),
         add_barriers=False,
     )
     append_pauli_faults(circuit, [second_fault], qubit_map=patch_qubits)
-    append_patch_stabilizer_measurement(
+    append_11_site_patch_stabilizer_measurement(
         circuit,
         patch_qubits=patch_qubits,
         classical_bits=list(second_syndrome),

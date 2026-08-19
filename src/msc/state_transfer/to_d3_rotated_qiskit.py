@@ -45,7 +45,7 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     Anticommuting ``X_ab`` is withheld until destructive Steane-X demolition
     and then recovered unconditionally.
 
-    The circuit includes Crumble injection, post-injection Steane QED,
+    The circuit includes Rosenfeld et al. injection, post-injection Steane QED,
     optional logical-H_XY cultivation, both Steane verification groups, and
     every raw measurement needed for classical spacetime decoding. Setting
     ``include_post_transfer_stabilizer_rounds`` appends three full d3 rounds.

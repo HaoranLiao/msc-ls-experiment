@@ -10,12 +10,12 @@ from typing import NamedTuple
 
 from msc.decoding.pauli_frame import PauliFrame
 from msc.decoding.stabilizer_frame import StabilizerFrame
-from msc.steane_code.state_injection_qiskit import (
-    PATCH_DATA_SITES,
-    PATCH_DEFAULT_LOGICAL_X,
-    PATCH_DEFAULT_LOGICAL_Z,
-    PATCH_X_STABILIZERS,
-    PATCH_Z_STABILIZERS,
+from msc.steane_code.state_injection_common import (
+    PATCH_11_SITE_DATA_SITES,
+    PATCH_11_SITE_DEFAULT_LOGICAL_X,
+    PATCH_11_SITE_DEFAULT_LOGICAL_Z,
+    PATCH_11_SITE_X_STABILIZERS,
+    PATCH_11_SITE_Z_STABILIZERS,
 )
 
 # =============================================================================
@@ -23,10 +23,10 @@ from msc.steane_code.state_injection_qiskit import (
 # =============================================================================
 
 X_STABILIZER_LABELS: tuple[str, ...] = tuple(
-    f"X_{''.join(str(s) for s in support)}" for support in PATCH_X_STABILIZERS
+    f"X_{''.join(str(s) for s in support)}" for support in PATCH_11_SITE_X_STABILIZERS
 )
 Z_STABILIZER_LABELS: tuple[str, ...] = tuple(
-    f"Z_{''.join(str(s) for s in support)}" for support in PATCH_Z_STABILIZERS
+    f"Z_{''.join(str(s) for s in support)}" for support in PATCH_11_SITE_Z_STABILIZERS
 )
 SYNDROME_BIT_LABELS: tuple[str, ...] = ("x0", "x1", "x2", "z0", "z1", "z2")
 
@@ -36,13 +36,13 @@ SYNDROME_BIT_LABELS: tuple[str, ...] = ("x0", "x1", "x2", "z0", "z1", "z2")
 
 _Z_SYNDROME_TABLE: dict[tuple[int, ...], int | None] = {(0, 0, 0): None}
 _X_SYNDROME_TABLE: dict[tuple[int, ...], int | None] = {(0, 0, 0): None}
-for data_site in PATCH_DATA_SITES:
-    _Z_SYNDROME_TABLE[tuple(int(data_site in support) for support in PATCH_Z_STABILIZERS)] = (
-        data_site
-    )
-    _X_SYNDROME_TABLE[tuple(int(data_site in support) for support in PATCH_X_STABILIZERS)] = (
-        data_site
-    )
+for data_site in PATCH_11_SITE_DATA_SITES:
+    _Z_SYNDROME_TABLE[
+        tuple(int(data_site in support) for support in PATCH_11_SITE_Z_STABILIZERS)
+    ] = data_site
+    _X_SYNDROME_TABLE[
+        tuple(int(data_site in support) for support in PATCH_11_SITE_X_STABILIZERS)
+    ] = data_site
 
 
 # =============================================================================
@@ -68,8 +68,8 @@ class SteaneDecoder:
     def __init__(
         self,
         *,
-        logical_x_support: tuple[int, ...] = PATCH_DEFAULT_LOGICAL_X,
-        logical_z_support: tuple[int, ...] = PATCH_DEFAULT_LOGICAL_Z,
+        logical_x_support: tuple[int, ...] = PATCH_11_SITE_DEFAULT_LOGICAL_X,
+        logical_z_support: tuple[int, ...] = PATCH_11_SITE_DEFAULT_LOGICAL_Z,
     ) -> None:
         """Store the logical representatives used to interpret recoveries."""
         self._logical_x_support = frozenset(logical_x_support)

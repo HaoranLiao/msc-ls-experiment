@@ -9,7 +9,7 @@ from qiskit_aer import AerSimulator
 from msc.state_transfer import common
 from msc.state_transfer import to_d3_rotated_qiskit as d3
 from msc.state_transfer import to_d5_rotated_qiskit as d5
-from msc.steane_code.state_injection_qiskit import PATCH_STABILIZER_ANCILLA_SITES
+from msc.steane_code.state_injection_qiskit import PATCH_11_SITE_STABILIZER_ANCILLA_SITES
 
 TARGETS = (
     pytest.param(d3, d3.build_steane_to_rotated_d3_lattice_surgery_circuit, id="d3"),
@@ -147,7 +147,7 @@ def test_measurements_follow_hirano_merge_table(module, build) -> None:
             qubit_names[circuit.data[position].qubits[0]] for position in color_positions
         ) == tuple(
             common.HIRANO_PATCH_LABEL_BY_GOOGLE_SITE[
-                PATCH_STABILIZER_ANCILLA_SITES[
+                PATCH_11_SITE_STABILIZER_ANCILLA_SITES[
                     common.STEANE_MERGE_VERIFICATION_STABILIZER_INDICES[check_name]
                 ]
             ]

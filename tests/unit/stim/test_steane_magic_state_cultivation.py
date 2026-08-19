@@ -26,14 +26,14 @@ from msc.steane_code.magic_state_cultivation_stim import (
     build_steane_injection_and_cultivation_circuit,
     postselect_success_shots,
 )
-from msc.steane_code.state_injection_qiskit import (
-    PATCH_DEFAULT_LOGICAL_X,
-    PATCH_DEFAULT_LOGICAL_Z,
+from msc.steane_code.state_injection_common import (
+    PATCH_11_SITE_DEFAULT_LOGICAL_X,
+    PATCH_11_SITE_DEFAULT_LOGICAL_Z,
 )
 from msc.steane_code.state_injection_stim import (
     StimInjectedStateName,
-    append_patch_logical_measurement,
-    append_patch_stabilizer_measurement,
+    append_11_site_patch_logical_measurement,
+    append_11_site_patch_stabilizer_measurement,
 )
 
 NUM_SHOTS = 4000
@@ -41,7 +41,7 @@ NOISY_NUM_SHOTS = 10_000
 NOISY_TEST_SEED = 42
 
 ENCODER_FLAG_BITS = 4
-LOGICAL_MEASUREMENT_BITS = len(PATCH_DEFAULT_LOGICAL_X)
+LOGICAL_MEASUREMENT_BITS = len(PATCH_11_SITE_DEFAULT_LOGICAL_X)
 
 CULTIVATION_TEST_STATES: tuple[StimInjectedStateName, ...] = (
     "0",
@@ -83,8 +83,8 @@ def _build_cultivation_with_logical_measurement(
         add_ticks=False,
         skip_cx_1_4=False,
     )
-    support = PATCH_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_DEFAULT_LOGICAL_X
-    append_patch_logical_measurement(
+    support = PATCH_11_SITE_DEFAULT_LOGICAL_Z if basis == "Z" else PATCH_11_SITE_DEFAULT_LOGICAL_X
+    append_11_site_patch_logical_measurement(
         circuit,
         basis,
         support=support,
@@ -223,7 +223,7 @@ class TestStabilizerSyndromesAfterCultivation:
             add_ticks=False,
             skip_cx_1_4=False,
         )
-        append_patch_stabilizer_measurement(circuit, add_ticks=False)
+        append_11_site_patch_stabilizer_measurement(circuit, add_ticks=False)
 
         shots = _sample(circuit, shots=NUM_SHOTS)
         accepted = postselect_success_shots(
@@ -321,10 +321,10 @@ class TestNoisyCultivationWithRounds:
             add_ticks=False,
             skip_cx_1_4=False,
         )
-        append_patch_logical_measurement(
+        append_11_site_patch_logical_measurement(
             uncultivated_circuit,
             "Y",
-            support=PATCH_DEFAULT_LOGICAL_X,
+            support=PATCH_11_SITE_DEFAULT_LOGICAL_X,
             destructive=True,
         )
         uncultivated_shots = _sample(
@@ -389,8 +389,8 @@ class TestCultivationFaultTolerance:
             protocol_circuit,
             p=1e-3,
         )
-        append_patch_stabilizer_measurement(circuit, basis="both", add_ticks=True)
-        append_patch_logical_measurement(
+        append_11_site_patch_stabilizer_measurement(circuit, basis="BOTH", add_ticks=True)
+        append_11_site_patch_logical_measurement(
             circuit,
             "Y",
             destructive=True,

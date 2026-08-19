@@ -11,7 +11,7 @@ from msc.steane_code.kickback_tomography_qiskit import (
 from msc.steane_code.state_injection_qiskit import (
     STEANE_ENCODER_CNOTS,
     InjectedStateName,
-    append_steane_state_injection_encoder,
+    append_abstract_encoder,
     prepare_physical_state,
 )
 
@@ -22,7 +22,7 @@ __all__ = [
     "KickbackTomographyExperiment",
     "KickbackTomographySummary",
     "STEANE_ENCODER_CNOTS",
-    "append_steane_state_injection_encoder",
+    "append_abstract_encoder",
     "build_kickback_tomography_experiment",
     "prepare_physical_state",
     "summarize_kickback_tomography_counts",

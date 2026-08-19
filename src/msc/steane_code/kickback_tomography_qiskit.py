@@ -22,15 +22,15 @@ from msc.steane_code.magic_state_cultivation_qiskit import (
     append_h_xy_projection_round,
 )
 from msc.steane_code.state_injection_qiskit import (
-    PATCH_HELPER_SITES,
+    PATCH_11_SITE_HELPER_SITES,
     InjectedStateName,
-    append_patch_stabilizer_measurement,
-    append_patch_steane_state_injection_encoder_crumble_sequences,
+    append_11_site_patch_rosenfeld_encoder,
+    append_11_site_patch_stabilizer_measurement,
 )
 from msc.utils.circuit_qiskit import RemoveResetOperations
 from msc.utils.normalize import qiskit_bit_value
 
-FinalStabilizerMode = Literal["x", "z", "both", "none"]
+FinalStabilizerMode = Literal["X", "Z", "BOTH", "NONE"]
 
 KT_STABILIZER_BITS_PER_CYCLE = 6
 KT_DEFAULT_QED_CYCLE_INDICES: tuple[int, ...] = (1, 3)
@@ -177,13 +177,13 @@ def normalize_qed_cycle_indices(qed_cycle_indices: Iterable[int]) -> tuple[int, 
 
 
 def final_stabilizer_bit_count(mode: FinalStabilizerMode) -> int:
-    if mode == "both":
+    if mode == "BOTH":
         return KT_STABILIZER_BITS_PER_CYCLE
-    if mode in {"x", "z"}:
+    if mode in {"X", "Z"}:
         return KT_STABILIZER_BITS_PER_CYCLE // 2
-    if mode == "none":
+    if mode == "NONE":
         return 0
-    raise ValueError("final_stabilizer_basis must be 'x', 'z', 'both', or 'none'.")
+    raise ValueError("final_stabilizer_basis must be 'X', 'Z', 'BOTH', or 'NONE'.")
 
 
 def build_kickback_tomography_experiment(
@@ -193,7 +193,7 @@ def build_kickback_tomography_experiment(
     include_prep_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     qed_cycle_indices: Iterable[int] = KT_DEFAULT_QED_CYCLE_INDICES,
-    final_stabilizer_basis: FinalStabilizerMode = "x",
+    final_stabilizer_basis: FinalStabilizerMode = "X",
     no_reset: bool = False,
     add_barriers: bool = True,
 ) -> KickbackTomographyExperiment:
@@ -210,7 +210,7 @@ def build_kickback_tomography_experiment(
     injected. Every cultivation and KT round measures
     ``H_XY = (X + Y) / sqrt(2)``.
 
-    When ``measure_encoder_flags`` is true, the four Crumble-encoder flag
+    When ``measure_encoder_flags`` is true, the four Rosenfeld-encoder flag
     qubits are measured into a dedicated ``encoder_flags`` register
     immediately after encoding. KT postselection then requires each flag to be
     zero, flagging encoding faults.
@@ -223,9 +223,9 @@ def build_kickback_tomography_experiment(
     measure error-detection syndromes. KT postselects on them and does not apply
     corrections or Pauli-frame updates.
 
-    ``final_stabilizer_basis="x"`` matches the final detector block drawn in
-    Fig. 3. ``"z"`` selects the equivalent CSS basis, ``"both"`` measures all
-    six stabilizers, and ``"none"`` omits the final check.
+    ``final_stabilizer_basis="X"`` matches the final detector block drawn in
+    Fig. 3. ``"Z"`` selects the equivalent CSS basis, ``"BOTH"`` measures all
+    six stabilizers, and ``"NONE"`` omits the final check.
 
     When ``no_reset`` is true, a final transpiler pass removes every reset
     operation for hardware without reset support. The returned bit layout
@@ -242,7 +242,9 @@ def build_kickback_tomography_experiment(
 
     patch = QuantumRegister(11, "patch")
     encoder_flags_creg = (
-        ClassicalRegister(len(PATCH_HELPER_SITES), "enc_flags") if measure_encoder_flags else None
+        ClassicalRegister(len(PATCH_11_SITE_HELPER_SITES), "enc_flags")
+        if measure_encoder_flags
+        else None
     )
     prep_creg = (
         ClassicalRegister(CULTIVATION_MEASUREMENTS_PER_ROUND, "prep_cult")
@@ -271,7 +273,7 @@ def build_kickback_tomography_experiment(
     circuit = QuantumCircuit(patch, *classical_registers)
     patch_qubits = list(patch)
 
-    append_patch_steane_state_injection_encoder_crumble_sequences(
+    append_11_site_patch_rosenfeld_encoder(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
@@ -281,7 +283,7 @@ def build_kickback_tomography_experiment(
     )
 
     if 1 in qed_cregs:
-        append_patch_stabilizer_measurement(
+        append_11_site_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
             classical_bits=list(qed_cregs[1]),
@@ -298,7 +300,7 @@ def build_kickback_tomography_experiment(
         )
 
     if 2 in qed_cregs:
-        append_patch_stabilizer_measurement(
+        append_11_site_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
             classical_bits=list(qed_cregs[2]),
@@ -313,7 +315,7 @@ def build_kickback_tomography_experiment(
     )
 
     if 3 in qed_cregs:
-        append_patch_stabilizer_measurement(
+        append_11_site_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
             classical_bits=list(qed_cregs[3]),
@@ -328,7 +330,7 @@ def build_kickback_tomography_experiment(
     )
 
     if 4 in qed_cregs:
-        append_patch_stabilizer_measurement(
+        append_11_site_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
             classical_bits=list(qed_cregs[4]),
@@ -336,7 +338,7 @@ def build_kickback_tomography_experiment(
         )
 
     if final_creg is not None:
-        append_patch_stabilizer_measurement(
+        append_11_site_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
             classical_bits=list(final_creg),

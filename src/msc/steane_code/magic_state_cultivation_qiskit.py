@@ -9,10 +9,10 @@ from msc.steane_code.decoding.decoder import (
     Z_STABILIZER_LABELS,
 )
 from msc.steane_code.state_injection_qiskit import (
-    NUM_PATCH_QUBITS,
+    NUM_QUBITS_PATCH_11_SITES,
     InjectedStateName,
-    append_patch_stabilizer_measurement,
-    append_patch_steane_state_injection_encoder_crumble_sequences,
+    append_11_site_patch_rosenfeld_encoder,
+    append_11_site_patch_stabilizer_measurement,
 )
 from msc.utils.normalize import qiskit_bit_value, resolve_patch_qubits
 
@@ -90,9 +90,9 @@ STEANE_QED_MEASUREMENTS_PER_ROUND: int = len(POST_INJECTION_QED_STABILIZER_LABEL
 # 1. Steane state-injection encoder (expressed in 11-site patch labels)
 # =============================================================================
 
-# The encoder and its patch-mapping constants (INJECTION_SITE, PLUS_SITES,
-# _STEANE_TO_PATCH, append_steane_state_injection_encoder) live in
-# state_injection_qiskit.py and are imported above.
+# The patch-mapping constant (_STEANE_TO_11_SITE_PATCH) lives in
+# state_injection_common.py; the encoder
+# (append_abstract_encoder) lives in state_injection_qiskit.py.
 
 
 # =============================================================================
@@ -305,7 +305,7 @@ def append_h_xy_projection_round(
     """
     patch_qubits = resolve_patch_qubits(
         patch_qubits,
-        expected_count=NUM_PATCH_QUBITS,
+        expected_count=NUM_QUBITS_PATCH_11_SITES,
     )
 
     if len(classical_bits) != CULTIVATION_MEASUREMENTS_PER_ROUND:
@@ -457,7 +457,7 @@ def append_steane_injection_and_cultivation(
             f"{STEANE_QED_MEASUREMENTS_PER_ROUND} bits when add_qed_round is true."
         )
 
-    append_patch_steane_state_injection_encoder_crumble_sequences(
+    append_11_site_patch_rosenfeld_encoder(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
@@ -469,11 +469,11 @@ def append_steane_injection_and_cultivation(
 
     if add_qed_round:
         assert qed_classical_bits is not None
-        append_patch_stabilizer_measurement(
+        append_11_site_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
             classical_bits=qed_classical_bits,
-            basis="both",
+            basis="BOTH",
             add_barriers=add_barriers,
         )
         if add_barriers:
@@ -550,7 +550,7 @@ def build_steane_injection_and_cultivation_circuit(
         raise ValueError("cultivation_rounds must be non-negative.")
 
     # Quantum allocation: one 11-qubit qreg ordered by patch sites 0..10.
-    qreg = QuantumRegister(NUM_PATCH_QUBITS, "q")
+    qreg = QuantumRegister(NUM_QUBITS_PATCH_11_SITES, "q")
 
     # Classical allocation:
     # - one 4-bit creg for the state-injection encoder-flag measurements;

@@ -13,7 +13,7 @@ from examples.state_transfer.stim_logical_error_rate_ls import (
 from msc.state_transfer import common
 from msc.state_transfer import helper_stim as helper
 from msc.state_transfer import to_d5_rotated_stim as transfer
-from msc.steane_code.state_injection_stim import PATCH_STABILIZER_ANCILLA_SITES
+from msc.steane_code.state_injection_stim import PATCH_11_SITE_STABILIZER_ANCILLA_SITES
 
 LOGICAL_EXPECTATIONS = {
     "0": {"X": 0.0, "Y": 0.0, "Z": 1.0},
@@ -126,7 +126,7 @@ def test_measurements_follow_hirano_merge_table() -> None:
         )
         assert tuple(measurements[position][1] for position in color_positions) == tuple(
             steane_patch[
-                PATCH_STABILIZER_ANCILLA_SITES[
+                PATCH_11_SITE_STABILIZER_ANCILLA_SITES[
                     common.STEANE_MERGE_VERIFICATION_STABILIZER_INDICES[check_name]
                 ]
             ]

@@ -38,7 +38,7 @@ def transfer_qubits(spec: common.SurfaceCodeTransferSpec) -> dict[str, int]:
         **common.HIRANO_LABEL_TO_GOOGLE_SITE,
         **common.STEANE_HELPER_LABEL_TO_GOOGLE_SITE,
     }
-    next_qubit = steane.NUM_PATCH_QUBITS
+    next_qubit = steane.NUM_QUBITS_PATCH_11_SITES
     for label in (
         *spec.surface_order,
         *(name.lower() for name in spec.z_labels),
@@ -226,7 +226,7 @@ def build_lattice_surgery_circuit(
     The fixed-patch sequence follows Section III A of Hirano et al. and is
     specialized by ``spec`` to the rotated target:
 
-    1. Encode ``injected_state`` with the routed 11-site Crumble encoder and
+    1. Encode ``injected_state`` with the routed 11-site Rosenfeld et al. encoder and
        measure encoder-flag acceptance bits.
     2. Measure every Steane X and Z stabilizer for post-injection QED.
     3. Optionally apply logical-Y cultivation, the Stim proxy for H_XY
@@ -270,7 +270,7 @@ def build_lattice_surgery_circuit(
     qubits = transfer_qubits(spec)
     steane_patch = [
         qubits[common.HIRANO_PATCH_LABEL_BY_GOOGLE_SITE[site]]
-        for site in range(steane.NUM_PATCH_QUBITS)
+        for site in range(steane.NUM_QUBITS_PATCH_11_SITES)
     ]
     surface_qubits = [qubits[label] for label in spec.surface_order]
     circuit = stim.Circuit()
@@ -347,7 +347,7 @@ def build_lattice_surgery_circuit(
         )
         verification_checks = common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]
         for check_name in verification_checks:
-            steane.append_patch_stabilizer_measurement(
+            steane.append_11_site_patch_stabilizer_measurement(
                 circuit,
                 patch_qubits=steane_patch,
                 basis=check_name[0].lower(),
@@ -360,7 +360,7 @@ def build_lattice_surgery_circuit(
             circuit.append("TICK", [])
 
     # 4. Demolish Steane in X and restore the withheld surface-X boundary.
-    steane.append_patch_logical_measurement(
+    steane.append_11_site_patch_logical_measurement(
         circuit,
         "X",
         patch_qubits=steane_patch,

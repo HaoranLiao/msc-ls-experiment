@@ -90,7 +90,7 @@ def build_lattice_surgery_only_circuit(
     3. Transfer completion: Steane-X demolition and recovery of ``X_ab`` and
        ``X_cd`` are noisy.
 
-    The Crumble encoder and post-injection Steane QED before these phases are
+    The Rosenfeld et al. encoder and post-injection Steane QED before these phases are
     ideal. One ideal full surface round and an ideal destructive readout close
     the circuit afterward. The closing round supplies the final detectors; the
     ideal logical-support readout supplies only the logical observable.

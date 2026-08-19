@@ -26,13 +26,13 @@ from msc.steane_code.magic_state_cultivation_qiskit import (
     HELPER_SITES,
     filter_fold_layer,
 )
-from msc.steane_code.state_injection_qiskit import NUM_PATCH_QUBITS
+from msc.steane_code.state_injection_common import NUM_QUBITS_PATCH_11_SITES
 from msc.steane_code.state_injection_stim import (
+    DEFAULT_STIM_11_SITE_PATCH_QUBITS,
     DEFAULT_STIM_INJECTED_STATE,
-    DEFAULT_STIM_PATCH_QUBITS,
     StimInjectedStateName,
-    append_patch_stabilizer_measurement,
-    append_patch_steane_state_injection_encoder_crumble_sequences,
+    append_11_site_patch_rosenfeld_encoder,
+    append_11_site_patch_stabilizer_measurement,
 )
 from msc.utils import circuit_stim
 from msc.utils.normalize import resolve_patch_qubits
@@ -116,7 +116,7 @@ def append_unfold_network(
 def append_y_projection_round(
     circuit: stim.Circuit,
     *,
-    patch_qubits: Sequence[int] = DEFAULT_STIM_PATCH_QUBITS,
+    patch_qubits: Sequence[int] = DEFAULT_STIM_11_SITE_PATCH_QUBITS,
     add_ticks: bool = True,
     skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
@@ -158,7 +158,7 @@ def append_y_projection_round(
     """
     patch_qubits = resolve_patch_qubits(
         patch_qubits,
-        expected_count=NUM_PATCH_QUBITS,
+        expected_count=NUM_QUBITS_PATCH_11_SITES,
     )
     first_projection_position = circuit.num_measurements
 
@@ -228,7 +228,7 @@ def append_steane_injection_and_cultivation(
     *,
     add_qed_round: bool,
     skip_cx_1_4: bool,
-    patch_qubits: Sequence[int] = DEFAULT_STIM_PATCH_QUBITS,
+    patch_qubits: Sequence[int] = DEFAULT_STIM_11_SITE_PATCH_QUBITS,
     injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
     cultivation_rounds: int = 1,
     measure_encoder_flags: bool = False,
@@ -273,7 +273,7 @@ def append_steane_injection_and_cultivation(
     if cultivation_rounds < 0:
         raise ValueError("cultivation_rounds must be non-negative.")
 
-    append_patch_steane_state_injection_encoder_crumble_sequences(
+    append_11_site_patch_rosenfeld_encoder(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
@@ -284,10 +284,10 @@ def append_steane_injection_and_cultivation(
         circuit.append("TICK", [])
 
     if add_qed_round:
-        append_patch_stabilizer_measurement(
+        append_11_site_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
-            basis="both",
+            basis="BOTH",
             add_ticks=add_ticks,
         )
         if add_ticks:
@@ -361,7 +361,7 @@ def build_steane_injection_and_cultivation_circuit(
     # - 5 entries for each cultivation round.
     append_steane_injection_and_cultivation(
         circuit,
-        patch_qubits=DEFAULT_STIM_PATCH_QUBITS,
+        patch_qubits=DEFAULT_STIM_11_SITE_PATCH_QUBITS,
         injected_state=injected_state,
         cultivation_rounds=cultivation_rounds,
         measure_encoder_flags=True,

@@ -22,7 +22,7 @@ def build_lattice_surgery_circuit(
 ) -> QuantumCircuit:
     """Build injection -> QED/cultivation -> three-round transfer -> continuation.
 
-    The circuit encodes the Steane input with the Crumble encoder, performs
+    The circuit encodes the Steane input with the Rosenfeld et al. encoder, performs
     post-injection QED and optional H_XY cultivation, prepares surface
     ``|+_L>``, executes the three-row merge table, demolishes Steane in X, and
     restores the withheld top-edge surface X checks. Optional fixed-patch
@@ -56,7 +56,7 @@ def build_lattice_surgery_circuit(
     qubit_labels = (
         *(
             common.HIRANO_PATCH_LABEL_BY_GOOGLE_SITE[site]
-            for site in range(steane.NUM_PATCH_QUBITS)
+            for site in range(steane.NUM_QUBITS_PATCH_11_SITES)
         ),
         *spec.surface_order,
         *(name.lower() for name in spec.z_labels),
@@ -67,7 +67,7 @@ def build_lattice_surgery_circuit(
     qubits = {label: register[0] for label, register in qregs.items()}
     steane_patch = [
         qubits[common.HIRANO_PATCH_LABEL_BY_GOOGLE_SITE[site]]
-        for site in range(steane.NUM_PATCH_QUBITS)
+        for site in range(steane.NUM_QUBITS_PATCH_11_SITES)
     ]
     surface_qubits = [qubits[label] for label in spec.surface_order]
 
@@ -184,7 +184,7 @@ def build_lattice_surgery_circuit(
             add_barriers=False,
         )
         for check_name in common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]:
-            steane.append_patch_stabilizer_measurement(
+            steane.append_11_site_patch_stabilizer_measurement(
                 circuit,
                 patch_qubits=steane_patch,
                 classical_bits=[next(verification_bits)],
@@ -198,7 +198,7 @@ def build_lattice_surgery_circuit(
             circuit.barrier(label=f"merged interval round {round_index + 1}")
 
     # 4. Demolish Steane in X and restore the withheld surface-X boundary.
-    steane.append_patch_logical_measurement(
+    steane.append_11_site_patch_logical_measurement(
         circuit,
         "X",
         patch_qubits=steane_patch,

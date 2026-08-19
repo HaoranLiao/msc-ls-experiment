@@ -170,7 +170,7 @@ class TestKickbackTomographyCircuitConstruction:
 
     @pytest.mark.parametrize(
         ("basis", "expected_bits"),
-        [("x", 3), ("z", 3), ("both", 6), ("none", 0)],
+        [("X", 3), ("Z", 3), ("BOTH", 6), ("NONE", 0)],
     )
     def test_final_stabilizer_basis_controls_detector_layout(
         self,
@@ -211,7 +211,7 @@ class TestKickbackTomographyShotAnalysis:
         experiment = build_kickback_tomography_experiment(
             include_preparation_cultivation=False,
             qed_cycle_indices=(),
-            final_stabilizer_basis="none",
+            final_stabilizer_basis="NONE",
             add_ticks=False,
         )
         layout = experiment.layout
@@ -351,7 +351,7 @@ class TestNoiselessKickbackTomography:
             injected_state=state,
             include_preparation_cultivation=False,
             qed_cycle_indices=(),
-            final_stabilizer_basis="none",
+            final_stabilizer_basis="NONE",
             add_ticks=False,
         )
         summary = summarize_kickback_tomography_shots(
@@ -378,7 +378,7 @@ class TestNoiselessKickbackTomography:
             injected_state="1",
             include_preparation_cultivation=True,
             qed_cycle_indices=(),
-            final_stabilizer_basis="none",
+            final_stabilizer_basis="NONE",
             add_ticks=False,
         )
         summary = summarize_kickback_tomography_shots(

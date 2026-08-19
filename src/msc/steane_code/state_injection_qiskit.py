@@ -6,6 +6,25 @@ from typing import Literal
 from qiskit import QuantumCircuit
 from qiskit.circuit import Qubit
 
+from msc.steane_code.state_injection_common import (
+    _STEANE_TO_11_SITE_PATCH,
+    DEFAULT_LOGICAL_X,
+    DEFAULT_LOGICAL_Z,
+    NUM_QUBITS_PATCH_11_SITES,
+    PATCH_11_SITE_DEFAULT_LOGICAL_X,
+    PATCH_11_SITE_DEFAULT_LOGICAL_Z,
+    PATCH_11_SITE_HELPER_SITES,
+    PATCH_11_SITE_ROSENFELD_ENCODER_INJECTION_SITE,
+    PATCH_11_SITE_ROSENFELD_ENCODER_LAYERS,
+    PATCH_11_SITE_STABILIZER_ANCILLA_SITES,
+    PATCH_11_SITE_X_STABILIZERS,
+    PATCH_11_SITE_Z_STABILIZERS,
+    STEANE_ENCODER_CNOTS,
+    X_STABILIZERS,
+    Z_STABILIZERS,
+    PatchStabilizerBasis,
+    resolve_11_site_patch_stabilizer_indices,
+)
 from msc.utils.circuit_qiskit import (
     append_logical_measurement_on_indexed_qubits,
     append_parity_measurement,
@@ -14,74 +33,6 @@ from msc.utils.circuit_qiskit import (
 from msc.utils.normalize import resolve_patch_qubits
 
 InjectedStateName = Literal["0", "1", "+", "-", "i", "-i", "Y+", "Y-", "S", "T", "Tdg", "Ty"]
-PatchCrumbleGateName = Literal["h", "cz"]
-PatchStabilizerBasis = Literal["x", "z", "both"]
-
-# Steane [[7,1,3]] qubit layout (Fano plane in triangular form):
-#
-#        0
-#     1     2
-#        3
-# 4      5      6
-#
-# Faces (stabilizers, weight-4):
-#   Top: {0, 1, 2, 3}
-#   Bottom-left: {1, 3, 4, 5}
-#   Bottom-right: {2, 3, 5, 6}
-#
-# Sides (logicals, weight-3):
-#   Left: {0, 1, 4}    Right: {0, 2, 6}    Bottom: {4, 5, 6}
-
-# Steane [[7,1,3]] stabilizers and logical operators for qubits 0–6.
-X_STABILIZERS: tuple[tuple[int, ...], ...] = (
-    (0, 1, 2, 3),
-    (1, 3, 4, 5),
-    (2, 3, 5, 6),
-)
-
-Z_STABILIZERS: tuple[tuple[int, ...], ...] = (
-    (0, 1, 2, 3),
-    (1, 3, 4, 5),
-    (2, 3, 5, 6),
-)
-
-DEFAULT_LOGICAL_X: tuple[int, ...] = (0, 1, 4)
-DEFAULT_LOGICAL_Z: tuple[int, ...] = (0, 1, 4)
-
-# All weight-3 logical representatives (Fano plane lines).
-LOGICAL_X_REPRESENTATIVES: tuple[tuple[int, ...], ...] = (
-    (0, 1, 4),
-    (0, 2, 6),
-    (0, 3, 5),
-    (1, 2, 5),
-    (1, 3, 6),
-    (2, 3, 4),
-    (4, 5, 6),
-)
-
-LOGICAL_Z_REPRESENTATIVES: tuple[tuple[int, ...], ...] = (
-    (0, 1, 4),
-    (0, 2, 6),
-    (0, 3, 5),
-    (1, 2, 5),
-    (1, 3, 6),
-    (2, 3, 4),
-    (4, 5, 6),
-)
-
-
-STEANE_ENCODER_CNOTS: tuple[tuple[int, int], ...] = (
-    (6, 2),
-    (0, 6),
-    (4, 0),
-    (2, 5),
-    (2, 3),
-    (0, 1),
-    (1, 3),
-    (1, 4),
-    (4, 5),
-    (0, 2),
-)
 
 
 def prepare_physical_state(
@@ -153,7 +104,7 @@ def prepare_physical_state(
     raise ValueError(f"Unknown state name: {state!r}")
 
 
-def append_steane_state_injection_encoder(
+def append_abstract_encoder(
     circuit: QuantumCircuit,
     *,
     data_qubits: Sequence,
@@ -334,148 +285,34 @@ def append_logical_measurement(
 
 
 # =============================================================================
-# Map to 11-site cultivation patch
+# 11-site cultivation patch
 # =============================================================================
-
-# 11-site labeling used in the cultivation patch:
 #
-#               0
-#
-#           1       2
-#
-#       3       4       5
-#
-#           6       7
-#
-#       8       9       10
-#
-# Data sites:   (0, 3, 4, 5, 8, 9, 10)
-# Helper sites: (1, 2, 6, 7)
-
-# The 7 abstract Steane qubits (0–6) map to 11-site patch data sites as:
-#   abstract 0 → patch site 0  (injection)
-#   abstract 1 → patch site 3  (|+⟩)
-#   abstract 2 → patch site 5  (|0⟩)
-#   abstract 3 → patch site 4  (|0⟩)
-#   abstract 4 → patch site 8  (|+⟩)
-#   abstract 5 → patch site 9  (|0⟩)
-#   abstract 6 → patch site 10 (|+⟩)
-
-INJECTION_SITE: int = 0
-PLUS_SITES: tuple[int, ...] = (3, 8, 10)
-
-# Map from abstract Steane qubit index (0–6) to 11-site patch data site.
-_STEANE_TO_PATCH: tuple[int, ...] = (0, 3, 5, 4, 8, 9, 10)
-
-NUM_PATCH_QUBITS: int = 11
-PATCH_DATA_SITES: tuple[int, ...] = (0, 3, 4, 5, 8, 9, 10)
-PATCH_HELPER_SITES: tuple[int, ...] = (1, 2, 6, 7)
+# The patch geometry, abstract-to-patch qubit mapping, stabilizer/logical
+# supports, Rosenfeld et al. encoder schedule, and stabilizer-selection validator
+# are framework-neutral and imported from ``state_injection_common``.
 
 
-def _map_support_to_patch(support: tuple[int, ...]) -> tuple[int, ...]:
-    """Map abstract Steane qubit indices to 11-site patch data sites."""
-    return tuple(sorted(_STEANE_TO_PATCH[i] for i in support))
-
-
-# ---------------------------------------------------------------------------
-# Mapped stabilizers (expressed in 11-site patch labels)
-# ---------------------------------------------------------------------------
-
-PATCH_X_STABILIZERS: tuple[tuple[int, ...], ...] = (
-    (0, 3, 4, 5),
-    (3, 4, 8, 9),
-    (4, 5, 9, 10),
-)
-
-PATCH_Z_STABILIZERS: tuple[tuple[int, ...], ...] = (
-    (0, 3, 4, 5),
-    (3, 4, 8, 9),
-    (4, 5, 9, 10),
-)
-
-# ---------------------------------------------------------------------------
-# Mapped logical operators (expressed in 11-site patch labels)
-# ---------------------------------------------------------------------------
-
-PATCH_DEFAULT_LOGICAL_X: tuple[int, ...] = (8, 9, 10)
-
-PATCH_DEFAULT_LOGICAL_Z: tuple[int, ...] = (8, 9, 10)
-
-PATCH_LOGICAL_X_REPRESENTATIVES: tuple[tuple[int, ...], ...] = (
-    (0, 3, 8),
-    (0, 5, 10),
-    (0, 4, 9),
-    (3, 5, 9),
-    (3, 4, 10),
-    (4, 5, 8),
-    (8, 9, 10),
-)
-
-PATCH_LOGICAL_Z_REPRESENTATIVES: tuple[tuple[int, ...], ...] = (
-    (0, 3, 8),
-    (0, 5, 10),
-    (0, 4, 9),
-    (3, 5, 9),
-    (3, 4, 10),
-    (4, 5, 8),
-    (8, 9, 10),
-)
-
-
-# ---------------------------------------------------------------------------
-# Rosenfeld/Crumble encoder schedule mapped to this 11-site patch
-# ---------------------------------------------------------------------------
-
-# Original Crumble site 5 maps to patch site 4, the center data site.  In the
-# Hirano-labeled view used by lattice surgery, this is color-code label "0".
-PATCH_CRUMBLE_INJECTION_SITE: int = 4
-
-# Crumble URL gate schedule mapped into repo patch labels.  The URL's initial
-# H[injection] and I[injection] on original site 5 (patch site 4) are replaced
-# by whatever physical state we want to inject into the logical state; this
-# preparation is not part of the encoder layers below.
-PATCH_CRUMBLE_ENCODER_LAYERS: tuple[tuple[PatchCrumbleGateName, tuple], ...] = (
-    ("h", (8, 3, 6, 1, 0, 2, 5)),
-    ("cz", ((3, 1), (6, 4), (0, 2))),
-    ("h", (6, 9, 0)),
-    ("cz", ((6, 9),)),
-    ("h", (9, 4, 7)),
-    ("cz", ((3, 6), (9, 7), (1, 4))),
-    ("h", (6, 7)),
-    ("cz", ((6, 9), (4, 7))),
-    ("h", (7,)),
-    ("cz", ((8, 6), (7, 5))),
-    ("h", (6, 9, 1, 7, 10)),
-    ("cz", ((3, 6), (9, 7))),
-    ("cz", ((6, 4), (1, 0), (7, 10))),
-    ("h", (1, 10, 5)),
-    ("cz", ((3, 1), (6, 9), (4, 7), (2, 5))),
-    ("h", (3, 6, 9, 7, 2, 5)),
-    ("cz", ((8, 6), (1, 4), (7, 10), (0, 2))),
-    ("h", (6, 1, 4, 7, 2)),
-)
-
-
-def _append_patch_crumble_encoder_layers(
+def _append_11_site_patch_rosenfeld_encoder_layers(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
     add_barriers: bool,
 ) -> None:
-    """Append the Crumble CZ/H encoder layers to the circuit.
+    """Append the Rosenfeld et al. CZ/H encoder layers to the circuit.
 
     These layers do not include preparation of the arbitrary physical state on
     the injection site; that must be done separately before calling this helper.
     """
-    for gate_name, operands in PATCH_CRUMBLE_ENCODER_LAYERS:
-        if gate_name == "h":
+    for gate_name, operands in PATCH_11_SITE_ROSENFELD_ENCODER_LAYERS:
+        if gate_name == "H":
             for site in operands:
                 circuit.h(patch_qubits[site])
-        elif gate_name == "cz":
+        elif gate_name == "CZ":
             for site_a, site_b in operands:
                 circuit.cz(patch_qubits[site_a], patch_qubits[site_b])
         else:  # pragma: no cover - defensive if the static schedule is edited.
-            raise ValueError(f"Unsupported Crumble injection gate: {gate_name!r}")
+            raise ValueError(f"Unsupported Rosenfeld encoder gate: {gate_name!r}")
 
         if add_barriers:
             circuit.barrier()
@@ -486,7 +323,7 @@ def _append_patch_crumble_encoder_layers(
 # ---------------------------------------------------------------------------
 
 
-def append_patch_steane_state_injection_encoder(
+def append_11_site_patch_abstract_encoder(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
@@ -496,8 +333,8 @@ def append_patch_steane_state_injection_encoder(
 ) -> None:
     """Append the Steane-code state-injection encoder on the 11-site patch.
 
-    Composes the 7-qubit encoder from append_steane_state_injection_encoder
-    onto the 7 data sites of the 11-site patch via _STEANE_TO_PATCH.
+    Composes the 7-qubit encoder from append_abstract_encoder
+    onto the 7 data sites of the 11-site patch via _STEANE_TO_11_SITE_PATCH.
 
     Parameters
     ----------
@@ -518,12 +355,12 @@ def append_patch_steane_state_injection_encoder(
     """
     patch_qubits = resolve_patch_qubits(
         patch_qubits,
-        expected_count=NUM_PATCH_QUBITS,
+        expected_count=NUM_QUBITS_PATCH_11_SITES,
     )
 
     # Map abstract encoder qubits 0–6 to the corresponding patch data sites.
-    data_qubits = [patch_qubits[_STEANE_TO_PATCH[i]] for i in range(7)]
-    append_steane_state_injection_encoder(
+    data_qubits = [patch_qubits[_STEANE_TO_11_SITE_PATCH[i]] for i in range(7)]
+    append_abstract_encoder(
         circuit,
         data_qubits=data_qubits,
         injected_state=injected_state,
@@ -534,7 +371,7 @@ def append_patch_steane_state_injection_encoder(
         circuit.barrier(label="state injection")
 
 
-def append_patch_steane_state_injection_encoder_crumble_sequences(
+def append_11_site_patch_rosenfeld_encoder(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
@@ -543,15 +380,15 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
     flag_classical_bits: Sequence | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
-    """Append the Crumble nearest-neighbor Steane encoder on the 11-site patch.
+    """Append the Rosenfeld et al. nearest-neighbor Steane encoder on the 11-site patch.
 
-    This replays Rosenfeld et al.'s Crumble state-injection schedule after
+    This replays Rosenfeld et al.'s state-injection schedule after
     mapping every site into this repo's 11-site patch labels.  Unlike
-    ``append_patch_steane_state_injection_encoder``, this schedule uses all four
+    ``append_11_site_patch_abstract_encoder``, this schedule uses all four
     helper sites for nearest-neighbor routing.
 
     After the encoder layers the four helper sites should be in |0⟩. When
-    ``helper_classical_bits`` is provided the helpers are measured into those
+    ``flag_classical_bits`` is provided the helpers are measured into those
     bits so the caller can postselect on all-zero outcomes.
 
     Parameters
@@ -577,7 +414,7 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
         Four classical bits for the helper-site measurements. When ``None``
         (default), the helper sites are not measured.
     add_barriers
-        Whether to keep Crumble tick-layer barriers.
+        Whether to keep the Rosenfeld et al. tick-layer barriers.
 
     Returns
     -------
@@ -586,44 +423,46 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
     """
     patch_qubits = resolve_patch_qubits(
         patch_qubits,
-        expected_count=NUM_PATCH_QUBITS,
+        expected_count=NUM_QUBITS_PATCH_11_SITES,
     )
     if injected_state is not None and injection_azimuth_angle is not None:
         raise ValueError(
             "injected_state and injection_azimuth_angle are mutually exclusive; supply at most one."
         )
-    if flag_classical_bits is not None and len(flag_classical_bits) < len(PATCH_HELPER_SITES):
+    if flag_classical_bits is not None and len(flag_classical_bits) < len(
+        PATCH_11_SITE_HELPER_SITES
+    ):
         raise ValueError(
-            f"helper_classical_bits must contain at least {len(PATCH_HELPER_SITES)} bits."
+            f"flag_classical_bits must contain at least {len(PATCH_11_SITE_HELPER_SITES)} bits."
         )
 
     if injection_azimuth_angle is not None:
-        circuit.h(patch_qubits[PATCH_CRUMBLE_INJECTION_SITE])
+        circuit.h(patch_qubits[PATCH_11_SITE_ROSENFELD_ENCODER_INJECTION_SITE])
         circuit.rz(
             injection_azimuth_angle,
-            patch_qubits[PATCH_CRUMBLE_INJECTION_SITE],
+            patch_qubits[PATCH_11_SITE_ROSENFELD_ENCODER_INJECTION_SITE],
         )
     else:
         state: InjectedStateName = injected_state if injected_state is not None else "T"
         prepare_physical_state(
             circuit,
-            patch_qubits[PATCH_CRUMBLE_INJECTION_SITE],
+            patch_qubits[PATCH_11_SITE_ROSENFELD_ENCODER_INJECTION_SITE],
             state,
         )
     if add_barriers:
-        circuit.barrier(label="crumble injection input")
+        circuit.barrier(label="rosenfeld injection input")
 
-    _append_patch_crumble_encoder_layers(
+    _append_11_site_patch_rosenfeld_encoder_layers(
         circuit,
         patch_qubits=patch_qubits,
         add_barriers=add_barriers,
     )
     if add_barriers:
-        circuit.barrier(label="crumble state injection")
+        circuit.barrier(label="rosenfeld state injection")
 
     if flag_classical_bits is not None:
         flag_classical_bits = list(flag_classical_bits)
-        for i, site in enumerate(PATCH_HELPER_SITES):
+        for i, site in enumerate(PATCH_11_SITE_HELPER_SITES):
             circuit.measure(patch_qubits[site], flag_classical_bits[i])
 
     return circuit
@@ -633,37 +472,13 @@ def append_patch_steane_state_injection_encoder_crumble_sequences(
 # Stabilizer measurement on the 11-site patch
 # ---------------------------------------------------------------------------
 
-# Map from stabilizer index to the helper site used as its ancilla.
-# Each helper sits at the geometric center of the corresponding face:
-#   Stabilizer 0 (0, 3, 4, 5)  → helper site 2
-#   Stabilizer 1 (3, 4, 8, 9)  → helper site 6
-#   Stabilizer 2 (4, 5, 9, 10) → helper site 7
-PATCH_STABILIZER_ANCILLA_SITES: tuple[int, ...] = (2, 6, 7)
 
-
-def resolve_patch_stabilizer_indices(
-    stabilizer_indices: Sequence[int] | None,
-) -> tuple[int, ...]:
-    """Validate and return an ordered selection of patch stabilizer indices."""
-    if stabilizer_indices is None:
-        selected_indices = tuple(range(len(PATCH_X_STABILIZERS)))
-    else:
-        selected_indices = tuple(stabilizer_indices)
-    if not selected_indices:
-        raise ValueError("stabilizer_indices must select at least one stabilizer.")
-    if len(set(selected_indices)) != len(selected_indices) or any(
-        not 0 <= index < len(PATCH_X_STABILIZERS) for index in selected_indices
-    ):
-        raise ValueError("stabilizer_indices must contain distinct indices in [0, 2].")
-    return selected_indices
-
-
-def append_patch_stabilizer_measurement(
+def append_11_site_patch_stabilizer_measurement(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
     classical_bits: Sequence,
-    basis: PatchStabilizerBasis = "both",
+    basis: PatchStabilizerBasis = "BOTH",
     stabilizer_indices: Sequence[int] | None = None,
     add_barriers: bool = True,
 ) -> None:
@@ -681,11 +496,11 @@ def append_patch_stabilizer_measurement(
         Eleven qubits indexed by the 11-site patch labels.
     classical_bits
         One bit per selected stabilizer for a single basis, or two bits per
-        selected stabilizer for ``"both"``. In ``"both"`` mode, the first
+        selected stabilizer for ``"BOTH"``. In ``"BOTH"`` mode, the first
         group holds X-stabilizer outcomes and the second holds Z-stabilizer
         outcomes.
     basis
-        Stabilizer basis to measure. The default ``"both"`` preserves the
+        Stabilizer basis to measure. The default ``"BOTH"`` preserves the
         original full-syndrome behavior.
     stabilizer_indices
         Ordered subset of the three patch stabilizers to measure. ``None``
@@ -696,28 +511,28 @@ def append_patch_stabilizer_measurement(
     """
     patch_qubits = resolve_patch_qubits(
         patch_qubits,
-        expected_count=NUM_PATCH_QUBITS,
+        expected_count=NUM_QUBITS_PATCH_11_SITES,
     )
-    if basis not in {"x", "z", "both"}:
-        raise ValueError("basis must be 'x', 'z', or 'both'.")
+    if basis not in {"X", "Z", "BOTH"}:
+        raise ValueError("basis must be 'X', 'Z', or 'BOTH'.")
 
-    selected_indices = resolve_patch_stabilizer_indices(stabilizer_indices)
+    selected_indices = resolve_11_site_patch_stabilizer_indices(stabilizer_indices)
 
-    required_bits = len(selected_indices) * (2 if basis == "both" else 1)
+    required_bits = len(selected_indices) * (2 if basis == "BOTH" else 1)
     if len(classical_bits) < required_bits:
         raise ValueError(f"classical_bits must contain at least {required_bits} bits.")
 
     cb = list(classical_bits)
-    anc_sites = PATCH_STABILIZER_ANCILLA_SITES
+    anc_sites = PATCH_11_SITE_STABILIZER_ANCILLA_SITES
     selected_ancilla_sites = tuple(anc_sites[index] for index in selected_indices)
 
-    if basis in {"x", "both"}:
+    if basis in {"X", "BOTH"}:
         # X-stabilizer measurements.
         for site in selected_ancilla_sites:
             circuit.reset(patch_qubits[site])
         for output_index, stabilizer_index in enumerate(selected_indices):
             ancilla_site = anc_sites[stabilizer_index]
-            support = PATCH_X_STABILIZERS[stabilizer_index]
+            support = PATCH_11_SITE_X_STABILIZERS[stabilizer_index]
             append_parity_measurement(
                 circuit,
                 "X",
@@ -726,17 +541,17 @@ def append_patch_stabilizer_measurement(
                 classical_bit=cb[output_index],
             )
 
-    if basis == "both" and add_barriers:
+    if basis == "BOTH" and add_barriers:
         circuit.barrier()
 
-    if basis in {"z", "both"}:
+    if basis in {"Z", "BOTH"}:
         # Z-stabilizer measurements.
         for site in selected_ancilla_sites:
             circuit.reset(patch_qubits[site])
-        classical_offset = len(selected_indices) if basis == "both" else 0
+        classical_offset = len(selected_indices) if basis == "BOTH" else 0
         for output_index, stabilizer_index in enumerate(selected_indices):
             ancilla_site = anc_sites[stabilizer_index]
-            support = PATCH_Z_STABILIZERS[stabilizer_index]
+            support = PATCH_11_SITE_Z_STABILIZERS[stabilizer_index]
             append_parity_measurement(
                 circuit,
                 "Z",
@@ -751,7 +566,7 @@ def append_patch_stabilizer_measurement(
 # ---------------------------------------------------------------------------
 
 
-def append_patch_logical_measurement(
+def append_11_site_patch_logical_measurement(
     circuit: QuantumCircuit,
     basis: str = "Z",
     *,
@@ -773,7 +588,8 @@ def append_patch_logical_measurement(
         Eleven qubits indexed by the 11-site patch labels.
     support
         Patch-site indices for the logical representative. Defaults to
-        ``PATCH_DEFAULT_LOGICAL_Z`` for Z, or ``PATCH_DEFAULT_LOGICAL_X`` for X and Y.
+        ``PATCH_11_SITE_DEFAULT_LOGICAL_Z`` for Z, or
+        ``PATCH_11_SITE_DEFAULT_LOGICAL_X`` for X and Y.
         For simplicity, a Y support must be a common X_L and Z_L representative.
     ancilla_qubit
         For non-destructive measurement, the ancilla qubit to use. Required
@@ -787,14 +603,14 @@ def append_patch_logical_measurement(
     """
     patch_qubits = resolve_patch_qubits(
         patch_qubits,
-        expected_count=NUM_PATCH_QUBITS,
+        expected_count=NUM_QUBITS_PATCH_11_SITES,
     )
     append_logical_measurement_on_indexed_qubits(
         circuit,
         basis,
         indexed_qubits=patch_qubits,
-        default_logical_x=PATCH_DEFAULT_LOGICAL_X,
-        default_logical_z=PATCH_DEFAULT_LOGICAL_Z,
+        default_logical_x=PATCH_11_SITE_DEFAULT_LOGICAL_X,
+        default_logical_z=PATCH_11_SITE_DEFAULT_LOGICAL_Z,
         support=support,
         ancilla_qubit=ancilla_qubit,
         classical_bits=classical_bits,

@@ -40,10 +40,10 @@ from msc.steane_code.magic_state_cultivation_stim import (
 )
 from msc.steane_code.state_injection_stim import (
     DEFAULT_STIM_INJECTED_STATE,
-    PATCH_HELPER_SITES,
+    PATCH_11_SITE_HELPER_SITES,
     StimInjectedStateName,
-    append_patch_stabilizer_measurement,
-    append_patch_steane_state_injection_encoder_crumble_sequences,
+    append_11_site_patch_rosenfeld_encoder,
+    append_11_site_patch_stabilizer_measurement,
 )
 from msc.utils import circuit_stim
 
@@ -62,7 +62,7 @@ def build_kickback_tomography_experiment(
     include_preparation_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     qed_cycle_indices: Iterable[int] = KT_DEFAULT_QED_CYCLE_INDICES,
-    final_stabilizer_basis: FinalStabilizerMode = "x",
+    final_stabilizer_basis: FinalStabilizerMode = "X",
     add_ticks: bool = True,
 ) -> KickbackTomographyExperiment:
     """Build a Clifford (Stim) Steane-patch kickback tomography experiment.
@@ -76,13 +76,13 @@ def build_kickback_tomography_experiment(
     with logical-Y cultivation (proxy for logical ``H_XY``).
     Every cultivation and KT round therefore measures the logical-Y axis.
 
-    When ``measure_encoder_flags`` is true, the four Crumble-encoder flag
+    When ``measure_encoder_flags`` is true, the four Rosenfeld-encoder flag
     qubits are measured immediately after encoding, before any QED cycle. KT
     postselection then requires each flag to be zero, flagging encoding faults.
 
     ``qed_cycle_indices`` uses the paper's one-based numbering and defaults to
     ``(1, 3)``. An empty tuple omits the QED cycles. The final stabilizer basis
-    may be ``"x"``, ``"z"``, ``"both"``, or ``"none"``.
+    may be ``"X"``, ``"Z"``, ``"BOTH"``, or ``"NONE"``.
     """
     qed_indices = normalize_qed_cycle_indices(qed_cycle_indices)
 
@@ -92,7 +92,7 @@ def build_kickback_tomography_experiment(
 
     def add_qed_cycle(index: int) -> None:
         nonlocal record_count
-        append_patch_stabilizer_measurement(
+        append_11_site_patch_stabilizer_measurement(
             circuit,
             add_ticks=add_ticks,
         )
@@ -121,7 +121,7 @@ def build_kickback_tomography_experiment(
         record_count += CULTIVATION_MEASUREMENTS_PER_ROUND
         return bits
 
-    append_patch_steane_state_injection_encoder_crumble_sequences(
+    append_11_site_patch_rosenfeld_encoder(
         circuit,
         injected_state=injected_state,
         measure_flags=measure_encoder_flags,
@@ -129,8 +129,10 @@ def build_kickback_tomography_experiment(
     )
     encoder_flag_positions: tuple[int, ...] = ()
     if measure_encoder_flags:
-        encoder_flag_positions = tuple(range(record_count, record_count + len(PATCH_HELPER_SITES)))
-        record_count += len(PATCH_HELPER_SITES)
+        encoder_flag_positions = tuple(
+            range(record_count, record_count + len(PATCH_11_SITE_HELPER_SITES))
+        )
+        record_count += len(PATCH_11_SITE_HELPER_SITES)
 
     if 1 in qed_indices:
         add_qed_cycle(1)
@@ -153,7 +155,7 @@ def build_kickback_tomography_experiment(
     final_bit_count = final_stabilizer_bit_count(final_stabilizer_basis)
     final_positions: tuple[int, ...] = ()
     if final_bit_count:
-        append_patch_stabilizer_measurement(
+        append_11_site_patch_stabilizer_measurement(
             circuit,
             basis=final_stabilizer_basis,
             add_ticks=add_ticks,
