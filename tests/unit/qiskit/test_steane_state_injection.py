@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import math
+from itertools import combinations
+from typing import NamedTuple
 
 import pytest
-from qiskit import QuantumCircuit
+from qiskit import QuantumCircuit, transpile
 from qiskit.quantum_info import SparsePauliOp, Statevector
+from qiskit.transpiler.passes import RemoveBarriers
 from qiskit_aer import AerSimulator
 
 from msc.noise import append_pauli_faults
@@ -14,13 +17,23 @@ from msc.steane_code.state_injection_common import (
     LOGICAL_X_REPRESENTATIVES,
     LOGICAL_Z_REPRESENTATIVES,
     NUM_QUBITS_PATCH_11_SITES,
+    NUM_QUBITS_PATCH_14_SITES,
+    PATCH_11_SITE_COORDS,
     PATCH_11_SITE_DATA_SITES,
     PATCH_11_SITE_HELPER_SITES,
     PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES,
     PATCH_11_SITE_LOGICAL_Z_REPRESENTATIVES,
-    PATCH_11_SITE_ROSENFELD_ENCODER_LAYERS,
     PATCH_11_SITE_X_STABILIZERS,
     PATCH_11_SITE_Z_STABILIZERS,
+    PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES,
+    PATCH_14_SITE_COORDS,
+    PATCH_14_SITE_DATA_SITES,
+    PATCH_14_SITE_HELPER_SITES,
+    PATCH_14_SITE_HIRANO_ENCODER_COORDS,
+    PATCH_14_SITE_LOGICAL_X_REPRESENTATIVES,
+    PATCH_14_SITE_LOGICAL_Z_REPRESENTATIVES,
+    PATCH_14_SITE_X_STABILIZERS,
+    PATCH_14_SITE_Z_STABILIZERS,
     X_STABILIZERS,
     Z_STABILIZERS,
 )
@@ -30,44 +43,21 @@ from msc.steane_code.state_injection_qiskit import (
     append_11_site_patch_logical_measurement,
     append_11_site_patch_rosenfeld_encoder,
     append_11_site_patch_stabilizer_measurement,
+    append_14_site_patch_abstract_encoder,
+    append_14_site_patch_abstract_routed_encoder,
+    append_14_site_patch_hirano_encoder,
+    append_14_site_patch_logical_measurement,
+    append_14_site_patch_superdense_stabilizer_measurement,
     append_abstract_encoder,
-    append_logical_measurement,
-    append_stabilizer_measurement,
 )
-from msc.utils.circuit_qiskit import (
-    ibm_backend,
-    ibm_backend_available,
-    two_qubit_depth,
-)
+from msc.utils.circuit_qiskit import two_qubit_depth
 from msc.utils.normalize import normalize_pauli_char, parse_qiskit_bitstring
 
 NUM_DATA_QUBITS = 7
 TOLERANCE = 1e-10
 
 
-def _expected_logical_expectation_values(
-    state: InjectedStateName,
-) -> tuple[float, float, float]:
-    """Return (⟨Z_L⟩, ⟨X_L⟩, ⟨Y_L⟩) for the given injected state."""
-    inv_sqrt2 = 1.0 / math.sqrt(2)
-    expectations: dict[str, tuple[float, float, float]] = {
-        "0": (1.0, 0.0, 0.0),
-        "1": (-1.0, 0.0, 0.0),
-        "+": (0.0, 1.0, 0.0),
-        "-": (0.0, -1.0, 0.0),
-        "i": (0.0, 0.0, 1.0),
-        "-i": (0.0, 0.0, -1.0),
-        "Y+": (0.0, 0.0, 1.0),
-        "Y-": (0.0, 0.0, -1.0),
-        "S": (0.0, 0.0, 1.0),
-        "T": (0.0, inv_sqrt2, inv_sqrt2),
-        "Tdg": (0.0, inv_sqrt2, -inv_sqrt2),
-        "Ty": (inv_sqrt2, inv_sqrt2, 0.0),
-    }
-    return expectations[state]
-
-
-ALL_STATES: list[InjectedStateName] = [
+ALL_STATES: tuple[InjectedStateName, ...] = (
     "0",
     "1",
     "+",
@@ -77,29 +67,47 @@ ALL_STATES: list[InjectedStateName] = [
     "Y+",
     "Y-",
     "S",
+    "Sdg",
     "T",
     "Tdg",
     "Ty",
-]
+)
+HIRANO_STATES: tuple[InjectedStateName, ...] = (
+    "S",
+    "i",
+    "Y+",
+    "Sdg",
+    "-i",
+    "Y-",
+)
 
+_INV_SQRT_2 = 1.0 / math.sqrt(2)
+LOGICAL_EXPECTATION_VALUES: dict[InjectedStateName, tuple[float, float, float]] = {
+    "0": (1.0, 0.0, 0.0),
+    "1": (-1.0, 0.0, 0.0),
+    "+": (0.0, 1.0, 0.0),
+    "-": (0.0, -1.0, 0.0),
+    "i": (0.0, 0.0, 1.0),
+    "-i": (0.0, 0.0, -1.0),
+    "Y+": (0.0, 0.0, 1.0),
+    "Y-": (0.0, 0.0, -1.0),
+    "S": (0.0, 0.0, 1.0),
+    "Sdg": (0.0, 0.0, -1.0),
+    "T": (0.0, _INV_SQRT_2, _INV_SQRT_2),
+    "Tdg": (0.0, _INV_SQRT_2, -_INV_SQRT_2),
+    "Ty": (_INV_SQRT_2, _INV_SQRT_2, 0.0),
+}
 LOGICAL_EXPECTATION_INDEX = {"Z": 0, "X": 1, "Y": 2}
 
-LOGICAL_BASIS_CASES = [
-    pytest.param("Z", LOGICAL_Z_REPRESENTATIVES, id="Z"),
-    pytest.param("X", LOGICAL_X_REPRESENTATIVES, id="X"),
-    # Steane self-duality gives Y_L the same common X_L/Z_L supports.
-    pytest.param("Y", LOGICAL_X_REPRESENTATIVES, id="Y"),
-]
 
-PATCH_11_SITE_LOGICAL_BASIS_CASES = [
-    pytest.param("Z", PATCH_11_SITE_LOGICAL_Z_REPRESENTATIVES, id="Z"),
-    pytest.param("X", PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES, id="X"),
-    pytest.param("Y", PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES, id="Y"),
-]
+# =============================================================================
+# Abstract
+# =============================================================================
 
-# --------------------------------------
-# Destructive logical expectation values
-# --------------------------------------
+
+# --------------------------
+# Logical expectation values
+# --------------------------
 
 
 def _logical_pauli_label(support: tuple[int, ...], pauli: str, n_qubits: int) -> str:
@@ -107,11 +115,11 @@ def _logical_pauli_label(support: tuple[int, ...], pauli: str, n_qubits: int) ->
     Build a Qiskit SparsePauliOp label for a multi-qubit Pauli.
     Qiskit labels are little-endian: label[0] acts on qubit 0 (rightmost in string).
     """
-    chars = ["I"] * n_qubits
-    for q in support:
-        chars[q] = pauli
+    characters = ["I"] * n_qubits
+    for site in support:
+        characters[site] = pauli
     # SparsePauliOp uses reversed ordering (qubit 0 is rightmost).
-    return "".join(reversed(chars))
+    return "".join(reversed(characters))
 
 
 def _logical_pauli_observable(
@@ -128,837 +136,635 @@ def _logical_pauli_observable(
     return observable
 
 
-def _measure_logical_expectation_destructive(
-    state: InjectedStateName,
-    basis: str,
-    support: tuple[int, ...],
-) -> float:
-    """Encode |state_L⟩ and compute ⟨basis_L⟩ via statevector simulator."""
-    encoder = QuantumCircuit(NUM_DATA_QUBITS)
-    append_abstract_encoder(
-        encoder,
-        data_qubits=list(range(NUM_DATA_QUBITS)),
-        injected_state=state,
-        add_barriers=False,
-    )
-    encoder.save_expectation_value(
-        _logical_pauli_observable(support, basis, NUM_DATA_QUBITS),
-        list(range(NUM_DATA_QUBITS)),
-        label="ev",
-    )
-
-    simulator = AerSimulator(method="statevector")
-    result = simulator.run(encoder).result()
-    return result.data()["ev"].real
-
-
-@pytest.mark.parametrize(("basis", "representatives"), LOGICAL_BASIS_CASES)
+@pytest.mark.parametrize("basis", ["X", "Y", "Z"])
 @pytest.mark.parametrize("state", ALL_STATES)
 def test_logical_expectation(
     state: InjectedStateName,
     basis: str,
-    representatives: tuple[tuple[int, ...], ...],
 ) -> None:
     """Verify ⟨P_L⟩ for every state, Pauli basis, and weight-3 representative."""
-    expected = _expected_logical_expectation_values(state)[LOGICAL_EXPECTATION_INDEX[basis]]
-    for rep in representatives:
-        measured = _measure_logical_expectation_destructive(state, basis, support=rep)
-        assert measured == pytest.approx(expected, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: "
-            f"⟨{basis}_L⟩ expected {expected:.4f}, got {measured:.4f}"
-        )
-
-
-# ------------------------------------------------------------------
-# Non-destructive logical measurement via append_logical_measurement
-# ------------------------------------------------------------------
-
-
-def _measure_logical_expectation_non_destructive(
-    state: InjectedStateName,
-    basis: str,
-    support: tuple[int, ...],
-) -> float:
-    """
-    Encode |state_L⟩, append non-destructive logical measurement via
-    append_logical_measurement, and compute ⟨Z⟩ on the ancilla via
-    save_expectation_value.
-    """
-    # 7 data + 1 ancilla + 1 classical bit.
-    circuit = QuantumCircuit(NUM_DATA_QUBITS + 1, 1)
+    circuit = QuantumCircuit(NUM_DATA_QUBITS)
     append_abstract_encoder(
         circuit,
         data_qubits=list(range(NUM_DATA_QUBITS)),
         injected_state=state,
         add_barriers=False,
     )
-
-    anc = NUM_DATA_QUBITS
-    append_logical_measurement(
-        circuit,
-        basis,
-        data_qubits=list(range(NUM_DATA_QUBITS)),
-        support=support,
-        ancilla_qubit=anc,
-        classical_bits=[0],
-        destructive=False,
-    )
-
-    if basis == "Y":
-        # Statevector cannot apply Store, and remove_final_measurements leaves
-        # it behind. Remove it here and apply its sign below.
-        assert circuit.data[-1].operation.name == "store"
-        circuit.data.pop()
-
-    # Remove measurements so we can use save_expectation_value.
-    circuit.remove_final_measurements(inplace=True)
-
-    circuit.save_expectation_value(SparsePauliOp("Z"), [anc], label="ev")
-
-    simulator = AerSimulator(method="statevector")
-    result = simulator.run(circuit).result()
-    expectation = result.data()["ev"].real
-    return -expectation if basis == "Y" else expectation
+    statevector = Statevector(circuit)
+    representatives = LOGICAL_Z_REPRESENTATIVES if basis == "Z" else LOGICAL_X_REPRESENTATIVES
+    expected = LOGICAL_EXPECTATION_VALUES[state][LOGICAL_EXPECTATION_INDEX[basis]]
+    for support in representatives:
+        measured = statevector.expectation_value(
+            _logical_pauli_observable(support, basis, NUM_DATA_QUBITS)
+        ).real
+        assert measured == pytest.approx(expected, abs=TOLERANCE)
 
 
-@pytest.mark.parametrize(("basis", "representatives"), LOGICAL_BASIS_CASES)
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_logical_via_measurement_circuit(
-    state: InjectedStateName,
-    basis: str,
-    representatives: tuple[tuple[int, ...], ...],
-) -> None:
-    """Verify ancilla readout equals ⟨P_L⟩ for every logical Pauli representative."""
-    expected = _expected_logical_expectation_values(state)[LOGICAL_EXPECTATION_INDEX[basis]]
-    for rep in representatives:
-        measured = _measure_logical_expectation_non_destructive(state, basis, support=rep)
-        assert measured == pytest.approx(expected, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: "
-            f"⟨Z_anc⟩ expected {expected:.4f}, got {measured:.4f}"
-        )
+# =============================================================================
+# 11-site and 14-site patches
+# =============================================================================
 
 
-# -----------------------------------------------------
-# Stabilizer syndrome via append_stabilizer_measurement
-# -----------------------------------------------------
+class PatchTestSpec(NamedTuple):
+    """Geometry and operator supports shared by the parameterized patch tests."""
+
+    name: str
+    # The full patch width, including data and any encoder helper sites.
+    num_qubits: int
+    data_sites: tuple[int, ...]
+    x_stabilizers: tuple[tuple[int, ...], ...]
+    z_stabilizers: tuple[tuple[int, ...], ...]
+    logical_x_representatives: tuple[tuple[int, ...], ...]
+    logical_z_representatives: tuple[tuple[int, ...], ...]
 
 
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_all_stabilizers_plus_one(state: InjectedStateName) -> None:
-    """Verify all 6 syndrome ancillas give ⟨Z⟩ = +1 using append_stabilizer_measurement."""
-
-    n_ancilla = 6
-    circuit = QuantumCircuit(NUM_DATA_QUBITS + n_ancilla, n_ancilla)
-    append_abstract_encoder(
-        circuit,
-        data_qubits=list(range(NUM_DATA_QUBITS)),
-        injected_state=state,
-        add_barriers=False,
-    )
-
-    append_stabilizer_measurement(
-        circuit,
-        data_qubits=list(range(NUM_DATA_QUBITS)),
-        ancilla_qubits=list(range(NUM_DATA_QUBITS, NUM_DATA_QUBITS + n_ancilla)),
-        classical_bits=list(range(n_ancilla)),
-    )
-
-    # Remove measurements so we can use save_expectation_value.
-    circuit.remove_final_measurements(inplace=True)
-
-    # Check ⟨Z⟩ = +1 on each ancilla individually.
-    simulator = AerSimulator(method="statevector")
-    for idx in range(n_ancilla):
-        anc = NUM_DATA_QUBITS + idx
-        circ_copy = circuit.copy()
-        circ_copy.save_expectation_value(SparsePauliOp("Z"), [anc], label="ev")
-        result = simulator.run(circ_copy).result()
-        ev = result.data()["ev"].real
-
-        stab_type = "X" if idx < 3 else "Z"
-        stab_idx = idx if idx < 3 else idx - 3
-        assert ev == pytest.approx(
-            1.0, abs=TOLERANCE
-        ), f"State {state!r}: {stab_type}-stabilizer {stab_idx} ⟨Z_anc⟩ expected 1.0, got {ev:.6f}"
-
-
-# ----------------------------------------
-# Logical representative consistency check
-# ----------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("basis", "stabilizers", "representatives"),
-    [
-        pytest.param("X", X_STABILIZERS, LOGICAL_X_REPRESENTATIVES, id="X"),
-        pytest.param("Z", Z_STABILIZERS, LOGICAL_Z_REPRESENTATIVES, id="Z"),
-    ],
+PATCH_11_SITE_TEST_SPEC = PatchTestSpec(
+    "11-site",
+    NUM_QUBITS_PATCH_11_SITES,
+    PATCH_11_SITE_DATA_SITES,
+    PATCH_11_SITE_X_STABILIZERS,
+    PATCH_11_SITE_Z_STABILIZERS,
+    PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES,
+    PATCH_11_SITE_LOGICAL_Z_REPRESENTATIVES,
 )
-def test_logical_representatives_are_weight_seven_times_stabilizer(
-    basis: str,
-    stabilizers: tuple[tuple[int, ...], ...],
-    representatives: tuple[tuple[int, ...], ...],
-) -> None:
-    """Verify each logical representative equals P^7 times a stabilizer."""
-    from itertools import combinations
+PATCH_14_SITE_TEST_SPEC = PatchTestSpec(
+    "14-site",
+    NUM_QUBITS_PATCH_14_SITES,
+    PATCH_14_SITE_DATA_SITES,
+    PATCH_14_SITE_X_STABILIZERS,
+    PATCH_14_SITE_Z_STABILIZERS,
+    PATCH_14_SITE_LOGICAL_X_REPRESENTATIVES,
+    PATCH_14_SITE_LOGICAL_Z_REPRESENTATIVES,
+)
 
-    stab_supports = [set(s) for s in stabilizers]
-
-    # Generate all 8 elements of the stabilizer group (as sets of qubit indices).
-    stab_group: list[set[int]] = [set()]
-    for r in range(1, len(stab_supports) + 1):
-        for combo in combinations(stab_supports, r):
-            elem: set[int] = set()
-            for s in combo:
-                elem = elem.symmetric_difference(s)
-            stab_group.append(elem)
-
-    all_7 = set(range(7))
-
-    for rep in representatives:
-        rep_set = set(rep)
-        found = any(all_7.symmetric_difference(g) == rep_set for g in stab_group)
-        assert found, (
-            f"{basis}_L representative {rep} is not "
-            f"{basis}^7 times any stabilizer group element"
+PATCH_ENCODERS = [
+    pytest.param(PATCH_11_SITE_TEST_SPEC, "abstract", id="11-site-abstract"),
+    pytest.param(PATCH_11_SITE_TEST_SPEC, "rosenfeld", id="11-site-rosenfeld"),
+    pytest.param(PATCH_14_SITE_TEST_SPEC, "abstract", id="14-site-abstract"),
+    pytest.param(
+        PATCH_14_SITE_TEST_SPEC,
+        "abstract-routed",
+        id="14-site-abstract-routed",
+    ),
+    pytest.param(PATCH_14_SITE_TEST_SPEC, "hirano", id="14-site-hirano"),
+]
+ARBITRARY_STATE_PATCH_ENCODERS = (
+    (PATCH_11_SITE_TEST_SPEC, "abstract"),
+    (PATCH_11_SITE_TEST_SPEC, "rosenfeld"),
+    (PATCH_14_SITE_TEST_SPEC, "abstract"),
+    (PATCH_14_SITE_TEST_SPEC, "abstract-routed"),
+)
+PATCH_ENCODER_STATE_CASES = [
+    pytest.param(spec, encoder, state, id=f"{spec.name}-{encoder}-{state}")
+    for spec, encoder in ARBITRARY_STATE_PATCH_ENCODERS
+    for state in ALL_STATES
+] + [
+    pytest.param(PATCH_14_SITE_TEST_SPEC, "hirano", state, id=f"14-site-hirano-{state}")
+    for state in HIRANO_STATES
+]
+PATCH_FAULT_ENCODER_STATE_CASES = [
+    pytest.param(spec, encoder, state, id=f"{spec.name}-{encoder}-{state}")
+    for spec, encoder in ARBITRARY_STATE_PATCH_ENCODERS
+    for state in ("0", "T", "Ty")
+] + [
+    pytest.param(PATCH_14_SITE_TEST_SPEC, "hirano", state, id=f"14-site-hirano-{state}")
+    for state in ("S", "Sdg")
+]
+PATCH_ROUTED_ENCODERS = [
+    pytest.param(PATCH_11_SITE_TEST_SPEC, "rosenfeld", id="11-site-rosenfeld"),
+    pytest.param(PATCH_14_SITE_TEST_SPEC, "hirano", id="14-site-hirano"),
+    pytest.param(PATCH_14_SITE_TEST_SPEC, "abstract-routed", id="14-site-abstract-routed"),
+]
+PATCH_ROUTED_ENCODER_STATE_CASES = (
+    [
+        pytest.param(
+            PATCH_11_SITE_TEST_SPEC,
+            "rosenfeld",
+            state,
+            id=f"11-site-rosenfeld-{state}",
         )
-
-
-def test_steane_code_is_css_self_dual() -> None:
-    """Verify X and Z stabilizers have the same supports (CSS self-dual)."""
-    assert X_STABILIZERS == Z_STABILIZERS
-    assert LOGICAL_X_REPRESENTATIVES == LOGICAL_Z_REPRESENTATIVES
-
-
-# =============================================================================
-# 11-site patch versions of all tests above
-# =============================================================================
-
-N_PATCH_ANCILLA = 6
-
-PATCH_11_SITE_ENCODERS = ["abstract", "rosenfeld"]
+        for state in ALL_STATES
+    ]
+    + [
+        pytest.param(PATCH_14_SITE_TEST_SPEC, "hirano", state, id=f"14-site-hirano-{state}")
+        for state in HIRANO_STATES
+    ]
+    + [
+        pytest.param(
+            PATCH_14_SITE_TEST_SPEC,
+            "abstract-routed",
+            state,
+            id=f"14-site-abstract-routed-{state}",
+        )
+        for state in ALL_STATES
+    ]
+)
 
 
 def _apply_patch_encoder(
     circuit: QuantumCircuit,
+    patch_spec: PatchTestSpec,
     encoder: str,
-    *,
-    patch_qubits: list[int],
     injected_state: InjectedStateName,
-    add_barriers: bool = False,
 ) -> None:
-    """Dispatch to the abstract or Rosenfeld et al. encoder on the 11-site patch."""
-    if encoder == "abstract":
+    """Append one encoder covered by the shared patch tests."""
+    patch_qubits = list(range(patch_spec.num_qubits))
+    if patch_spec.name == "11-site" and encoder == "abstract":
         append_11_site_patch_abstract_encoder(
             circuit,
             patch_qubits=patch_qubits,
             injected_state=injected_state,
-            add_barriers=add_barriers,
+            add_barriers=False,
         )
-    elif encoder == "rosenfeld":
+    elif patch_spec.name == "11-site" and encoder == "rosenfeld":
         append_11_site_patch_rosenfeld_encoder(
             circuit,
             patch_qubits=patch_qubits,
             injected_state=injected_state,
-            add_barriers=add_barriers,
+            add_barriers=False,
+        )
+    elif patch_spec.name == "14-site" and encoder == "abstract":
+        append_14_site_patch_abstract_encoder(
+            circuit,
+            patch_qubits=patch_qubits,
+            injected_state=injected_state,
+            add_barriers=False,
+        )
+    elif patch_spec.name == "14-site" and encoder == "abstract-routed":
+        append_14_site_patch_abstract_routed_encoder(
+            circuit,
+            patch_qubits=patch_qubits,
+            injected_state=injected_state,
+            add_barriers=False,
+        )
+    elif patch_spec.name == "14-site" and encoder == "hirano":
+        append_14_site_patch_hirano_encoder(
+            circuit,
+            patch_qubits=patch_qubits,
+            injected_state=injected_state,
+            add_barriers=False,
         )
     else:
-        raise ValueError(f"Unknown encoder: {encoder!r}")
+        raise ValueError(f"Unsupported {patch_spec.name} encoder: {encoder!r}")
 
 
-def _patch_measure_logical_expectation_destructive(
-    state: InjectedStateName,
-    basis: str,
-    support: tuple[int, ...],
-    encoder: str = "abstract",
-) -> float:
-    """Encode on 11-site patch and compute ⟨basis_L⟩ directly via statevector."""
-    circuit = QuantumCircuit(NUM_QUBITS_PATCH_11_SITES)
-    _apply_patch_encoder(
-        circuit,
-        encoder,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        injected_state=state,
-        add_barriers=False,
-    )
-
-    circuit.save_expectation_value(
-        _logical_pauli_observable(support, basis, NUM_QUBITS_PATCH_11_SITES),
-        list(range(NUM_QUBITS_PATCH_11_SITES)),
-        label="ev",
-    )
-
-    simulator = AerSimulator(method="statevector")
-    result = simulator.run(circuit).result()
-    return result.data()["ev"].real
+# --------------------------
+# Logical expectation values
+# --------------------------
 
 
-@pytest.mark.parametrize(("basis", "representatives"), PATCH_11_SITE_LOGICAL_BASIS_CASES)
-@pytest.mark.parametrize("encoder", PATCH_11_SITE_ENCODERS)
-@pytest.mark.parametrize("state", ALL_STATES)
+@pytest.mark.parametrize("basis", ["X", "Y", "Z"])
+@pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ENCODER_STATE_CASES)
 def test_patch_logical_expectation(
-    state: InjectedStateName,
+    patch_spec: PatchTestSpec,
     encoder: str,
-    basis: str,
-    representatives: tuple[tuple[int, ...], ...],
-) -> None:
-    """Verify ⟨P_L⟩ on both 11-site patch encoders for every representative."""
-    expected = _expected_logical_expectation_values(state)[LOGICAL_EXPECTATION_INDEX[basis]]
-    for rep in representatives:
-        measured = _patch_measure_logical_expectation_destructive(
-            state,
-            basis,
-            support=rep,
-            encoder=encoder,
-        )
-        assert measured == pytest.approx(expected, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: "
-            f"⟨{basis}_L⟩ expected {expected:.4f}, got {measured:.4f}"
-        )
-
-
-# ----------------------------------------------------
-# Non-destructive logical measurement on 11-site patch
-# ----------------------------------------------------
-
-
-def _patch_measure_logical_expectation_non_destructive(
     state: InjectedStateName,
     basis: str,
-    support: tuple[int, ...],
-    encoder: str = "abstract",
-) -> float:
-    """Encode on 11-site patch, append non-destructive logical measurement,
-    and compute ⟨Z⟩ on the ancilla via Statevector."""
-    anc_qubit = NUM_QUBITS_PATCH_11_SITES  # qubit index 11
-
-    circuit = QuantumCircuit(NUM_QUBITS_PATCH_11_SITES + 1, 1)
-    _apply_patch_encoder(
-        circuit,
-        encoder,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        injected_state=state,
-        add_barriers=False,
+) -> None:
+    """Verify every encoded patch state against every logical representative."""
+    circuit = QuantumCircuit(patch_spec.num_qubits)
+    _apply_patch_encoder(circuit, patch_spec, encoder, state)
+    statevector = Statevector(circuit)
+    representatives = (
+        patch_spec.logical_z_representatives
+        if basis == "Z"
+        else patch_spec.logical_x_representatives
     )
-
-    append_11_site_patch_logical_measurement(
-        circuit,
-        basis,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        support=support,
-        ancilla_qubit=anc_qubit,
-        classical_bits=[0],
-        destructive=False,
-    )
-
-    if basis == "Y":
-        # Statevector cannot apply Store, and remove_final_measurements leaves
-        # it behind. Remove it here and apply its sign below.
-        assert circuit.data[-1].operation.name == "store"
-        circuit.data.pop()
-
-    # Remove measurements so Statevector can be computed.
-    circuit.remove_final_measurements(inplace=True)
-
-    sv = Statevector(circuit)
-    expectation = sv.expectation_value(SparsePauliOp("Z"), [anc_qubit]).real
-    return -expectation if basis == "Y" else expectation
+    expected = LOGICAL_EXPECTATION_VALUES[state][LOGICAL_EXPECTATION_INDEX[basis]]
+    for support in representatives:
+        measured = statevector.expectation_value(
+            _logical_pauli_observable(support, basis, patch_spec.num_qubits)
+        ).real
+        assert measured == pytest.approx(expected, abs=TOLERANCE)
 
 
-@pytest.mark.parametrize(("basis", "representatives"), PATCH_11_SITE_LOGICAL_BASIS_CASES)
-@pytest.mark.parametrize("encoder", PATCH_11_SITE_ENCODERS)
-@pytest.mark.parametrize("state", ALL_STATES)
+# -----------------------------------
+# Non-destructive logical measurement
+# -----------------------------------
+
+
+@pytest.mark.parametrize("basis", ["X", "Y", "Z"])
+@pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ENCODER_STATE_CASES)
 def test_patch_logical_via_measurement_circuit(
-    state: InjectedStateName,
+    patch_spec: PatchTestSpec,
     encoder: str,
+    state: InjectedStateName,
     basis: str,
-    representatives: tuple[tuple[int, ...], ...],
 ) -> None:
-    """Verify patch ancilla readout equals ⟨P_L⟩ for every representative."""
-    expected = _expected_logical_expectation_values(state)[LOGICAL_EXPECTATION_INDEX[basis]]
-    for rep in representatives:
-        measured = _patch_measure_logical_expectation_non_destructive(
-            state,
+    """Verify ancilla readout against every patch logical representative."""
+    ancilla_qubit = patch_spec.num_qubits
+    representatives = (
+        patch_spec.logical_z_representatives
+        if basis == "Z"
+        else patch_spec.logical_x_representatives
+    )
+    expected = LOGICAL_EXPECTATION_VALUES[state][LOGICAL_EXPECTATION_INDEX[basis]]
+    for support in representatives:
+        circuit = QuantumCircuit(patch_spec.num_qubits + 1, 1)
+        _apply_patch_encoder(circuit, patch_spec, encoder, state)
+        measurement = (
+            append_11_site_patch_logical_measurement
+            if patch_spec.name == "11-site"
+            else append_14_site_patch_logical_measurement
+        )
+        measurement(
+            circuit,
             basis,
-            support=rep,
-            encoder=encoder,
+            patch_qubits=list(range(patch_spec.num_qubits)),
+            support=support,
+            ancilla_qubit=ancilla_qubit,
+            classical_bits=[0],
+            destructive=False,
         )
-        assert measured == pytest.approx(expected, abs=TOLERANCE), (
-            f"State {state!r}, support {rep}: "
-            f"⟨Z_anc⟩ expected {expected:.4f}, got {measured:.4f}"
-        )
+        if basis == "Y":
+            assert circuit.data[-1].operation.name == "store"
+            circuit.data.pop()
+        circuit.remove_final_measurements(inplace=True)
+        measured = Statevector(circuit).expectation_value(SparsePauliOp("Z"), [ancilla_qubit]).real
+        if basis == "Y":
+            measured = -measured
+        assert measured == pytest.approx(expected, abs=TOLERANCE)
 
 
-# ----------------------------------------------
-# Patch logical representative consistency check
-# ----------------------------------------------
+# ----------------------------------
+# Logical representative consistency
+# ----------------------------------
 
 
 @pytest.mark.parametrize(
-    ("basis", "stabilizers", "representatives"),
+    (
+        "data_sites",
+        "x_stabilizers",
+        "z_stabilizers",
+        "x_representatives",
+        "z_representatives",
+    ),
     [
         pytest.param(
-            "X", PATCH_11_SITE_X_STABILIZERS, PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES, id="X"
+            tuple(range(NUM_DATA_QUBITS)),
+            X_STABILIZERS,
+            Z_STABILIZERS,
+            LOGICAL_X_REPRESENTATIVES,
+            LOGICAL_Z_REPRESENTATIVES,
+            id="abstract",
         ),
         pytest.param(
-            "Z", PATCH_11_SITE_Z_STABILIZERS, PATCH_11_SITE_LOGICAL_Z_REPRESENTATIVES, id="Z"
+            PATCH_11_SITE_DATA_SITES,
+            PATCH_11_SITE_X_STABILIZERS,
+            PATCH_11_SITE_Z_STABILIZERS,
+            PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES,
+            PATCH_11_SITE_LOGICAL_Z_REPRESENTATIVES,
+            id="11-site",
+        ),
+        pytest.param(
+            PATCH_14_SITE_DATA_SITES,
+            PATCH_14_SITE_X_STABILIZERS,
+            PATCH_14_SITE_Z_STABILIZERS,
+            PATCH_14_SITE_LOGICAL_X_REPRESENTATIVES,
+            PATCH_14_SITE_LOGICAL_Z_REPRESENTATIVES,
+            id="14-site",
         ),
     ],
 )
-def test_patch_logical_representatives_are_weight_seven_times_stabilizer(
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_logical_representatives_are_weight_seven_times_stabilizer(
+    data_sites: tuple[int, ...],
+    x_stabilizers: tuple[tuple[int, ...], ...],
+    z_stabilizers: tuple[tuple[int, ...], ...],
+    x_representatives: tuple[tuple[int, ...], ...],
+    z_representatives: tuple[tuple[int, ...], ...],
     basis: str,
-    stabilizers: tuple[tuple[int, ...], ...],
-    representatives: tuple[tuple[int, ...], ...],
 ) -> None:
-    """Verify each patch logical representative equals P^7 times a stabilizer."""
-    from itertools import combinations
+    """Verify every logical representative equals P^7 times a stabilizer."""
+    stabilizers = x_stabilizers if basis == "X" else z_stabilizers
+    representatives = x_representatives if basis == "X" else z_representatives
+    stabilizer_group: list[set[int]] = [set()]
+    for count in range(1, len(stabilizers) + 1):
+        for combination in combinations((set(support) for support in stabilizers), count):
+            element: set[int] = set()
+            for support in combination:
+                element = element.symmetric_difference(support)
+            stabilizer_group.append(element)
 
-    stab_supports = [set(s) for s in stabilizers]
-
-    stab_group: list[set[int]] = [set()]
-    for r in range(1, len(stab_supports) + 1):
-        for combo in combinations(stab_supports, r):
-            elem: set[int] = set()
-            for s in combo:
-                elem = elem.symmetric_difference(s)
-            stab_group.append(elem)
-
-    all_data = set(PATCH_11_SITE_DATA_SITES)
-
-    for rep in representatives:
-        rep_set = set(rep)
-        found = any(all_data.symmetric_difference(g) == rep_set for g in stab_group)
-        assert found, (
-            f"Patch {basis}_L representative {rep} is not "
-            f"{basis}^7 times any stabilizer group element"
+    all_data = set(data_sites)
+    for representative in representatives:
+        assert any(
+            all_data.symmetric_difference(element) == set(representative)
+            for element in stabilizer_group
         )
 
 
-def test_patch_steane_code_is_css_self_dual() -> None:
-    """Verify patch X and Z stabilizers have the same supports (CSS self-dual)."""
-    assert PATCH_11_SITE_X_STABILIZERS == PATCH_11_SITE_Z_STABILIZERS
-    assert PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES == PATCH_11_SITE_LOGICAL_Z_REPRESENTATIVES
-
-
-# ------------------------------------
-# Stabilizer syndrome on 11-site patch
-# ------------------------------------
-
-
-@pytest.mark.parametrize("encoder", PATCH_11_SITE_ENCODERS)
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_all_stabilizers_via_ancilla_measurement(
-    state: InjectedStateName,
-    encoder: str,
+@pytest.mark.parametrize(
+    ("x_stabilizers", "z_stabilizers", "x_representatives", "z_representatives"),
+    [
+        pytest.param(
+            X_STABILIZERS,
+            Z_STABILIZERS,
+            LOGICAL_X_REPRESENTATIVES,
+            LOGICAL_Z_REPRESENTATIVES,
+            id="abstract",
+        ),
+        pytest.param(
+            PATCH_11_SITE_X_STABILIZERS,
+            PATCH_11_SITE_Z_STABILIZERS,
+            PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES,
+            PATCH_11_SITE_LOGICAL_Z_REPRESENTATIVES,
+            id="11-site",
+        ),
+        pytest.param(
+            PATCH_14_SITE_X_STABILIZERS,
+            PATCH_14_SITE_Z_STABILIZERS,
+            PATCH_14_SITE_LOGICAL_X_REPRESENTATIVES,
+            PATCH_14_SITE_LOGICAL_Z_REPRESENTATIVES,
+            id="14-site",
+        ),
+    ],
+)
+def test_steane_code_is_css_self_dual(
+    x_stabilizers: tuple[tuple[int, ...], ...],
+    z_stabilizers: tuple[tuple[int, ...], ...],
+    x_representatives: tuple[tuple[int, ...], ...],
+    z_representatives: tuple[tuple[int, ...], ...],
 ) -> None:
-    """Verify all 6 syndrome bits are 0 (eigenvalue +1) via measurement circuit."""
-    circuit = QuantumCircuit(NUM_QUBITS_PATCH_11_SITES, N_PATCH_ANCILLA)
-    _apply_patch_encoder(
-        circuit,
-        encoder,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        injected_state=state,
-        add_barriers=False,
-    )
-
-    append_11_site_patch_stabilizer_measurement(
-        circuit,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        classical_bits=list(range(N_PATCH_ANCILLA)),
-        add_barriers=False,
-    )
-
-    sim = AerSimulator()
-    counts = sim.run(circuit, shots=1).result().get_counts()
-    bitstring = next(iter(counts))
-    for idx in range(N_PATCH_ANCILLA):
-        bit_val = int(bitstring[-(idx + 1)])
-        stab_type = "X" if idx < 3 else "Z"
-        stab_idx = idx if idx < 3 else idx - 3
-        assert (
-            bit_val == 0
-        ), f"State {state!r}: {stab_type}-stabilizer {stab_idx} expected 0, got {bit_val}"
+    """Verify X and Z operators use the same supports."""
+    assert x_stabilizers == z_stabilizers
+    assert x_representatives == z_representatives
 
 
-@pytest.mark.parametrize("basis", ["X", "Z"])
-def test_patch_single_basis_stabilizer_measurement(basis: str) -> None:
-    """The shared patch helper supports the final one-basis KT check."""
-
-    circuit = QuantumCircuit(NUM_QUBITS_PATCH_11_SITES, 3)
-    append_11_site_patch_rosenfeld_encoder(
-        circuit,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        injected_state="Ty",
-        add_barriers=False,
-    )
-    append_11_site_patch_stabilizer_measurement(
-        circuit,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        classical_bits=list(range(3)),
-        basis=basis,
-        add_barriers=False,
-    )
-
-    counts = AerSimulator().run(circuit, shots=1).result().get_counts()
-
-    assert counts == {"000": 1}
-
-
-@pytest.mark.parametrize("basis", ["X", "Z"])
-def test_patch_selected_stabilizer_measurement(basis: str) -> None:
-    """The patch helper measures only the requested ordered stabilizer subset."""
-
-    circuit = QuantumCircuit(NUM_QUBITS_PATCH_11_SITES, 2)
-    append_11_site_patch_rosenfeld_encoder(
-        circuit,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        injected_state="Ty",
-        add_barriers=False,
-    )
-    measurement_start = len(circuit.data)
-    append_11_site_patch_stabilizer_measurement(
-        circuit,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        classical_bits=list(range(2)),
-        basis=basis,
-        stabilizer_indices=(0, 2),
-        add_barriers=False,
-    )
-
-    appended_instructions = circuit.data[measurement_start:]
-    assert all(circuit.qubits[6] not in instruction.qubits for instruction in appended_instructions)
-    assert (
-        sum(instruction.operation.name == "measure" for instruction in appended_instructions) == 2
-    )
-    assert AerSimulator().run(circuit, shots=1).result().get_counts() == {"00": 1}
-
-
-@pytest.mark.parametrize("encoder", PATCH_11_SITE_ENCODERS)
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_stabilizer_expectation_values(state: InjectedStateName, encoder: str) -> None:
-    """Verify ⟨S⟩ = +1 for all 6 stabilizer operators directly via Statevector."""
-    circuit = QuantumCircuit(NUM_QUBITS_PATCH_11_SITES)
-    _apply_patch_encoder(
-        circuit,
-        encoder,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        injected_state=state,
-        add_barriers=False,
-    )
-
-    sv = Statevector(circuit)
-
-    for i, support in enumerate(PATCH_11_SITE_X_STABILIZERS):
-        label = _logical_pauli_label(support, "X", NUM_QUBITS_PATCH_11_SITES)
-        ev = sv.expectation_value(SparsePauliOp(label)).real
-        assert ev == pytest.approx(1.0, abs=TOLERANCE), (
-            f"State {state!r}: X-stabilizer {i} (support {support}) "
-            f"⟨X_S⟩ expected 1.0, got {ev:.6f}"
-        )
-
-    for i, support in enumerate(PATCH_11_SITE_Z_STABILIZERS):
-        label = _logical_pauli_label(support, "Z", NUM_QUBITS_PATCH_11_SITES)
-        ev = sv.expectation_value(SparsePauliOp(label)).real
-        assert ev == pytest.approx(1.0, abs=TOLERANCE), (
-            f"State {state!r}: Z-stabilizer {i} (support {support}) "
-            f"⟨Z_S⟩ expected 1.0, got {ev:.6f}"
-        )
-
-
-# ---------------------------------------------------------
-# Stabilizer syndrome on 11-site patch with injected faults
-# ---------------------------------------------------------
-
-
-def _expected_patch_syndrome(
-    faults: list[tuple[str, int]],
-) -> tuple[tuple[int, ...], tuple[int, ...]]:
-    """Compute expected (x_syndrome, z_syndrome) for a list of (pauli, site) faults.
-
-    x_syndrome: 3 bits from X-stabilizer measurements (flag Z-type errors).
-    z_syndrome: 3 bits from Z-stabilizer measurements (flag X-type errors).
-    """
-    x_syn = [0, 0, 0]
-    z_syn = [0, 0, 0]
-    for pauli, site in faults:
-        pauli = normalize_pauli_char(pauli)
-        for i, support in enumerate(PATCH_11_SITE_X_STABILIZERS):
-            if site in support and pauli in ("Z", "Y"):
-                x_syn[i] ^= 1
-        for i, support in enumerate(PATCH_11_SITE_Z_STABILIZERS):
-            if site in support and pauli in ("X", "Y"):
-                z_syn[i] ^= 1
-    return tuple(x_syn), tuple(z_syn)
+# -------------------
+# Stabilizer syndrome
+# -------------------
 
 
 def _build_and_run_patch_syndrome(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    injected_state: InjectedStateName,
     faults: list[tuple[str, int]],
-    injected_state: InjectedStateName = "0",
-    encoder: str = "abstract",
 ) -> tuple[tuple[int, ...], tuple[int, ...]]:
-    """Inject faults after state injection, measure stabilizers, return (x_syn, z_syn)."""
-    circuit = QuantumCircuit(NUM_QUBITS_PATCH_11_SITES, N_PATCH_ANCILLA)
-
-    _apply_patch_encoder(
-        circuit,
-        encoder,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        injected_state=injected_state,
-        add_barriers=False,
-    )
-
-    # Inject faults.
+    """Encode, inject faults, and return the measured X/Z syndromes."""
+    circuit = QuantumCircuit(patch_spec.num_qubits, 6)
+    _apply_patch_encoder(circuit, patch_spec, encoder, injected_state)
     append_pauli_faults(circuit, faults)
+    if patch_spec.name == "11-site":
+        append_11_site_patch_stabilizer_measurement(
+            circuit,
+            patch_qubits=list(range(patch_spec.num_qubits)),
+            classical_bits=list(range(6)),
+            add_barriers=False,
+        )
+    else:
+        append_14_site_patch_superdense_stabilizer_measurement(
+            circuit,
+            patch_qubits=list(range(patch_spec.num_qubits)),
+            classical_bits=list(range(6)),
+            add_barriers=False,
+        )
 
-    # Measure all 6 stabilizers.
-    append_11_site_patch_stabilizer_measurement(
-        circuit,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        classical_bits=list(range(N_PATCH_ANCILLA)),
-        add_barriers=False,
+    bitstring = next(iter(AerSimulator().run(circuit, shots=1).result().get_counts()))
+    bits = parse_qiskit_bitstring(bitstring, tuple(f"b{i}" for i in range(6)))
+    if patch_spec.name == "11-site":
+        return (
+            tuple(bits[f"b{i}"] for i in range(3)),
+            tuple(bits[f"b{i}"] for i in range(3, 6)),
+        )
+    return (
+        tuple(bits[f"b{i}"] for i in (0, 2, 4)),
+        tuple(bits[f"b{i}"] for i in (1, 3, 5)),
     )
 
-    # Run 1 shot (noiseless, deterministic).
-    sim = AerSimulator()
-    bitstring = next(iter(sim.run(circuit, shots=1).result().get_counts()))
-    bit_labels = tuple(f"b{i}" for i in range(N_PATCH_ANCILLA))
-    bits = parse_qiskit_bitstring(bitstring, bit_labels)
-    # bits[0..2] = X-stabilizer outcomes, bits[3..5] = Z-stabilizer outcomes.
-    x_syn = tuple(bits[f"b{i}"] for i in range(3))
-    z_syn = tuple(bits[f"b{i}"] for i in range(3, 6))
-    return x_syn, z_syn
+
+@pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ENCODER_STATE_CASES)
+def test_patch_all_stabilizers_via_ancilla_measurement(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    state: InjectedStateName,
+) -> None:
+    """Verify all six measured stabilizer outcomes are trivial."""
+    assert _build_and_run_patch_syndrome(patch_spec, encoder, state, []) == (
+        (0, 0, 0),
+        (0, 0, 0),
+    )
 
 
-# -- Fault parametrizations --
+@pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ENCODER_STATE_CASES)
+def test_patch_stabilizer_expectation_values(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    state: InjectedStateName,
+) -> None:
+    """Verify all six stabilizer operators have expectation +1."""
+    circuit = QuantumCircuit(patch_spec.num_qubits)
+    _apply_patch_encoder(circuit, patch_spec, encoder, state)
+    statevector = Statevector(circuit)
+    for basis, stabilizers in (
+        ("X", patch_spec.x_stabilizers),
+        ("Z", patch_spec.z_stabilizers),
+    ):
+        for support in stabilizers:
+            label = _logical_pauli_label(support, basis, patch_spec.num_qubits)
+            assert statevector.expectation_value(SparsePauliOp(label)).real == pytest.approx(
+                1.0, abs=TOLERANCE
+            )
 
-_SINGLE_FAULTS = [[(p, s)] for p in ("X", "Y", "Z") for s in PATCH_11_SITE_DATA_SITES]
-_SINGLE_IDS = [f"{p}_{s}" for p in ("X", "Y", "Z") for s in PATCH_11_SITE_DATA_SITES]
 
-_TWO_SAME_FAULTS: list[list[tuple[str, int]]] = []
-_TWO_SAME_IDS: list[str] = []
-for _p in ("X", "Y", "Z"):
-    for _i, _s1 in enumerate(PATCH_11_SITE_DATA_SITES):
-        for _s2 in PATCH_11_SITE_DATA_SITES[_i + 1 :]:
-            _TWO_SAME_FAULTS.append([(_p, _s1), (_p, _s2)])
-            _TWO_SAME_IDS.append(f"{_p}{_p}_{_s1}_{_s2}")
+@pytest.mark.parametrize(("patch_spec", "encoder"), PATCH_ENCODERS)
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_patch_single_basis_stabilizer_measurement(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    basis: str,
+) -> None:
+    """Verify a complete one-basis stabilizer round on either patch."""
+    classical_bit_count = 6 if patch_spec.name == "14-site" else 3
+    circuit = QuantumCircuit(patch_spec.num_qubits, classical_bit_count)
+    _apply_patch_encoder(circuit, patch_spec, encoder, "S")
+    if patch_spec.name == "11-site":
+        append_11_site_patch_stabilizer_measurement(
+            circuit,
+            patch_qubits=list(range(patch_spec.num_qubits)),
+            classical_bits=list(range(3)),
+            basis=basis,
+            add_barriers=False,
+        )
+    else:
+        append_14_site_patch_superdense_stabilizer_measurement(
+            circuit,
+            patch_qubits=list(range(patch_spec.num_qubits)),
+            classical_bits=list(range(3)),
+            bell_partner_flag_classical_bits=list(range(3, 6)),
+            basis=basis,
+            add_barriers=False,
+        )
+    assert AerSimulator().run(circuit, shots=1).result().get_counts() == {
+        "0" * classical_bit_count: 1
+    }
 
-_TWO_MIXED_FAULTS: list[list[tuple[str, int]]] = []
-_TWO_MIXED_IDS: list[str] = []
-for _p1, _p2 in [("X", "Z"), ("X", "Y"), ("Z", "Y")]:
-    for _i, _s1 in enumerate(PATCH_11_SITE_DATA_SITES):
-        for _s2 in PATCH_11_SITE_DATA_SITES[_i + 1 :]:
-            _TWO_MIXED_FAULTS.append([(_p1, _s1), (_p2, _s2)])
-            _TWO_MIXED_IDS.append(f"{_p1}{_p2}_{_s1}_{_s2}")
+
+@pytest.mark.parametrize(("patch_spec", "encoder"), PATCH_ENCODERS)
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_patch_selected_stabilizer_measurement(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    basis: str,
+) -> None:
+    """Verify either patch measures only the requested stabilizer subset."""
+    classical_bit_count = 4 if patch_spec.name == "14-site" else 2
+    circuit = QuantumCircuit(patch_spec.num_qubits, classical_bit_count)
+    _apply_patch_encoder(circuit, patch_spec, encoder, "S")
+    measurement_start = len(circuit.data)
+    if patch_spec.name == "11-site":
+        append_11_site_patch_stabilizer_measurement(
+            circuit,
+            patch_qubits=list(range(patch_spec.num_qubits)),
+            classical_bits=list(range(2)),
+            basis=basis,
+            stabilizer_indices=(0, 2),
+            add_barriers=False,
+        )
+        unselected_ancilla_sites = {6}
+    else:
+        append_14_site_patch_superdense_stabilizer_measurement(
+            circuit,
+            patch_qubits=list(range(patch_spec.num_qubits)),
+            classical_bits=list(range(2)),
+            bell_partner_flag_classical_bits=list(range(2, 4)),
+            basis=basis,
+            stabilizer_indices=(0, 2),
+            add_barriers=False,
+        )
+        unselected_ancilla_sites = {11, 12}
+
+    appended_instructions = circuit.data[measurement_start:]
+    assert all(
+        not unselected_ancilla_sites.intersection(
+            circuit.find_bit(qubit).index for qubit in instruction.qubits
+        )
+        for instruction in appended_instructions
+    )
+    assert (
+        sum(instruction.operation.name == "measure" for instruction in appended_instructions)
+        == classical_bit_count
+    )
+    assert AerSimulator().run(circuit, shots=1).result().get_counts() == {
+        "0" * classical_bit_count: 1
+    }
+
+
+# ---------------------------------------
+# Stabilizer syndrome with injected faults
+# ---------------------------------------
+
+
+def _expected_patch_syndrome(
+    patch_spec: PatchTestSpec,
+    faults: list[tuple[str, int]],
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Return the expected X/Z stabilizer outcomes for physical faults."""
+    x_syndrome = [0, 0, 0]
+    z_syndrome = [0, 0, 0]
+    for pauli, site in faults:
+        pauli = normalize_pauli_char(pauli)
+        for index, support in enumerate(patch_spec.x_stabilizers):
+            if site in support and pauli in ("Z", "Y"):
+                x_syndrome[index] ^= 1
+        for index, support in enumerate(patch_spec.z_stabilizers):
+            if site in support and pauli in ("X", "Y"):
+                z_syndrome[index] ^= 1
+    return tuple(x_syndrome), tuple(z_syndrome)
+
+
+_DATA_SITE_PAIRS = [(first, second) for first in range(7) for second in range(first + 1, 7)]
 
 
 class TestPatchSyndromeExtraction:
-    """Verify stabilizer measurement outputs match expected syndromes for injected faults."""
+    """Verify both patch measurements against expected fault syndromes."""
 
-    @pytest.mark.parametrize("encoder", PATCH_11_SITE_ENCODERS)
-    @pytest.mark.parametrize("state", ["0", "T", "Ty"])
-    def test_no_fault_trivial(self, state: InjectedStateName, encoder: str) -> None:
-        """No faults → all syndrome bits zero for any encoded state."""
-        x_syn, z_syn = _build_and_run_patch_syndrome([], injected_state=state, encoder=encoder)
-        assert x_syn == (0, 0, 0) and z_syn == (
-            0,
-            0,
-            0,
-        ), f"State {state!r}: expected trivial syndrome, got X={x_syn}, Z={z_syn}"
+    @pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_FAULT_ENCODER_STATE_CASES)
+    def test_no_fault_trivial(
+        self,
+        patch_spec: PatchTestSpec,
+        encoder: str,
+        state: InjectedStateName,
+    ) -> None:
+        """No faults produce a trivial syndrome."""
+        assert _build_and_run_patch_syndrome(patch_spec, encoder, state, []) == (
+            (0, 0, 0),
+            (0, 0, 0),
+        )
 
-    @pytest.mark.parametrize("encoder", PATCH_11_SITE_ENCODERS)
-    @pytest.mark.parametrize("state", ["0", "T", "Ty"])
-    @pytest.mark.parametrize("faults", _SINGLE_FAULTS, ids=_SINGLE_IDS)
+    @pytest.mark.parametrize("pauli", ["X", "Y", "Z"])
+    @pytest.mark.parametrize("site_index", range(7))
+    @pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_FAULT_ENCODER_STATE_CASES)
     def test_single_fault(
         self,
-        state: InjectedStateName,
-        faults: list[tuple[str, int]],
+        patch_spec: PatchTestSpec,
         encoder: str,
+        state: InjectedStateName,
+        site_index: int,
+        pauli: str,
     ) -> None:
-        """Single-qubit fault produces the correct unique syndrome."""
-        expected_x, expected_z = _expected_patch_syndrome(faults)
-        measured_x, measured_z = _build_and_run_patch_syndrome(
-            faults,
-            injected_state=state,
-            encoder=encoder,
-        )
-        pauli, site = faults[0]
-        assert (measured_x, measured_z) == (expected_x, expected_z), (
-            f"State {state!r}, {pauli}@{site}: "
-            f"got X={measured_x} Z={measured_z}, expected X={expected_x} Z={expected_z}"
-        )
+        """Single-qubit faults produce the expected syndrome."""
+        faults = [(pauli, patch_spec.data_sites[site_index])]
+        assert _build_and_run_patch_syndrome(
+            patch_spec, encoder, state, faults
+        ) == _expected_patch_syndrome(patch_spec, faults)
 
-    @pytest.mark.parametrize("encoder", PATCH_11_SITE_ENCODERS)
-    @pytest.mark.parametrize("state", ["0", "T", "Ty"])
-    @pytest.mark.parametrize("faults", _TWO_SAME_FAULTS, ids=_TWO_SAME_IDS)
+    @pytest.mark.parametrize("pauli", ["X", "Y", "Z"])
+    @pytest.mark.parametrize(("first", "second"), _DATA_SITE_PAIRS)
+    @pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_FAULT_ENCODER_STATE_CASES)
     def test_two_qubit_same_pauli(
         self,
-        state: InjectedStateName,
-        faults: list[tuple[str, int]],
+        patch_spec: PatchTestSpec,
         encoder: str,
+        state: InjectedStateName,
+        first: int,
+        second: int,
+        pauli: str,
     ) -> None:
-        """Two same-Pauli faults: syndrome is XOR of individual syndromes."""
-        expected_x, expected_z = _expected_patch_syndrome(faults)
-        measured_x, measured_z = _build_and_run_patch_syndrome(
-            faults,
-            injected_state=state,
-            encoder=encoder,
-        )
-        p, s1, s2 = faults[0][0], faults[0][1], faults[1][1]
-        assert (measured_x, measured_z) == (expected_x, expected_z), (
-            f"State {state!r}, {p}{p}@{s1},{s2}: "
-            f"got X={measured_x} Z={measured_z}, expected X={expected_x} Z={expected_z}"
-        )
+        """Two same-Pauli faults produce the XOR of their syndromes."""
+        faults = [
+            (pauli, patch_spec.data_sites[first]),
+            (pauli, patch_spec.data_sites[second]),
+        ]
+        assert _build_and_run_patch_syndrome(
+            patch_spec, encoder, state, faults
+        ) == _expected_patch_syndrome(patch_spec, faults)
 
-    @pytest.mark.parametrize("encoder", PATCH_11_SITE_ENCODERS)
-    @pytest.mark.parametrize("state", ["0", "T", "Ty"])
-    @pytest.mark.parametrize("faults", _TWO_MIXED_FAULTS, ids=_TWO_MIXED_IDS)
+    @pytest.mark.parametrize("paulis", [("X", "Z"), ("X", "Y"), ("Z", "Y")])
+    @pytest.mark.parametrize(("first", "second"), _DATA_SITE_PAIRS)
+    @pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_FAULT_ENCODER_STATE_CASES)
     def test_two_qubit_mixed_pauli(
         self,
-        state: InjectedStateName,
-        faults: list[tuple[str, int]],
+        patch_spec: PatchTestSpec,
         encoder: str,
+        state: InjectedStateName,
+        first: int,
+        second: int,
+        paulis: tuple[str, str],
     ) -> None:
-        """Two different-Pauli faults: X and Z sectors detect independently."""
-        expected_x, expected_z = _expected_patch_syndrome(faults)
-        measured_x, measured_z = _build_and_run_patch_syndrome(
-            faults,
-            injected_state=state,
-            encoder=encoder,
-        )
-        p1, s1 = faults[0]
-        p2, s2 = faults[1]
-        assert (measured_x, measured_z) == (expected_x, expected_z), (
-            f"State {state!r}, {p1}@{s1}+{p2}@{s2}: "
-            f"got X={measured_x} Z={measured_z}, expected X={expected_x} Z={expected_z}"
-        )
+        """Two mixed-Pauli faults are detected independently by both sectors."""
+        faults = [
+            (paulis[0], patch_spec.data_sites[first]),
+            (paulis[1], patch_spec.data_sites[second]),
+        ]
+        assert _build_and_run_patch_syndrome(
+            patch_spec, encoder, state, faults
+        ) == _expected_patch_syndrome(patch_spec, faults)
 
 
-# ============================================================================
-# Specific to the Rosenfeld et al. state-injection schedule on the 11-site patch
-# ============================================================================
-
-# Site layout (x right, y down):
-#
-#            0
-#          /   \
-#        1       2
-#      /   \   /   \
-#    3       4       5
-#      \   /   \   /
-#        6       7
-#      /   \   /   \
-#    8       9      10
-#
-_PATCH_ROSENFELD_SITE_COORDINATES: dict[int, tuple[float, float]] = {
-    0: (1.0, 0.0),
-    1: (0.5, 0.5),
-    2: (1.5, 0.5),
-    3: (0.0, 1.0),
-    4: (1.0, 1.0),
-    5: (2.0, 1.0),
-    6: (0.5, 1.5),
-    7: (1.5, 1.5),
-    8: (0.0, 2.0),
-    9: (1.0, 2.0),
-    10: (2.0, 2.0),
-}
+# ------------------------
+# Injection azimuth angles
+# ------------------------
 
 
-@pytest.mark.parametrize("layer", PATCH_11_SITE_ROSENFELD_ENCODER_LAYERS)
-def test_patch_rosenfeld_cz_layers_are_nearest_neighbor_data_helper_edges(layer) -> None:
-    """Every Rosenfeld et al. CZ layer is a nearest-neighbor data-helper interaction."""
-    gate_name, operands = layer
-    if gate_name != "CZ":
-        return
-
-    data_sites = set(PATCH_11_SITE_DATA_SITES)
-    helper_sites = set(PATCH_11_SITE_HELPER_SITES)
-    for site_a, site_b in operands:
-        ax, ay = _PATCH_ROSENFELD_SITE_COORDINATES[site_a]
-        bx, by = _PATCH_ROSENFELD_SITE_COORDINATES[site_b]
-        assert abs(ax - bx) + abs(ay - by) == 1
-        assert {site_a in data_sites, site_b in data_sites} == {True, False}
-        assert {site_a in helper_sites, site_b in helper_sites} == {True, False}
-
-
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_rosenfeld_helper_sites_expectation_value(state: InjectedStateName) -> None:
-    """After Rosenfeld et al. encoding, all helper sites are in |0⟩ (⟨Z⟩ = +1)."""
-    circuit = QuantumCircuit(NUM_QUBITS_PATCH_11_SITES)
-    append_11_site_patch_rosenfeld_encoder(
-        circuit,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        injected_state=state,
-        add_barriers=False,
-    )
-    sv = Statevector(circuit)
-    for site in PATCH_11_SITE_HELPER_SITES:
-        ev = sv.expectation_value(SparsePauliOp("Z"), [site]).real
-        assert ev == pytest.approx(
-            1.0, abs=TOLERANCE
-        ), f"State {state!r}: helper site {site} ⟨Z⟩ expected 1.0, got {ev:.6f}"
-
-
-@pytest.mark.parametrize("state", ALL_STATES)
-def test_patch_rosenfeld_helper_sites_bit_value(state: InjectedStateName) -> None:
-    """Measured Rosenfeld-encoder helper sites always return the all-zero outcome."""
-    n_helpers = len(PATCH_11_SITE_HELPER_SITES)
-    circuit = QuantumCircuit(NUM_QUBITS_PATCH_11_SITES, n_helpers)
-    append_11_site_patch_rosenfeld_encoder(
-        circuit,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        injected_state=state,
-        flag_classical_bits=list(range(n_helpers)),
-        add_barriers=False,
-    )
-    shots = 1024
-    counts = AerSimulator().run(circuit, shots=shots).result().get_counts()
-    assert counts == {"0000": shots}
-
-
-@pytest.mark.skipif(
-    not ibm_backend_available(),
-    reason="QiskitRuntimeService account 'QR' or backend 'ibm_miami' unavailable",
+@pytest.mark.parametrize(
+    ("patch_spec", "encoder"),
+    [
+        pytest.param(spec, encoder, id=f"{spec.name}-{encoder}")
+        for spec, encoder in ARBITRARY_STATE_PATCH_ENCODERS
+    ],
 )
-def test_patch_rosenfeld_encoder_two_qubit_depth_preserved_on_ibm_miami() -> None:
-    """Transpiling the Rosenfeld et al. encoder to ibm_miami must not increase two-qubit depth.
-
-    The Rosenfeld et al. schedule is already nearest-neighbor on a square lattice, so a
-    square-lattice device like ibm_miami should be able to map it without
-    inserting any additional SWAP gates.
-    """
-    from qiskit import transpile
-    from qiskit.transpiler.passes import RemoveBarriers
-
-    circuit = QuantumCircuit(NUM_QUBITS_PATCH_11_SITES)
-    append_11_site_patch_rosenfeld_encoder(
-        circuit,
-        patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-        injected_state="0",
-        add_barriers=True,
-    )
-
-    original_depth = two_qubit_depth(RemoveBarriers()(circuit))
-
-    transpiled = transpile(
-        RemoveBarriers()(circuit),
-        backend=ibm_backend(),
-        optimization_level=3,
-    )
-
-    transpiled_depth = two_qubit_depth(transpiled)
-    assert transpiled_depth <= original_depth, (
-        f"Two-qubit depth increased from {original_depth} to {transpiled_depth} "
-        f"after transpilation to ibm_miami — expected no increase for a "
-        f"nearest-neighbor schedule on a square-lattice device"
-    )
-
-
-# ============================================================================
-# Other tests
-# ============================================================================
-
-
 @pytest.mark.parametrize(
     ("angle", "equivalent_state"),
     [
@@ -971,54 +777,251 @@ def test_patch_rosenfeld_encoder_two_qubit_depth_preserved_on_ibm_miami() -> Non
     ],
 )
 def test_patch_injection_azimuth_angle_matches_named_state(
-    angle: float, equivalent_state: InjectedStateName
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    angle: float,
+    equivalent_state: InjectedStateName,
 ) -> None:
-    """injection_azimuth_angle=θ injects Rz(θ)|+⟩, matching the equivalent named state.
+    """Verify equatorial-angle and named inputs encode the same patch state."""
+    angle_circuit = QuantumCircuit(patch_spec.num_qubits)
+    named_circuit = QuantumCircuit(patch_spec.num_qubits)
+    if patch_spec.name == "11-site" and encoder == "abstract":
+        encoder_function = append_11_site_patch_abstract_encoder
+    elif patch_spec.name == "11-site" and encoder == "rosenfeld":
+        encoder_function = append_11_site_patch_rosenfeld_encoder
+    elif encoder == "abstract":
+        encoder_function = append_14_site_patch_abstract_encoder
+    else:
+        encoder_function = append_14_site_patch_abstract_routed_encoder
+    encoder_arguments = {
+        "patch_qubits": list(range(patch_spec.num_qubits)),
+        "add_barriers": False,
+    }
+    encoder_function(
+        angle_circuit,
+        **encoder_arguments,
+        injection_azimuth_angle=angle,
+    )
+    encoder_function(
+        named_circuit,
+        **encoder_arguments,
+        injected_state=equivalent_state,
+    )
+    assert Statevector(angle_circuit).equiv(Statevector(named_circuit))
 
-    Rz(θ)|+⟩ = (|0⟩ + e^{iθ}|1⟩)/√2 sweeps the equator (XY plane): Rz(0)|+⟩=|+⟩,
-    Rz(π/4)|+⟩=|T⟩, Rz(π/2)|+⟩=|Y+⟩, Rz(-π/4)|+⟩=|Tdg⟩, Rz(-π/2)|+⟩=|Y-⟩, and
-    Rz(π)|+⟩=|-⟩, so the encoded 11-site state must be identical (up to global
-    phase) to the corresponding named injection.
 
-    The Rosenfeld et al. and abstract encoders both prepare the unique Steane codeword for
-    the injected state, so all four encoded statevectors (angle/named × patch_rosenfeld/
-    patch_abstract) must agree up to global phase.
-    """
+# -------------------------
+# Routed encoder properties
+# -------------------------
 
-    def _encode(encoder, *, injected_state=None, injection_azimuth_angle=None) -> Statevector:
-        circuit = QuantumCircuit(NUM_QUBITS_PATCH_11_SITES)
-        encoder(
+
+@pytest.mark.parametrize(("patch_spec", "encoder"), PATCH_ROUTED_ENCODERS)
+def test_patch_routed_encoder_two_qubit_gates_are_local(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+) -> None:
+    """Every two-qubit gate in each routed encoder follows its patch geometry."""
+    circuit = QuantumCircuit(patch_spec.num_qubits)
+    _apply_patch_encoder(circuit, patch_spec, encoder, "S")
+    if patch_spec.name == "11-site":
+        coordinates = PATCH_11_SITE_COORDS
+    elif encoder == "hirano":
+        coordinates = PATCH_14_SITE_HIRANO_ENCODER_COORDS
+    else:
+        coordinates = PATCH_14_SITE_COORDS
+    for instruction in circuit.data:
+        if instruction.operation.num_qubits != 2:
+            continue
+        site_a = circuit.find_bit(instruction.qubits[0]).index
+        site_b = circuit.find_bit(instruction.qubits[1]).index
+        ax, ay = coordinates[site_a]
+        bx, by = coordinates[site_b]
+        assert (abs(ax - bx), abs(ay - by)) == (1, 1)
+        if patch_spec.name == "11-site":
+            assert {site_a in patch_spec.data_sites, site_b in patch_spec.data_sites} == {
+                True,
+                False,
+            }
+        else:
+            assert (abs(ax - bx), abs(ay - by)) == (1, 1)
+
+
+@pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ROUTED_ENCODER_STATE_CASES)
+def test_patch_routed_encoder_helper_expectation_values(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    state: InjectedStateName,
+) -> None:
+    """Routed-encoder helpers return to their expected product state."""
+    circuit = QuantumCircuit(patch_spec.num_qubits)
+    _apply_patch_encoder(circuit, patch_spec, encoder, state)
+    statevector = Statevector(circuit)
+    if patch_spec.name == "11-site":
+        helper_sites = PATCH_11_SITE_HELPER_SITES
+        observable = SparsePauliOp("Z")
+    elif encoder == "hirano":
+        helper_sites = PATCH_14_SITE_HELPER_SITES
+        observable = SparsePauliOp("X")
+    else:
+        helper_sites = tuple(
+            site for site in range(patch_spec.num_qubits) if site not in patch_spec.data_sites
+        )
+        observable = SparsePauliOp("Z")
+    for site in helper_sites:
+        assert statevector.expectation_value(observable, [site]).real == pytest.approx(
+            1.0, abs=TOLERANCE
+        )
+
+
+@pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ROUTED_ENCODER_STATE_CASES)
+def test_patch_routed_encoder_helper_flags_are_zero(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    state: InjectedStateName,
+) -> None:
+    """Measured routed-encoder helpers return the all-zero flag outcome."""
+    if patch_spec.name == "11-site":
+        helper_sites = PATCH_11_SITE_HELPER_SITES
+    elif encoder == "abstract-routed":
+        helper_sites = PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES
+    else:
+        helper_sites = PATCH_14_SITE_HELPER_SITES
+    circuit = QuantumCircuit(patch_spec.num_qubits, len(helper_sites))
+    if patch_spec.name == "11-site":
+        append_11_site_patch_rosenfeld_encoder(
             circuit,
-            patch_qubits=list(range(NUM_QUBITS_PATCH_11_SITES)),
-            injected_state=injected_state,
-            injection_azimuth_angle=injection_azimuth_angle,
+            patch_qubits=list(range(patch_spec.num_qubits)),
+            injected_state=state,
+            flag_classical_bits=list(range(len(helper_sites))),
             add_barriers=False,
         )
-        return Statevector(circuit)
-
-    statevectors = {
-        "rosenfeld_angle": _encode(
-            append_11_site_patch_rosenfeld_encoder,
-            injection_azimuth_angle=angle,
-        ),
-        "rosenfeld_named": _encode(
-            append_11_site_patch_rosenfeld_encoder,
-            injected_state=equivalent_state,
-        ),
-        "abstract_angle": _encode(
-            append_11_site_patch_abstract_encoder,
-            injection_azimuth_angle=angle,
-        ),
-        "abstract_named": _encode(
-            append_11_site_patch_abstract_encoder,
-            injected_state=equivalent_state,
-        ),
+    elif encoder == "hirano":
+        append_14_site_patch_hirano_encoder(
+            circuit,
+            patch_qubits=list(range(patch_spec.num_qubits)),
+            injected_state=state,
+            flag_classical_bits=list(range(len(helper_sites))),
+            add_barriers=False,
+        )
+    else:
+        append_14_site_patch_abstract_routed_encoder(
+            circuit,
+            patch_qubits=list(range(patch_spec.num_qubits)),
+            injected_state=state,
+            flag_classical_bits=list(range(len(helper_sites))),
+            add_barriers=False,
+        )
+    shots = 1024
+    assert AerSimulator().run(circuit, shots=shots).result().get_counts() == {
+        "0" * len(helper_sites): shots
     }
 
-    reference_name, reference_sv = next(iter(statevectors.items()))
-    for name, sv in statevectors.items():
-        assert reference_sv.equiv(sv), (
-            f"{name} statevector disagrees with {reference_name}: "
-            f"injection_azimuth_angle={angle} should encode the same state as "
-            f"injected_state={equivalent_state!r} for both encoders"
+
+@pytest.mark.parametrize(("patch_spec", "encoder"), PATCH_ROUTED_ENCODERS)
+def test_patch_routed_encoder_two_qubit_depth_does_not_increase_after_transpile(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+) -> None:
+    """Fixed-layout square-lattice transpilation adds no two-qubit depth."""
+    circuit = QuantumCircuit(patch_spec.num_qubits)
+    _apply_patch_encoder(circuit, patch_spec, encoder, "S")
+    if patch_spec.name == "11-site":
+        coordinates = PATCH_11_SITE_COORDS
+    elif encoder == "hirano":
+        coordinates = PATCH_14_SITE_HIRANO_ENCODER_COORDS
+    else:
+        coordinates = PATCH_14_SITE_COORDS
+    coupling_map = [
+        [site_a, site_b]
+        for site_a, coordinate_a in enumerate(coordinates)
+        for site_b, coordinate_b in enumerate(coordinates)
+        if site_a != site_b
+        and (
+            abs(coordinate_a[0] - coordinate_b[0]),
+            abs(coordinate_a[1] - coordinate_b[1]),
+        )
+        == (1, 1)
+    ]
+    circuit = RemoveBarriers()(circuit)
+    original_depth = two_qubit_depth(circuit)
+    transpiled = transpile(
+        circuit,
+        basis_gates=["cx", "id", "rz", "sx", "x"],
+        coupling_map=coupling_map,
+        initial_layout=list(range(patch_spec.num_qubits)),
+        routing_method="none",
+        optimization_level=3,
+    )
+    transpiled_depth = two_qubit_depth(transpiled)
+    assert transpiled_depth <= original_depth
+    if encoder == "abstract-routed":
+        assert transpiled_depth == original_depth
+
+
+# ------------------------------
+# Specific to the 14-site patch
+# ------------------------------
+
+
+def test_14_site_abstract_encoder_uses_only_fixed_data_sites() -> None:
+    """The mapped abstract encoder keeps D1 at ``(1, 5)`` and ignores helpers."""
+    assert PATCH_14_SITE_COORDS[1] == (1, 5)
+    circuit = QuantumCircuit(NUM_QUBITS_PATCH_14_SITES)
+    append_14_site_patch_abstract_encoder(
+        circuit,
+        patch_qubits=list(range(NUM_QUBITS_PATCH_14_SITES)),
+        injected_state="T",
+        add_barriers=False,
+    )
+
+    used_two_qubit_sites = {
+        circuit.find_bit(qubit).index
+        for instruction in circuit.data
+        if instruction.operation.num_qubits == 2
+        for qubit in instruction.qubits
+    }
+    assert used_two_qubit_sites <= set(PATCH_14_SITE_DATA_SITES)
+
+
+@pytest.mark.parametrize("state", HIRANO_STATES)
+def test_14_site_hirano_encoder_matches_abstract_y_state(
+    state: InjectedStateName,
+) -> None:
+    """Uncomputing Hirano with the abstract encoder returns every qubit to zero."""
+    hirano = QuantumCircuit(NUM_QUBITS_PATCH_14_SITES)
+    append_14_site_patch_hirano_encoder(
+        hirano,
+        patch_qubits=list(range(NUM_QUBITS_PATCH_14_SITES)),
+        injected_state=state,
+        add_barriers=False,
+    )
+    abstract = QuantumCircuit(NUM_QUBITS_PATCH_14_SITES)
+    append_14_site_patch_abstract_encoder(
+        abstract,
+        patch_qubits=list(range(NUM_QUBITS_PATCH_14_SITES)),
+        injected_state=state,
+        add_barriers=False,
+    )
+
+    check = QuantumCircuit(NUM_QUBITS_PATCH_14_SITES, NUM_QUBITS_PATCH_14_SITES)
+    check.compose(hirano, inplace=True)
+    for site in PATCH_14_SITE_HELPER_SITES:
+        check.h(site)
+    check.compose(abstract.inverse(), inplace=True)
+    check.measure(range(NUM_QUBITS_PATCH_14_SITES), range(NUM_QUBITS_PATCH_14_SITES))
+
+    counts = AerSimulator().run(check, shots=1).result().get_counts()
+    assert counts == {"0" * NUM_QUBITS_PATCH_14_SITES: 1}
+
+
+@pytest.mark.parametrize("state", ["0", "1", "+", "-", "T", "Tdg", "Ty"])
+def test_14_site_hirano_encoder_rejects_non_y_states(
+    state: InjectedStateName,
+) -> None:
+    """Hirano's single phase injection cannot encode a non-Y input."""
+    with pytest.raises(ValueError, match="logical-Y eigenstate"):
+        append_14_site_patch_hirano_encoder(
+            QuantumCircuit(NUM_QUBITS_PATCH_14_SITES),
+            patch_qubits=list(range(NUM_QUBITS_PATCH_14_SITES)),
+            injected_state=state,
         )

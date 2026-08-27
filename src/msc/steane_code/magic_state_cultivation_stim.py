@@ -1,15 +1,22 @@
 """Stim logical-Y cultivation on the Steane patch.
 
-This module parallels :mod:`magic_state_cultivation_qiskit`. The fold schedule,
-patch sites, measurement count, and optional-CX filtering are shared with that
-module. Qiskit's transversal ``T``/``T_DAG`` rotations are replaced by
-``S``/``S_DAG``, so Stim performs logical-Y cultivation (proxy for logical
-``H_XY``) and cultivates the logical Pauli-Y eigenstate.
+This module parallels :mod:`magic_state_cultivation_qiskit` for the 11-site
+patch, and provides the parallel 14-site path. The fold schedules, patch
+sites, measurement counts, and optional-CX filtering are shared via
+:mod:`magic_state_cultivation_common`. Both patches replace the non-Clifford
+transversal rotation with ``S``/``S_DAG``, so Stim performs logical-Y
+cultivation (proxy for logical ``H_XY``) and cultivates the logical Pauli-Y
+eigenstate.
 
-Each round appends five measurements to Stim's record in this order:
+Each 11-site round appends five measurements to Stim's record in this order:
 
 1. folded root at site 7;
 2. helper sites 1, 2, 6, and 7.
+
+Each 14-site round appends seven measurements in this order:
+
+1. folded root at site 0;
+2. helper sites 7-12.
 """
 
 from __future__ import annotations
@@ -19,20 +26,33 @@ from collections.abc import Sequence
 import numpy as np
 import stim
 
-from msc.steane_code.magic_state_cultivation_qiskit import (
-    DATA_SITES,
-    FOLD_LAYERS,
-    FOLDED_MEASUREMENT_SITE,
-    HELPER_SITES,
-    filter_fold_layer,
+from msc.steane_code.magic_state_cultivation_common import (
+    PATCH_11_SITE_FOLD_LAYERS,
+    PATCH_11_SITE_FOLDED_MEASUREMENT_SITE,
+    PATCH_14_SITE_FOLD_LAYERS,
+    PATCH_14_SITE_FOLDED_MEASUREMENT_SITE,
+    Patch14SiteEncoderName,
+    filter_11_site_patch_fold_layer,
 )
-from msc.steane_code.state_injection_common import NUM_QUBITS_PATCH_11_SITES
+from msc.steane_code.state_injection_common import (
+    NUM_QUBITS_PATCH_11_SITES,
+    NUM_QUBITS_PATCH_14_SITES,
+    PATCH_11_SITE_DATA_SITES,
+    PATCH_11_SITE_HELPER_SITES,
+    PATCH_14_SITE_DATA_SITES,
+    PATCH_14_SITE_HELPER_SITES,
+)
 from msc.steane_code.state_injection_stim import (
     DEFAULT_STIM_11_SITE_PATCH_QUBITS,
+    DEFAULT_STIM_14_SITE_PATCH_QUBITS,
     DEFAULT_STIM_INJECTED_STATE,
     StimInjectedStateName,
     append_11_site_patch_rosenfeld_encoder,
     append_11_site_patch_stabilizer_measurement,
+    append_14_site_patch_abstract_encoder,
+    append_14_site_patch_abstract_routed_encoder,
+    append_14_site_patch_hirano_encoder,
+    append_14_site_patch_superdense_stabilizer_measurement,
 )
 from msc.utils import circuit_stim
 from msc.utils.normalize import resolve_patch_qubits
@@ -53,7 +73,7 @@ def append_cnot_layer_from_site_labels(
     patch_qubits: Sequence[int],
     cnot_layer: Sequence[tuple[int, int]],
 ) -> None:
-    """Append one CNOT layer using 11-site patch labels."""
+    """Append one CNOT layer using patch site labels."""
     targets: list[int] = []
     for control_site, target_site in cnot_layer:
         targets.extend(
@@ -66,7 +86,12 @@ def append_cnot_layer_from_site_labels(
         circuit.append("CX", targets)
 
 
-def append_fold_network(
+# =============================================================================
+# Fold / unfold network
+# =============================================================================
+
+
+def append_11_site_patch_fold_network(
     circuit: stim.Circuit,
     patch_qubits: Sequence[int],
     *,
@@ -74,12 +99,12 @@ def append_fold_network(
     skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
 ) -> None:
-    """Append the forward 4-3-2-1 fold network."""
-    for layer in FOLD_LAYERS:
+    """Append the forward 4-3-2-1 fold network for the 11-site patch."""
+    for layer in PATCH_11_SITE_FOLD_LAYERS:
         append_cnot_layer_from_site_labels(
             circuit,
             patch_qubits,
-            filter_fold_layer(
+            filter_11_site_patch_fold_layer(
                 layer,
                 skip_cx_1_4=skip_cx_1_4,
                 skip_cx=skip_cx,
@@ -89,7 +114,7 @@ def append_fold_network(
             circuit.append("TICK", [])
 
 
-def append_unfold_network(
+def append_11_site_patch_unfold_network(
     circuit: stim.Circuit,
     patch_qubits: Sequence[int],
     *,
@@ -97,58 +122,90 @@ def append_unfold_network(
     skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
 ) -> None:
-    """Append the inverse fold network in fully reversed order."""
-    for layer in reversed(FOLD_LAYERS):
-        filtered_layer = filter_fold_layer(
-            layer,
-            skip_cx_1_4=skip_cx_1_4,
-            skip_cx=skip_cx,
-        )
+    """Append the inverse 11-site fold network in fully reversed order."""
+    for layer in reversed(PATCH_11_SITE_FOLD_LAYERS):
         append_cnot_layer_from_site_labels(
             circuit,
             patch_qubits,
-            list(reversed(filtered_layer)),
+            list(
+                reversed(
+                    filter_11_site_patch_fold_layer(
+                        layer,
+                        skip_cx_1_4=skip_cx_1_4,
+                        skip_cx=skip_cx,
+                    )
+                )
+            ),
         )
         if add_ticks:
             circuit.append("TICK", [])
 
 
-def append_y_projection_round(
+def append_14_site_patch_fold_network(
+    circuit: stim.Circuit,
+    patch_qubits: Sequence[int],
+    *,
+    add_ticks: bool = True,
+) -> None:
+    """Append the forward 6-3-2-1 fold network for the 14-site Hirano patch.
+
+    Ports the fold half of Hirano's ``check_generator``: the six helper
+    ancillas (7-12) fold the seven data sites onto root data site 0.
+    ``patch_qubits`` must index at least sites 0-12; site 13 (D2') is unused.
+    """
+    for layer in PATCH_14_SITE_FOLD_LAYERS:
+        append_cnot_layer_from_site_labels(circuit, patch_qubits, layer)
+        if add_ticks:
+            circuit.append("TICK", [])
+
+
+def append_14_site_patch_unfold_network(
+    circuit: stim.Circuit,
+    patch_qubits: Sequence[int],
+    *,
+    add_ticks: bool = True,
+) -> None:
+    """Append the inverse 14-site fold network in fully reversed order."""
+    for layer in reversed(PATCH_14_SITE_FOLD_LAYERS):
+        append_cnot_layer_from_site_labels(circuit, patch_qubits, list(reversed(layer)))
+        if add_ticks:
+            circuit.append("TICK", [])
+
+
+# =============================================================================
+# Logical-Y projection round (fold, measure, unfold, measure)
+# =============================================================================
+
+
+def append_11_site_patch_y_projection_round(
     circuit: stim.Circuit,
     *,
     patch_qubits: Sequence[int] = DEFAULT_STIM_11_SITE_PATCH_QUBITS,
     add_ticks: bool = True,
     skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
-    pin_folded_root: bool = True,
+    running_kt: bool = False,
 ) -> tuple[int, ...]:
-    """Append one detector-annotated logical-Y cultivation round.
+    """Append one detector-annotated logical-Y cultivation round on the 11-site patch.
 
-    Stim replaces the non-Clifford transversal rotations with ``S`` and
-    ``S_DAG`` while preserving the fold network. The result is logical-Y
-    cultivation (proxy for logical ``H_XY``).
-
-    Three detectors always hold: the flags at sites 1, 2, and 6 are zero for
-    every input state, and the site-7 double check agrees with the folded root.
-    ``pin_folded_root`` adds a fourth, all-zero detector on the root itself.
-    Cultivation projects and postselects, so it keeps the default; kickback
-    tomography measures the root as a logical observable and must clear it.
+    Stim replaces the non-Clifford transversal rotation with ``S``/``S_DAG``
+    while preserving the fold network, so this is logical-Y cultivation (a
+    proxy for logical ``H_XY``). Three helper flags (sites 1, 2, 6) are always
+    postselected to zero, and the site-7 root check agrees with the folded
+    root. Cultivation also postselects the folded root to zero; kickback
+    tomography instead retains it as a logical observable. Set
+    ``running_kt=False`` for cultivation and ``True`` for KT.
 
     Parameters
     ----------
-    circuit
-        Stim circuit being modified.
-    patch_qubits
-        Exactly eleven qubit indices ordered by the patch site labels.
-    add_ticks
-        Whether to insert ``TICK`` separators between conceptual stages.
     skip_cx_1_4
         Whether to omit ``CX 1 -> 4`` from both fold and unfold.
     skip_cx
         Optional ``(control_site, target_site)`` gate to omit. This takes
         precedence over ``skip_cx_1_4``.
-    pin_folded_root
-        Whether to postselect the folded root to zero.
+    running_kt
+        Whether the round supplies a KT logical readout. Cultivation
+        postselects the folded root to zero; KT retains either result.
 
     Returns
     -------
@@ -162,16 +219,16 @@ def append_y_projection_round(
     )
     first_projection_position = circuit.num_measurements
 
-    for helper_site in HELPER_SITES:
+    for helper_site in PATCH_11_SITE_HELPER_SITES:
         reset_to_plus(circuit, patch_qubits[helper_site])
     if add_ticks:
         circuit.append("TICK", [])
 
-    circuit.append("S", [patch_qubits[site] for site in DATA_SITES])
+    circuit.append("S", [patch_qubits[site] for site in PATCH_11_SITE_DATA_SITES])
     if add_ticks:
         circuit.append("TICK", [])
 
-    append_fold_network(
+    append_11_site_patch_fold_network(
         circuit,
         patch_qubits,
         add_ticks=add_ticks,
@@ -179,15 +236,15 @@ def append_y_projection_round(
         skip_cx=skip_cx,
     )
 
-    measure_in_x_basis(circuit, patch_qubits[FOLDED_MEASUREMENT_SITE])
+    measure_in_x_basis(circuit, patch_qubits[PATCH_11_SITE_FOLDED_MEASUREMENT_SITE])
     if add_ticks:
         circuit.append("TICK", [])
 
-    reset_to_plus(circuit, patch_qubits[FOLDED_MEASUREMENT_SITE])
+    reset_to_plus(circuit, patch_qubits[PATCH_11_SITE_FOLDED_MEASUREMENT_SITE])
     if add_ticks:
         circuit.append("TICK", [])
 
-    append_unfold_network(
+    append_11_site_patch_unfold_network(
         circuit,
         patch_qubits,
         add_ticks=add_ticks,
@@ -195,14 +252,14 @@ def append_y_projection_round(
         skip_cx=skip_cx,
     )
 
-    for helper_site in HELPER_SITES:
+    for helper_site in PATCH_11_SITE_HELPER_SITES:
         measure_in_x_basis(circuit, patch_qubits[helper_site])
     if add_ticks:
         circuit.append("TICK", [])
 
     circuit.append(
         "S_DAG",
-        [patch_qubits[site] for site in DATA_SITES],
+        [patch_qubits[site] for site in PATCH_11_SITE_DATA_SITES],
     )
     if add_ticks:
         circuit.append("TICK", [])
@@ -212,7 +269,7 @@ def append_y_projection_round(
     # measurements this call contributed, in append order.
     measurement_positions = tuple(range(first_projection_position, circuit.num_measurements))
     folded_root, *flag_positions, double_check = measurement_positions
-    if pin_folded_root:
+    if not running_kt:
         circuit_stim.append_detector(circuit, measurement_positions=(folded_root,))
     for position in flag_positions:
         circuit_stim.append_detector(circuit, measurement_positions=(position,))
@@ -223,7 +280,102 @@ def append_y_projection_round(
     return measurement_positions
 
 
-def append_steane_injection_and_cultivation(
+def append_14_site_patch_y_projection_round(
+    circuit: stim.Circuit,
+    *,
+    patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
+    add_ticks: bool = True,
+    running_kt: bool = False,
+) -> tuple[int, ...]:
+    """Append one detector-annotated logical-Y cultivation round on the 14-site patch.
+
+    Ports the fold-measure-unfold-measure structure of Hirano's
+    ``check_generator``: reset the six helper sites (7-12) to ``|+>``, apply
+    ``S``/``S_DAG`` to the seven data sites, fold onto root data site 0,
+    measure the root in the X basis, reset it to ``|+>`` for cultivation,
+    unfold, then read out the six helper sites in the X basis. Hirano's literal
+    circuit fixes ``S_DAG``-before/``S``-after; this module instead lets the
+    encoder pick ``S`` or ``S_DAG`` from ``injected_state`` (see
+    :func:`append_14_site_patch_hirano_encoder`), so the round below uses the
+    mirrored ``S``-before/``S_DAG``-after order to stay self-consistent with
+    that choice -- swapping only one side would flip which ``injected_state``
+    is accepted. The helper reset also cleans up after any prior round (e.g.
+    the superdense QED round) that left the helper sites away from ``|+>``.
+
+    After unfolding, H7-H12 are measured in X and expected to return zero; D0
+    is not measured again. Cultivation rejects a root result of one and resets
+    D0 to ``|+>``. The reset changes nothing in an ideal accepted shot, but if
+    the reported result is zero while D0 is physically ``|->``, it makes H10
+    fire. Omitting it lowers the Stim graphlike distance from three to two.
+    KT does not reset D0 because root one is a result it must retain; resetting
+    that branch would fire H10 and wrongly reject it. Set
+    ``running_kt=False`` for cultivation and ``True`` for KT.
+
+    Parameters
+    ----------
+    running_kt
+        Set to ``False`` for cultivation, which postselects the root and resets
+        D0 to ``|+>``; set to ``True`` for KT, which preserves both outcomes.
+    """
+    patch_qubits = resolve_patch_qubits(
+        patch_qubits,
+        expected_count=NUM_QUBITS_PATCH_14_SITES,
+    )
+    first_projection_position = circuit.num_measurements
+
+    for helper_site in PATCH_14_SITE_HELPER_SITES:
+        reset_to_plus(circuit, patch_qubits[helper_site])
+    if add_ticks:
+        circuit.append("TICK", [])
+
+    circuit.append("S", [patch_qubits[site] for site in PATCH_14_SITE_DATA_SITES])
+    if add_ticks:
+        circuit.append("TICK", [])
+
+    append_14_site_patch_fold_network(circuit, patch_qubits, add_ticks=add_ticks)
+
+    measure_in_x_basis(circuit, patch_qubits[PATCH_14_SITE_FOLDED_MEASUREMENT_SITE])
+    if add_ticks:
+        circuit.append("TICK", [])
+
+    if not running_kt:
+        reset_to_plus(circuit, patch_qubits[PATCH_14_SITE_FOLDED_MEASUREMENT_SITE])
+        if add_ticks:
+            circuit.append("TICK", [])
+
+    append_14_site_patch_unfold_network(circuit, patch_qubits, add_ticks=add_ticks)
+
+    # Reads every helper, including H10, as an X-basis flag.
+    for helper_site in PATCH_14_SITE_HELPER_SITES:
+        measure_in_x_basis(circuit, patch_qubits[helper_site])
+    if add_ticks:
+        circuit.append("TICK", [])
+
+    circuit.append(
+        "S_DAG",
+        [patch_qubits[site] for site in PATCH_14_SITE_DATA_SITES],
+    )
+    if add_ticks:
+        circuit.append("TICK", [])
+
+    # circuit.num_measurements is the running length of Stim's single global
+    # record. Reading it at the top and again here brackets exactly the
+    # measurements this call contributed, in append order.
+    measurement_positions = tuple(range(first_projection_position, circuit.num_measurements))
+    folded_root, *flag_positions = measurement_positions
+    if not running_kt:
+        circuit_stim.append_detector(circuit, measurement_positions=(folded_root,))
+    for position in flag_positions:
+        circuit_stim.append_detector(circuit, measurement_positions=(position,))
+    return measurement_positions
+
+
+# =============================================================================
+# Injection + cultivation front doors (append)
+# =============================================================================
+
+
+def append_11_site_patch_injection_and_cultivation(
     circuit: stim.Circuit,
     *,
     add_qed_round: bool,
@@ -235,40 +387,17 @@ def append_steane_injection_and_cultivation(
     add_ticks: bool = True,
     skip_cx: tuple[int, int] | None = None,
 ) -> None:
-    """Append injection, optional QED, and zero or more cultivation rounds.
+    """Append 11-site injection, optional QED, and zero or more cultivation rounds.
 
-    When ``add_qed_round`` is true, all three X and all three Z Steane
-    stabilizers are measured after injection and before cultivation. The papers
-    call this a QEC cycle,
-    but this circuit uses its six outcomes only for error detection and
-    postselection. When ``measure_encoder_flags`` is true, the four encoder
-    flag outcomes come first; the six QED outcomes come next; each
-    cultivation round then contributes five outcomes. Set
-    ``cultivation_rounds=0`` to stop after injection and optional QED.
-    Encoder flags, QED checks, and cultivation outcomes are annotated as
-    postselection detectors whenever they are measured.
-
-    Parameters
-    ----------
-    circuit
-        Caller-owned Stim circuit being modified.
-    patch_qubits
-        Eleven Stim qubit indices ordered by the patch site labels.
-    injected_state
-        Clifford state injected on the center data site before encoding.
-    cultivation_rounds
-        Number of logical-Y cultivation rounds (proxy for logical ``H_XY``).
-        Must be non-negative.
-    measure_encoder_flags
-        Whether to record the four encoder-flag outcomes.
-    add_qed_round
-        Whether to append the six-outcome post-injection Steane QED round.
-    add_ticks
-        Whether to preserve the protocol's logical time layers with ``TICK``.
-    skip_cx_1_4
-        Whether to omit ``CX 1 -> 4`` from every fold/unfold network.
-    skip_cx
-        Optional ``(control_site, target_site)`` CX gate to omit.
+    When ``add_qed_round`` is true, all three X and three Z Steane
+    stabilizers are measured after injection and before cultivation (the
+    papers call this a QEC cycle, but here the six outcomes are used only for
+    postselection, not recovery). When ``measure_encoder_flags`` is true, the
+    record order is: four encoder flags, then six QED outcomes, then five
+    outcomes per cultivation round (the folded root plus its four helper
+    flags). Set ``cultivation_rounds=0`` to stop after injection and optional
+    QED. Every measured encoder-flag, QED, and cultivation outcome --
+    including every helper flag -- is annotated as a postselection detector.
     """
     if cultivation_rounds < 0:
         raise ValueError("cultivation_rounds must be non-negative.")
@@ -294,7 +423,7 @@ def append_steane_injection_and_cultivation(
             circuit.append("TICK", [])
 
     for _ in range(cultivation_rounds):
-        append_y_projection_round(
+        append_11_site_patch_y_projection_round(
             circuit,
             patch_qubits=patch_qubits,
             add_ticks=add_ticks,
@@ -303,7 +432,86 @@ def append_steane_injection_and_cultivation(
         )
 
 
-def build_steane_injection_and_cultivation_circuit(
+def append_14_site_patch_injection_and_cultivation(
+    circuit: stim.Circuit,
+    *,
+    add_qed_round: bool,
+    patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
+    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    encoder: Patch14SiteEncoderName = "abstract_routed",
+    cultivation_rounds: int = 1,
+    measure_encoder_flags: bool = False,
+    add_ticks: bool = True,
+) -> None:
+    """Append selectable 14-site injection, optional QED, and cultivation rounds.
+
+    The default ``abstract_routed`` encoder accepts arbitrary Stim-supported
+    inputs. ``hirano`` selects the specialized logical-Y encoder. When
+    ``add_qed_round`` is true, the superdense round measures all three X and
+    Z Steane stabilizers at once (see
+    :func:`append_14_site_patch_superdense_stabilizer_measurement`). When
+    ``measure_encoder_flags`` is true, the record order starts with the
+    selected encoder's flags (five for abstract-routed, six for Hirano),
+    then six QED outcomes, then seven outcomes per cultivation round
+    (the folded root plus its six helper flags). Set ``cultivation_rounds=0``
+    to stop after injection and optional QED. Every measured encoder-flag,
+    QED, and cultivation outcome -- including every helper flag -- is
+    annotated as a postselection detector.
+    """
+    if cultivation_rounds < 0:
+        raise ValueError("cultivation_rounds must be non-negative.")
+
+    if encoder == "abstract":
+        append_14_site_patch_abstract_encoder(
+            circuit,
+            patch_qubits=patch_qubits,
+            injected_state=injected_state,
+            add_ticks=add_ticks,
+        )
+    elif encoder == "abstract_routed":
+        append_14_site_patch_abstract_routed_encoder(
+            circuit,
+            patch_qubits=patch_qubits,
+            injected_state=injected_state,
+            measure_flags=measure_encoder_flags,
+            add_ticks=add_ticks,
+        )
+    elif encoder == "hirano":
+        append_14_site_patch_hirano_encoder(
+            circuit,
+            patch_qubits=patch_qubits,
+            injected_state=injected_state,
+            measure_flags=measure_encoder_flags,
+            add_ticks=add_ticks,
+        )
+    else:
+        raise ValueError("encoder must be 'abstract', 'abstract_routed', or 'hirano'.")
+    if add_ticks:
+        circuit.append("TICK", [])
+
+    if add_qed_round:
+        append_14_site_patch_superdense_stabilizer_measurement(
+            circuit,
+            patch_qubits=patch_qubits,
+            add_ticks=add_ticks,
+        )
+        if add_ticks:
+            circuit.append("TICK", [])
+
+    for _ in range(cultivation_rounds):
+        append_14_site_patch_y_projection_round(
+            circuit,
+            patch_qubits=patch_qubits,
+            add_ticks=add_ticks,
+        )
+
+
+# =============================================================================
+# Circuit builders (top-level orchestrators)
+# =============================================================================
+
+
+def build_11_site_patch_injection_and_cultivation_circuit(
     injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
     *,
     add_qed_round: bool,
@@ -312,37 +520,17 @@ def build_steane_injection_and_cultivation_circuit(
     add_ticks: bool = True,
     skip_cx: tuple[int, int] | None = None,
 ) -> stim.Circuit:
-    """This is the authoritative Stim qubit-layout and appending example.
+    """Authoritative 11-site Stim qubit-layout and appending example.
 
-    This is the circuit-owning counterpart to
-    :func:`append_steane_injection_and_cultivation`. Stim has no Qiskit-style
-    quantum or classical registers: the builder uses qubit indices ``0..10``
-    for the 11-site patch and appends measurements directly to Stim's record.
+    Circuit-owning counterpart to
+    :func:`append_11_site_patch_steane_injection_and_cultivation`. Stim has no
+    registers, so the builder uses qubit indices ``0..10`` and appends
+    measurements directly to Stim's record.
 
-    Measurement-record layout
-    -------------------------
-    The first four entries are the state-injection encoder-flag
-    measurements. When ``add_qed_round`` is true, the next six entries are the
-    three X and three Z Steane stabilizer outcomes. Each cultivation round then
-    appends five entries: the folded root measurement followed by the four
-    cultivation-helper measurements. Every measured postselection outcome is
-    emitted as a Stim detector.
-
-    Parameters
-    ----------
-    injected_state
-        Clifford state injected on the center data site before encoding.
-    cultivation_rounds
-        Number of logical-Y cultivation rounds (proxy for logical ``H_XY``).
-        Zero appends injection and optional QED without cultivation.
-    add_qed_round
-        Whether to append the six-outcome post-injection Steane QED round.
-    add_ticks
-        Whether to insert ``TICK`` separators between conceptual stages.
-    skip_cx_1_4
-        Whether to omit ``CX 1 -> 4`` from every fold/unfold network.
-    skip_cx
-        Optional ``(control_site, target_site)`` CX gate to omit.
+    Measurement-record layout: four encoder-flag entries, then (if
+    ``add_qed_round``) six Steane QED entries, then five entries per
+    cultivation round (the folded root plus its four helper flags). Every
+    entry is emitted as a postselection detector.
 
     Returns
     -------
@@ -359,7 +547,7 @@ def build_steane_injection_and_cultivation_circuit(
     # - 4 encoder-flag entries;
     # - 6 post-injection Steane QED entries, when enabled;
     # - 5 entries for each cultivation round.
-    append_steane_injection_and_cultivation(
+    append_11_site_patch_injection_and_cultivation(
         circuit,
         patch_qubits=DEFAULT_STIM_11_SITE_PATCH_QUBITS,
         injected_state=injected_state,
@@ -371,6 +559,60 @@ def build_steane_injection_and_cultivation_circuit(
         skip_cx=skip_cx,
     )
     return circuit
+
+
+def build_14_site_patch_injection_and_cultivation_circuit(
+    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    *,
+    add_qed_round: bool,
+    encoder: Patch14SiteEncoderName = "abstract_routed",
+    cultivation_rounds: int = 1,
+    add_ticks: bool = True,
+) -> stim.Circuit:
+    """Authoritative 14-site Stim qubit-layout and appending example.
+
+    Circuit-owning counterpart to
+    :func:`append_14_site_patch_injection_and_cultivation`. Stim has no
+    registers, so the builder uses qubit indices ``0..13`` (site 13 is D2',
+    used only by the superdense QED round) and appends measurements directly
+    to Stim's record.
+
+    Measurement-record layout: the selected encoder's flag entries, then (if
+    ``add_qed_round``) six Steane QED entries, then seven entries per
+    cultivation round (the folded root plus its six helper flags). Every
+    entry is emitted as a postselection detector.
+
+    Returns
+    -------
+    stim.Circuit
+        New circuit containing injection and all requested cultivation rounds.
+    """
+    if cultivation_rounds < 0:
+        raise ValueError("cultivation_rounds must be non-negative.")
+
+    # Quantum layout: Stim qubit indices 0..13 represent patch sites 0..13.
+    circuit = stim.Circuit()
+
+    # Measurement-record layout:
+    # - selected encoder's flag entries;
+    # - 6 post-injection Steane QED entries, when enabled;
+    # - 7 entries for each cultivation round.
+    append_14_site_patch_injection_and_cultivation(
+        circuit,
+        patch_qubits=DEFAULT_STIM_14_SITE_PATCH_QUBITS,
+        injected_state=injected_state,
+        encoder=encoder,
+        cultivation_rounds=cultivation_rounds,
+        measure_encoder_flags=True,
+        add_qed_round=add_qed_round,
+        add_ticks=add_ticks,
+    )
+    return circuit
+
+
+# =============================================================================
+# Postselection
+# =============================================================================
 
 
 def postselect_success_shots(

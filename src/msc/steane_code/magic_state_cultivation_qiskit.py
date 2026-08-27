@@ -1,126 +1,57 @@
+"""Qiskit H_XY cultivation on the 11-site and 14-site Steane patches."""
+
 from __future__ import annotations
 
 from collections.abc import Sequence
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
-from msc.steane_code.decoding.decoder import (
-    X_STABILIZER_LABELS,
-    Z_STABILIZER_LABELS,
+from msc.steane_code.magic_state_cultivation_common import (
+    PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
+    PATCH_11_SITE_FOLD_LAYERS,
+    PATCH_11_SITE_FOLDED_MEASUREMENT_SITE,
+    PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
+    PATCH_14_SITE_FOLD_LAYERS,
+    PATCH_14_SITE_FOLDED_MEASUREMENT_SITE,
+    STEANE_QED_MEASUREMENTS_PER_ROUND,
+    Patch14SiteEncoderName,
+    filter_11_site_patch_fold_layer,
+    patch_14_site_encoder_flag_count,
+)
+from msc.steane_code.state_injection_common import (
+    NUM_QUBITS_PATCH_14_SITES,
+    PATCH_11_SITE_DATA_SITES,
+    PATCH_11_SITE_HELPER_SITES,
+    PATCH_14_SITE_DATA_SITES,
+    PATCH_14_SITE_HELPER_SITES,
 )
 from msc.steane_code.state_injection_qiskit import (
     NUM_QUBITS_PATCH_11_SITES,
     InjectedStateName,
     append_11_site_patch_rosenfeld_encoder,
     append_11_site_patch_stabilizer_measurement,
+    append_14_site_patch_abstract_encoder,
+    append_14_site_patch_abstract_routed_encoder,
+    append_14_site_patch_hirano_encoder,
+    append_14_site_patch_superdense_stabilizer_measurement,
 )
 from msc.utils.normalize import qiskit_bit_value, resolve_patch_qubits
 
 # =============================================================================
-# 11-site cultivation patch layout
+# 1. Framework-neutral layout, fold schedule, and constants
 # =============================================================================
-
-SITE_LAYOUT_DOC = """
-11-site labeling used in the cultivation patch
-----------------------------------------------
-
-The physical sites are labeled as
-
-              0
-
-          1       2
-
-      3       4       5
-
-          6       7
-
-      8       9       10
-
-The seven Steane/color-code data sites are
-
-    DATA_SITES = (0, 3, 4, 5, 8, 9, 10)
-
-and the four helper/measurement sites are
-
-    HELPER_SITES = (1, 2, 6, 7).
-
-The step-3-to-step-6 fold schedule from the figure is a 4-3-2-1
-CNOT schedule:
-
-Step 3:
-    CX 2 -> 0
-    CX 1 -> 4
-    CX 6 -> 3
-    CX 7 -> 10
-
-Step 4:
-    CX 6 -> 8
-    CX 4 -> 2
-    CX 7 -> 5
-
-Step 5:
-    CX 4 -> 6
-    CX 7 -> 9
-
-Step 6:
-    CX 7 -> 4
-
-The folded observable is then measured on site 7 in the X basis.
-
-The unfold is the exact inverse of the above CNOT schedule.
-
-Step 13 measures the four helper/measurement sites
-
-    1, 2, 6, 7
-
-in the X basis.
-
-Finally, the inverse single-qubit rotation is applied to all data sites.
-"""
-
-DATA_SITES: tuple[int, ...] = (0, 3, 4, 5, 8, 9, 10)
-HELPER_SITES: tuple[int, ...] = (1, 2, 6, 7)
-FOLDED_MEASUREMENT_SITE: int = 7
-CULTIVATION_MEASUREMENTS_PER_ROUND: int = 1 + len(HELPER_SITES)
-POST_INJECTION_QED_STABILIZER_LABELS: tuple[str, ...] = X_STABILIZER_LABELS + Z_STABILIZER_LABELS
-STEANE_QED_MEASUREMENTS_PER_ROUND: int = len(POST_INJECTION_QED_STABILIZER_LABELS)
-
-
-# =============================================================================
-# 1. Steane state-injection encoder (expressed in 11-site patch labels)
-# =============================================================================
-
-# The patch-mapping constant (_STEANE_TO_11_SITE_PATCH) lives in
-# state_injection_common.py; the encoder
-# (append_abstract_encoder) lives in state_injection_qiskit.py.
+#
+# The patch layouts, fold/unfold CNOT schedules, measurement counts, and
+# filter_11_site_patch_fold_layer are framework-neutral and live in
+# magic_state_cultivation_common.py.  The
+# patch-mapping constant (_STEANE_TO_11_SITE_PATCH) and the injection encoder
+# (append_abstract_encoder) live in state_injection_common.py /
+# state_injection_qiskit.py.
 
 
 # =============================================================================
 # 2. Fold / unfold network
 # =============================================================================
-
-FOLD_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
-    # Step 3: four CNOTs.
-    (
-        (2, 0),
-        (1, 4),
-        (6, 3),
-        (7, 10),
-    ),
-    # Step 4: three CNOTs.
-    (
-        (6, 8),
-        (4, 2),
-        (7, 5),
-    ),
-    # Step 5: two CNOTs.
-    (
-        (4, 6),
-        (7, 9),
-    ),
-    # Step 6: one CNOT.
-    ((7, 4),),
-)
 
 
 def measure_in_x_basis(circuit: QuantumCircuit, qubit, classical_bit) -> None:
@@ -158,29 +89,7 @@ def append_cnot_layer_from_site_labels(
         )
 
 
-def filter_fold_layer(
-    layer: Sequence[tuple[int, int]],
-    *,
-    skip_cx_1_4: bool = False,
-    skip_cx: tuple[int, int] | None = None,
-) -> list[tuple[int, int]]:
-    """Optionally remove a specific CX gate from a fold layer.
-
-    Parameters
-    ----------
-    skip_cx_1_4
-        shorthand for ``skip_cx=(1, 4)``.
-    skip_cx
-        ``(control, target)`` pair to remove. Takes precedence over
-        ``skip_cx_1_4`` if both are given.
-    """
-    gate_to_skip = skip_cx if skip_cx is not None else ((1, 4) if skip_cx_1_4 else None)
-    if gate_to_skip is None:
-        return list(layer)
-    return [(c, t) for c, t in layer if (c, t) != gate_to_skip]
-
-
-def append_fold_network(
+def append_11_site_patch_fold_network(
     circuit: QuantumCircuit,
     patch_qubits: Sequence,
     *,
@@ -207,14 +116,14 @@ def append_fold_network(
         If given, omit the specified (control, target) CX gate.
         Takes precedence over skip_cx_1_4.
     """
-    for layer_index, layer in enumerate(FOLD_LAYERS, start=3):
-        filtered = filter_fold_layer(layer, skip_cx_1_4=skip_cx_1_4, skip_cx=skip_cx)
+    for layer_index, layer in enumerate(PATCH_11_SITE_FOLD_LAYERS, start=3):
+        filtered = filter_11_site_patch_fold_layer(layer, skip_cx_1_4=skip_cx_1_4, skip_cx=skip_cx)
         append_cnot_layer_from_site_labels(circuit, patch_qubits, filtered)
         if add_barriers:
             circuit.barrier(label=f"fold step {layer_index}")
 
 
-def append_unfold_network(
+def append_11_site_patch_unfold_network(
     circuit: QuantumCircuit,
     patch_qubits: Sequence,
     *,
@@ -243,20 +152,42 @@ def append_unfold_network(
     """
     for reverse_step_index, layer in zip(
         range(8, 12),
-        reversed(FOLD_LAYERS),
+        reversed(PATCH_11_SITE_FOLD_LAYERS),
         strict=False,
     ):
-        filtered = filter_fold_layer(layer, skip_cx_1_4=skip_cx_1_4, skip_cx=skip_cx)
-        append_cnot_layer_from_site_labels(
-            circuit,
-            patch_qubits,
-            list(reversed(filtered)),
-        )
+        filtered = filter_11_site_patch_fold_layer(layer, skip_cx_1_4=skip_cx_1_4, skip_cx=skip_cx)
+        append_cnot_layer_from_site_labels(circuit, patch_qubits, list(reversed(filtered)))
         if add_barriers:
             circuit.barrier(label=f"unfold step {reverse_step_index}")
 
 
-def append_h_xy_projection_round(
+def append_14_site_patch_fold_network(
+    circuit: QuantumCircuit,
+    patch_qubits: Sequence,
+    *,
+    add_barriers: bool = True,
+) -> None:
+    """Append the forward 6-3-2-1 fold network for the 14-site patch."""
+    for layer_index, layer in enumerate(PATCH_14_SITE_FOLD_LAYERS, start=1):
+        append_cnot_layer_from_site_labels(circuit, patch_qubits, layer)
+        if add_barriers:
+            circuit.barrier(label=f"fold layer {layer_index}")
+
+
+def append_14_site_patch_unfold_network(
+    circuit: QuantumCircuit,
+    patch_qubits: Sequence,
+    *,
+    add_barriers: bool = True,
+) -> None:
+    """Append the inverse 14-site fold network in fully reversed order."""
+    for layer_index, layer in enumerate(reversed(PATCH_14_SITE_FOLD_LAYERS), start=1):
+        append_cnot_layer_from_site_labels(circuit, patch_qubits, list(reversed(layer)))
+        if add_barriers:
+            circuit.barrier(label=f"unfold layer {layer_index}")
+
+
+def append_11_site_patch_h_xy_projection_round(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
@@ -267,7 +198,7 @@ def append_h_xy_projection_round(
 ) -> None:
     """Append one H_XY projection / cultivation round.
 
-    See SITE_LAYOUT_DOC for the 11-site labeling.
+    See the 11-site layout comment in magic_state_cultivation_common.
 
     This routine implements the Google paper Fig.1 panel-C cultivation sequence:
 
@@ -308,15 +239,16 @@ def append_h_xy_projection_round(
         expected_count=NUM_QUBITS_PATCH_11_SITES,
     )
 
-    if len(classical_bits) != CULTIVATION_MEASUREMENTS_PER_ROUND:
+    if len(classical_bits) != PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND:
         raise ValueError(
-            "classical_bits must contain exactly " f"{CULTIVATION_MEASUREMENTS_PER_ROUND} bits."
+            "classical_bits must contain exactly "
+            f"{PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND} bits."
         )
 
     c = list(classical_bits)
 
     # Step 2 helper preparation.
-    for helper_site in HELPER_SITES:
+    for helper_site in PATCH_11_SITE_HELPER_SITES:
         reset_to_plus(circuit, patch_qubits[helper_site])
 
     if add_barriers:
@@ -324,14 +256,14 @@ def append_h_xy_projection_round(
 
     # Step 2 data rotations. Transversal T rotates H_XY onto the folded
     # X measurement axis; the fold CNOT network is unchanged.
-    for data_site in DATA_SITES:
+    for data_site in PATCH_11_SITE_DATA_SITES:
         circuit.t(patch_qubits[data_site])
 
     if add_barriers:
         circuit.barrier(label="T on data")
 
     # Steps 3--6: fold.
-    append_fold_network(
+    append_11_site_patch_fold_network(
         circuit,
         patch_qubits,
         add_barriers=add_barriers,
@@ -342,7 +274,7 @@ def append_h_xy_projection_round(
     # Step 7: measure the folded observable on site 7.
     measure_in_x_basis(
         circuit,
-        patch_qubits[FOLDED_MEASUREMENT_SITE],
+        patch_qubits[PATCH_11_SITE_FOLDED_MEASUREMENT_SITE],
         c[0],
     )
 
@@ -350,13 +282,13 @@ def append_h_xy_projection_round(
         circuit.barrier(label="measure folded observable")
 
     # Reprepare site 7 to make the time-reversed unfold explicit.
-    reset_to_plus(circuit, patch_qubits[FOLDED_MEASUREMENT_SITE])
+    reset_to_plus(circuit, patch_qubits[PATCH_11_SITE_FOLDED_MEASUREMENT_SITE])
 
     if add_barriers:
-        circuit.barrier(label="reset folded site")
+        circuit.barrier(label="reprepare folded site")
 
     # Steps 8--12: unfold.
-    append_unfold_network(
+    append_11_site_patch_unfold_network(
         circuit,
         patch_qubits,
         add_barriers=add_barriers,
@@ -365,7 +297,7 @@ def append_h_xy_projection_round(
     )
 
     # Step 13: measure the four helper / M qubits.
-    for bit_index, helper_site in enumerate(HELPER_SITES, start=1):
+    for bit_index, helper_site in enumerate(PATCH_11_SITE_HELPER_SITES, start=1):
         measure_in_x_basis(
             circuit,
             patch_qubits[helper_site],
@@ -376,9 +308,96 @@ def append_h_xy_projection_round(
         circuit.barrier(label="measure helpers")
 
     # Step 14: undo the single-qubit basis rotation on the data.
-    for data_site in DATA_SITES:
+    for data_site in PATCH_11_SITE_DATA_SITES:
         circuit.tdg(patch_qubits[data_site])
 
+    if add_barriers:
+        circuit.barrier(label="T dagger on data")
+
+
+def append_14_site_patch_h_xy_projection_round(
+    circuit: QuantumCircuit,
+    *,
+    patch_qubits: Sequence,
+    classical_bits: Sequence,
+    add_barriers: bool = True,
+    running_kt: bool = False,
+) -> None:
+    """Append one logical-H_XY projection round on the fixed 14-site patch.
+
+    The round prepares H7-H12 in ``|+>``, applies transversal ``T`` to the data,
+    folds onto D0, measures D0 in X, unfolds, measures H7-H12 in X, then applies
+    transversal ``Tdg``. The seven output bits are the D0 result followed by
+    the H7-H12 flags, which are expected to be zero.
+
+    Cultivation uses the default root reset and postselects the D0 result to
+    zero. Although redundant in an ideal accepted shot, the reset exposes a
+    reported-zero/physical-``|->`` mismatch through H10; omitting it lowers the
+    corresponding Stim graphlike distance from three to two. KT preserves D0
+    because both root results are data, and resetting root one would fire H10
+    and reject that outcome. Set ``running_kt=False`` for cultivation and
+    ``True`` for KT.
+
+    Parameters
+    ----------
+    running_kt
+        Set to ``False`` for cultivation, which resets D0 to ``|+>``; set to
+        ``True`` for KT, which restores the measured D0 branch.
+    """
+    patch_qubits = resolve_patch_qubits(
+        patch_qubits,
+        expected_count=NUM_QUBITS_PATCH_14_SITES,
+    )
+    if len(classical_bits) != PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND:
+        raise ValueError(
+            "classical_bits must contain exactly "
+            f"{PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND} bits."
+        )
+    classical_bits = list(classical_bits)
+
+    for helper_site in PATCH_14_SITE_HELPER_SITES:
+        reset_to_plus(circuit, patch_qubits[helper_site])
+    if add_barriers:
+        circuit.barrier(label="prepare helpers")
+
+    for data_site in PATCH_14_SITE_DATA_SITES:
+        circuit.t(patch_qubits[data_site])
+    if add_barriers:
+        circuit.barrier(label="T on data")
+
+    append_14_site_patch_fold_network(
+        circuit,
+        patch_qubits,
+        add_barriers=add_barriers,
+    )
+    measure_in_x_basis(
+        circuit,
+        patch_qubits[PATCH_14_SITE_FOLDED_MEASUREMENT_SITE],
+        classical_bits[0],
+    )
+    if add_barriers:
+        circuit.barrier(label="measure folded observable")
+
+    if running_kt:
+        circuit.h(patch_qubits[PATCH_14_SITE_FOLDED_MEASUREMENT_SITE])
+    else:
+        reset_to_plus(circuit, patch_qubits[PATCH_14_SITE_FOLDED_MEASUREMENT_SITE])
+    if add_barriers:
+        circuit.barrier(label="restore folded site")
+
+    append_14_site_patch_unfold_network(
+        circuit,
+        patch_qubits,
+        add_barriers=add_barriers,
+    )
+    # Reads every helper, including H10, as an X-basis flag.
+    for bit_index, helper_site in enumerate(PATCH_14_SITE_HELPER_SITES, start=1):
+        measure_in_x_basis(circuit, patch_qubits[helper_site], classical_bits[bit_index])
+    if add_barriers:
+        circuit.barrier(label="measure helpers")
+
+    for data_site in PATCH_14_SITE_DATA_SITES:
+        circuit.tdg(patch_qubits[data_site])
     if add_barriers:
         circuit.barrier(label="T dagger on data")
 
@@ -388,7 +407,7 @@ def append_h_xy_projection_round(
 # =============================================================================
 
 
-def append_steane_injection_and_cultivation(
+def append_11_site_patch_injection_and_cultivation(
     circuit: QuantumCircuit,
     *,
     add_qed_round: bool,
@@ -428,7 +447,7 @@ def append_steane_injection_and_cultivation(
         QED without cultivation.
     qed_classical_bits
         Six bits for the post-injection QED outcomes, ordered by
-        ``POST_INJECTION_QED_STABILIZER_LABELS``: the three X stabilizers
+        ``post_injection_qed_stabilizer_labels``: the three X stabilizers
         followed by the three Z stabilizers. Required when
         ``add_qed_round`` is true and ignored otherwise.
     add_qed_round
@@ -480,7 +499,7 @@ def append_steane_injection_and_cultivation(
             circuit.barrier(label="post-injection QED")
 
     for round_index in range(cultivation_rounds):
-        append_h_xy_projection_round(
+        append_11_site_patch_h_xy_projection_round(
             circuit,
             patch_qubits=patch_qubits,
             classical_bits=cultivation_classical_bits[round_index],
@@ -490,7 +509,95 @@ def append_steane_injection_and_cultivation(
         )
 
 
-def build_steane_injection_and_cultivation_circuit(
+def append_14_site_patch_injection_and_cultivation(
+    circuit: QuantumCircuit,
+    *,
+    add_qed_round: bool,
+    patch_qubits: Sequence,
+    encoder_classical_bits: Sequence,
+    cultivation_classical_bits: Sequence[Sequence],
+    encoder: Patch14SiteEncoderName = "abstract_routed",
+    injected_state: InjectedStateName = "T",
+    cultivation_rounds: int = 1,
+    qed_classical_bits: Sequence | None = None,
+    add_barriers: bool = True,
+) -> None:
+    """Append 14-site injection, optional QED, and cultivation rounds.
+
+    ``encoder="abstract_routed"`` is the production default and accepts an
+    arbitrary injected state. ``"abstract"`` selects the direct unrouted
+    reference encoder, while ``"hirano"`` selects the specialized logical-Y
+    encoder.
+    """
+    encoder_flag_count = patch_14_site_encoder_flag_count(encoder)
+    if len(encoder_classical_bits) < encoder_flag_count:
+        raise ValueError(f"encoder_classical_bits must contain at least {encoder_flag_count} bits.")
+    if cultivation_rounds < 0:
+        raise ValueError("cultivation_rounds must be non-negative.")
+    if len(cultivation_classical_bits) != cultivation_rounds:
+        raise ValueError(
+            "cultivation_classical_bits must contain exactly one 7-bit "
+            "sequence per cultivation round."
+        )
+    if add_qed_round and (
+        qed_classical_bits is None or len(qed_classical_bits) != STEANE_QED_MEASUREMENTS_PER_ROUND
+    ):
+        raise ValueError(
+            "qed_classical_bits must contain exactly "
+            f"{STEANE_QED_MEASUREMENTS_PER_ROUND} bits when add_qed_round is true."
+        )
+
+    encoder_flags = list(encoder_classical_bits) if encoder_flag_count else None
+    if encoder == "abstract":
+        append_14_site_patch_abstract_encoder(
+            circuit,
+            patch_qubits=patch_qubits,
+            injected_state=injected_state,
+            add_barriers=add_barriers,
+        )
+    elif encoder == "abstract_routed":
+        append_14_site_patch_abstract_routed_encoder(
+            circuit,
+            patch_qubits=patch_qubits,
+            injected_state=injected_state,
+            flag_classical_bits=encoder_flags,
+            add_barriers=add_barriers,
+        )
+    elif encoder == "hirano":
+        append_14_site_patch_hirano_encoder(
+            circuit,
+            patch_qubits=patch_qubits,
+            injected_state=injected_state,
+            flag_classical_bits=encoder_flags,
+            add_barriers=add_barriers,
+        )
+    else:
+        raise ValueError("encoder must be 'abstract', 'abstract_routed', or 'hirano'.")
+    if add_barriers:
+        circuit.barrier(label="state injection")
+
+    if add_qed_round:
+        assert qed_classical_bits is not None
+        append_14_site_patch_superdense_stabilizer_measurement(
+            circuit,
+            patch_qubits=patch_qubits,
+            classical_bits=qed_classical_bits,
+            basis="BOTH",
+            add_barriers=add_barriers,
+        )
+        if add_barriers:
+            circuit.barrier(label="post-injection QED")
+
+    for round_bits in cultivation_classical_bits:
+        append_14_site_patch_h_xy_projection_round(
+            circuit,
+            patch_qubits=patch_qubits,
+            classical_bits=round_bits,
+            add_barriers=add_barriers,
+        )
+
+
+def build_11_site_patch_injection_and_cultivation_circuit(
     injected_state: InjectedStateName = "T",
     *,
     add_qed_round: bool,
@@ -557,13 +664,13 @@ def build_steane_injection_and_cultivation_circuit(
     # - one 6-bit creg for post-injection Steane QED, when enabled;
     # - one 5-bit creg for each cultivation round's root and four helper
     #   measurements.
-    enc_flags_creg = ClassicalRegister(len(HELPER_SITES), "enc_flags")
+    enc_flags_creg = ClassicalRegister(len(PATCH_11_SITE_HELPER_SITES), "enc_flags")
     qed_creg = (
         ClassicalRegister(STEANE_QED_MEASUREMENTS_PER_ROUND, "qed") if add_qed_round else None
     )
     cult_cregs = [
         ClassicalRegister(
-            CULTIVATION_MEASUREMENTS_PER_ROUND,
+            PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
             f"cult_{round_index}",
         )
         for round_index in range(cultivation_rounds)
@@ -574,7 +681,7 @@ def build_steane_injection_and_cultivation_circuit(
     cregs.extend(cult_cregs)
     circuit = QuantumCircuit(qreg, *cregs)
 
-    append_steane_injection_and_cultivation(
+    append_11_site_patch_injection_and_cultivation(
         circuit,
         patch_qubits=list(qreg),
         injected_state=injected_state,
@@ -586,6 +693,56 @@ def build_steane_injection_and_cultivation_circuit(
         add_barriers=add_barriers,
         skip_cx_1_4=skip_cx_1_4,
         skip_cx=skip_cx,
+    )
+    return circuit
+
+
+def build_14_site_patch_injection_and_cultivation_circuit(
+    injected_state: InjectedStateName = "T",
+    *,
+    add_qed_round: bool,
+    encoder: Patch14SiteEncoderName = "abstract_routed",
+    cultivation_rounds: int = 1,
+    add_barriers: bool = True,
+) -> QuantumCircuit:
+    """Build the register-owning 14-site injection-and-cultivation circuit."""
+    if cultivation_rounds < 0:
+        raise ValueError("cultivation_rounds must be non-negative.")
+
+    qreg = QuantumRegister(NUM_QUBITS_PATCH_14_SITES, "q")
+    encoder_flag_count = patch_14_site_encoder_flag_count(encoder)
+    enc_flags_creg = (
+        ClassicalRegister(encoder_flag_count, "enc_flags") if encoder_flag_count else None
+    )
+    qed_creg = (
+        ClassicalRegister(STEANE_QED_MEASUREMENTS_PER_ROUND, "qed") if add_qed_round else None
+    )
+    cult_cregs = [
+        ClassicalRegister(
+            PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
+            f"cult_{round_index}",
+        )
+        for round_index in range(cultivation_rounds)
+    ]
+    cregs: list[ClassicalRegister] = []
+    if enc_flags_creg is not None:
+        cregs.append(enc_flags_creg)
+    if qed_creg is not None:
+        cregs.append(qed_creg)
+    cregs.extend(cult_cregs)
+    circuit = QuantumCircuit(qreg, *cregs)
+
+    append_14_site_patch_injection_and_cultivation(
+        circuit,
+        patch_qubits=list(qreg),
+        encoder=encoder,
+        injected_state=injected_state,
+        encoder_classical_bits=(list(enc_flags_creg) if enc_flags_creg is not None else ()),
+        cultivation_classical_bits=[list(cult_creg) for cult_creg in cult_cregs],
+        cultivation_rounds=cultivation_rounds,
+        qed_classical_bits=(list(qed_creg) if qed_creg is not None else None),
+        add_qed_round=add_qed_round,
+        add_barriers=add_barriers,
     )
     return circuit
 

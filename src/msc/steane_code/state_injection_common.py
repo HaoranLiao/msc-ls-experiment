@@ -5,14 +5,47 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Literal
 
-PatchEncoderGateName = Literal["H", "CZ", "CX", "RESET_X", "RESET_Z", "INJECT"]
-PatchSuperdenseGateName = Literal["CX", "RESET_X", "RESET_Z", "MEASURE_X", "MEASURE_Z"]
+# =============================================================================
+# Shared types and stabilizer selection
+# =============================================================================
+
+
+PatchEncoderGateName = Literal[
+    "H",
+    "CZ",
+    "CX",
+    "RESET_X",
+    "RESET_Z",
+    "INJECT",
+]
 PatchStabilizerBasis = Literal["X", "Z", "BOTH"]
+
+
+def resolve_patch_stabilizer_indices(
+    stabilizer_indices: Sequence[int] | None,
+) -> tuple[int, ...]:
+    """Validate and return an ordered selection of patch stabilizer indices."""
+    if stabilizer_indices is None:
+        selected_indices = (0, 1, 2)
+    else:
+        selected_indices = tuple(stabilizer_indices)
+    if not selected_indices:
+        raise ValueError("stabilizer_indices must select at least one stabilizer.")
+    if len(set(selected_indices)) != len(selected_indices) or any(
+        not 0 <= index < 3 for index in selected_indices
+    ):
+        raise ValueError("stabilizer_indices must contain distinct indices in [0, 2].")
+    return selected_indices
 
 
 # =============================================================================
 # Abstract Steane code
 # =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Stabilizers and logical operators
+# -----------------------------------------------------------------------------
 
 
 # Steane [[7,1,3]] qubit layout (Fano plane in triangular form):
@@ -38,6 +71,7 @@ X_STABILIZERS: tuple[tuple[int, ...], ...] = (
 )
 Z_STABILIZERS: tuple[tuple[int, ...], ...] = X_STABILIZERS
 
+# May not be used but useful as a reference
 DEFAULT_LOGICAL_X: tuple[int, ...] = (0, 1, 4)
 DEFAULT_LOGICAL_Z: tuple[int, ...] = DEFAULT_LOGICAL_X
 
@@ -53,23 +87,34 @@ LOGICAL_X_REPRESENTATIVES: tuple[tuple[int, ...], ...] = (
 )
 LOGICAL_Z_REPRESENTATIVES: tuple[tuple[int, ...], ...] = LOGICAL_X_REPRESENTATIVES
 
-STEANE_ENCODER_CNOTS: tuple[tuple[int, int], ...] = (
-    (6, 2),
-    (0, 6),
-    (4, 0),
-    (2, 5),
-    (2, 3),
-    (0, 1),
-    (1, 3),
-    (1, 4),
-    (4, 5),
-    (0, 2),
+
+# -----------------------------------------------------------------------------
+# Encoder schedule
+# -----------------------------------------------------------------------------
+
+
+# Abstract Steane encoder schedule grouped into seven collision-free CX layers.
+# Both frameworks consume this single representation; Stim additionally emits
+# an explicit ``TICK`` after each layer.
+ABSTRACT_ENCODER_CNOT_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
+    ((6, 2),),
+    ((0, 6), (2, 5)),
+    ((4, 0), (2, 3)),
+    ((0, 1),),
+    ((1, 3), (0, 2)),
+    ((1, 4),),
+    ((4, 5),),
 )
 
 
 # =============================================================================
-# Map to 11-site patch
+# 11-site patch
 # =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Geometry and site roles
+# -----------------------------------------------------------------------------
 
 
 # 11-site labeling used in the patch:
@@ -87,6 +132,32 @@ STEANE_ENCODER_CNOTS: tuple[tuple[int, int], ...] = (
 # Data sites:   (0, 3, 4, 5, 8, 9, 10)
 # Helper sites: (1, 2, 6, 7)
 
+NUM_QUBITS_PATCH_11_SITES: int = 11
+PATCH_11_SITE_DATA_SITES: tuple[int, ...] = (0, 3, 4, 5, 8, 9, 10)
+PATCH_11_SITE_HELPER_SITES: tuple[int, ...] = (1, 2, 6, 7)
+
+# Site index -> local (x, y) coordinate on the same diagonal grid convention
+# used by the 14-site patch.
+PATCH_11_SITE_COORDS: tuple[tuple[int, int], ...] = (
+    (2, 0),  # 0  data  (Steane 0; injection)
+    (1, 1),  # 1  helper (unused routing site)
+    (3, 1),  # 2  helper (face {0,3,4,5} ancilla)
+    (0, 2),  # 3  data  (Steane 1)
+    (2, 2),  # 4  data  (Steane 3)
+    (4, 2),  # 5  data  (Steane 2)
+    (1, 3),  # 6  helper (face {3,4,8,9} ancilla)
+    (3, 3),  # 7  helper (face {4,5,9,10} ancilla)
+    (0, 4),  # 8  data  (Steane 4)
+    (2, 4),  # 9  data  (Steane 5)
+    (4, 4),  # 10 data  (Steane 6)
+)
+
+
+# -----------------------------------------------------------------------------
+# Abstract encoder mapping
+# -----------------------------------------------------------------------------
+
+
 # The 7 abstract Steane qubits (0–6) map to 11-site patch data sites as:
 #   abstract 0 → patch site 0  (injection)
 #   abstract 1 → patch site 3  (|+⟩)
@@ -95,17 +166,14 @@ STEANE_ENCODER_CNOTS: tuple[tuple[int, int], ...] = (
 #   abstract 4 → patch site 8  (|+⟩)
 #   abstract 5 → patch site 9  (|0⟩)
 #   abstract 6 → patch site 10 (|+⟩)
-
 # Map from abstract Steane qubit index (0–6) to 11-site patch data site.
 _STEANE_TO_11_SITE_PATCH: tuple[int, ...] = (0, 3, 5, 4, 8, 9, 10)
 
-NUM_QUBITS_PATCH_11_SITES: int = 11
-PATCH_11_SITE_DATA_SITES: tuple[int, ...] = (0, 3, 4, 5, 8, 9, 10)
-PATCH_11_SITE_HELPER_SITES: tuple[int, ...] = (1, 2, 6, 7)
 
-# ---------------------------------------------------------------------------
-# Mapped stabilizers (expressed in 11-site patch labels)
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Stabilizers and logical operators
+# -----------------------------------------------------------------------------
+
 
 PATCH_11_SITE_X_STABILIZERS: tuple[tuple[int, ...], ...] = (
     (0, 3, 4, 5),
@@ -113,10 +181,6 @@ PATCH_11_SITE_X_STABILIZERS: tuple[tuple[int, ...], ...] = (
     (4, 5, 9, 10),
 )
 PATCH_11_SITE_Z_STABILIZERS: tuple[tuple[int, ...], ...] = PATCH_11_SITE_X_STABILIZERS
-
-# ---------------------------------------------------------------------------
-# Mapped logical operators (expressed in 11-site patch labels)
-# ---------------------------------------------------------------------------
 
 PATCH_11_SITE_DEFAULT_LOGICAL_X: tuple[int, ...] = (8, 9, 10)
 PATCH_11_SITE_DEFAULT_LOGICAL_Z: tuple[int, ...] = PATCH_11_SITE_DEFAULT_LOGICAL_X
@@ -134,9 +198,11 @@ PATCH_11_SITE_LOGICAL_Z_REPRESENTATIVES: tuple[tuple[int, ...], ...] = (
     PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES
 )
 
-# ---------------------------------------------------------------------------
-# Rosenfeld et al. encoder schedule for this 11-site patch
-# ---------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Rosenfeld encoder schedule
+# -----------------------------------------------------------------------------
+
 
 # Original site 5 in Rosenfeld et al.'s schedule maps to patch site 4, the
 # center data site.  In the Hirano-labeled view used by lattice surgery, this is
@@ -168,9 +234,11 @@ PATCH_11_SITE_ROSENFELD_ENCODER_LAYERS: tuple[tuple[PatchEncoderGateName, tuple]
     ("H", (6, 1, 4, 7, 2)),
 )
 
-# ---------------------------------------------------------------------------
-# Stabilizer measurement on the 11-site patch
-# ---------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Stabilizer-measurement ancillas
+# -----------------------------------------------------------------------------
+
 
 # Map from stabilizer index to the helper site used as its ancilla.
 # Each helper sits at the geometric center of the corresponding face:
@@ -180,67 +248,56 @@ PATCH_11_SITE_ROSENFELD_ENCODER_LAYERS: tuple[tuple[PatchEncoderGateName, tuple]
 PATCH_11_SITE_STABILIZER_ANCILLA_SITES: tuple[int, ...] = (2, 6, 7)
 
 
-def resolve_11_site_patch_stabilizer_indices(
-    stabilizer_indices: Sequence[int] | None,
-) -> tuple[int, ...]:
-    """Validate and return an ordered selection of patch stabilizer indices."""
-    if stabilizer_indices is None:
-        selected_indices = tuple(range(len(PATCH_11_SITE_X_STABILIZERS)))
-    else:
-        selected_indices = tuple(stabilizer_indices)
-    if not selected_indices:
-        raise ValueError("stabilizer_indices must select at least one stabilizer.")
-    if len(set(selected_indices)) != len(selected_indices) or any(
-        not 0 <= index < len(PATCH_11_SITE_X_STABILIZERS) for index in selected_indices
-    ):
-        raise ValueError("stabilizer_indices must contain distinct indices in [0, 2].")
-    return selected_indices
+# =============================================================================
+# 14-site patch
+# =============================================================================
 
 
-# =============================================================================
-# Map to 14-site patch (Hirano et al., arXiv:2510.24615)
-# =============================================================================
+# -----------------------------------------------------------------------------
+# Geometry and site roles
+# -----------------------------------------------------------------------------
 
 
 # 14-site patch layout on the rotated (45°-tilted) grid used by Hirano's
 # lattice-surgery cultivation.  Coordinates are *local to the Steane patch*:
 # ``x`` runs 0–6 left-to-right and ``y`` runs 0–5 top-to-bottom (Stim's diagram
-# convention, ``y`` increasing downward).  Data sites carry the seven Steane
-# qubits; the six helper sites are used transiently by the injection encoder and
-# return to |+> once encoding completes, then serve as the superdense Bell-pair
-# ancillas.  The fourteenth site is D2' — a second copy of data qubit 2 that the
-# superdense round couples to the distant face-{0,2,4,6} ancillas (see below):
+# convention, ``y`` increasing downward). Data sites carry the seven Steane
+# qubits. The direct abstract encoder does not touch the helpers; the routed
+# abstract encoder uses H8–H12 as |0> routing workspace; Hirano's encoder uses
+# all six helpers and returns them to |+>. The helpers then serve as superdense
+# Bell-pair ancillas. The fourteenth site is D2' (site 13), a second copy of D2
+# used to reach the distant face-{0,2,4,6} ancillas:
 #
 #          x=0    x=1    x=2    x=3    x=4    x=5    x=6
 #   y=0                   D6
 #   y=1                          H9            D2'
 #   y=2                   D4            H10           D2
 #   y=3           H7            D0            H12
-#   y=4    D1            H8            H11
-#   y=5                          D5            D3
+#   y=4                  H8            H11
+#   y=5           D1            D5            D3
 #
-#   D<i> = data site (site index == Steane qubit index i); D4 is the injection
-#          site where the magic-state phase gate is applied mid-encoding.
+#   D<i> = data site (site index == Steane qubit index i); D4 is Hirano's phase
+#          site, D6 is the direct abstract input, and D3 is the routed input.
 #   H<j> = helper/ancilla site (site index j).
 #   D2'  = site 13, the superdense second copy of data qubit 2.
 #
-# Diagonal ``(±1, ±1)`` neighbours are the only pairs entangled by any schedule
-# here, so every CX (injection and superdense) is geometrically local.
-
-# Hirano's encoder uses its own Fano-plane coordinatization, so the stabilizers
-# and logicals below are expressed directly in these data-site labels (0–6) —
-# this is NOT the abstract Steane labeling above.
+# Diagonal ``(±1, ±1)`` neighbours define the fixed patch connectivity used by
+# the fold and superdense schedules. The direct abstract encoder is
+# intentionally unrouted. ``PATCH_14_SITE_HIRANO_ENCODER_COORDS`` separately
+# places D1 beside H7 for Hirano's specialized encoder.
 
 NUM_QUBITS_PATCH_14_SITES: int = 14
+PATCH_14_SITE_DATA_SITES: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6)
+PATCH_14_SITE_HELPER_SITES: tuple[int, ...] = (7, 8, 9, 10, 11, 12)
 
 # Site index → local (x, y) coordinate.  Indices 0–6 are the data sites (equal
 # to the Steane qubit index); indices 7–12 are helper sites; index 13 is D2'.
 PATCH_14_SITE_COORDS: tuple[tuple[int, int], ...] = (
     (3, 3),  # 0  data  (Steane 0)
-    (0, 4),  # 1  data  (Steane 1)
+    (1, 5),  # 1  data  (Steane 1)
     (6, 2),  # 2  data  (Steane 2)
     (5, 5),  # 3  data  (Steane 3)
-    (2, 2),  # 4  data  (Steane 4, injection site)
+    (2, 2),  # 4  data  (Steane 4; Hirano phase-injection site)
     (3, 5),  # 5  data  (Steane 5)
     (2, 0),  # 6  data  (Steane 6)
     (1, 3),  # 7  helper (face {0,1,4,5} X-ancilla)
@@ -252,15 +309,36 @@ PATCH_14_SITE_COORDS: tuple[tuple[int, int], ...] = (
     (5, 1),  # 13 D2' (superdense second copy of data qubit 2)
 )
 
-PATCH_14_SITE_DATA_SITES: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6)
-PATCH_14_SITE_HELPER_SITES: tuple[int, ...] = (7, 8, 9, 10, 11, 12)
+# Hirano's specialized injection-stage geometry differs only at D1. Its final
+# two CXs transfer the D1 state from H7 into (0, 4), keeping every encoder CX
+# diagonally local. The Hirano encoder retains that geometry. The mapped
+# abstract encoder and fixed post-injection schedules instead use
+# ``PATCH_14_SITE_COORDS``, with D1 at (1, 5).
+PATCH_14_SITE_HIRANO_ENCODER_COORDS: tuple[tuple[int, int], ...] = (
+    PATCH_14_SITE_COORDS[:1] + ((0, 4),) + PATCH_14_SITE_COORDS[2:]
+)
 
-# Data site 4 receives the injected magic state mid-encoding.
-PATCH_14_SITE_ENCODER_INJECTION_SITE: int = 4
+# -----------------------------------------------------------------------------
+# Abstract encoder mapping
+# -----------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Mapped stabilizers and logical operators (14-site patch / Steane labels)
-# ---------------------------------------------------------------------------
+
+# The 7 abstract Steane qubits (0–6) map to 14-site patch data sites as:
+#   abstract 0 → patch site 6 (D6, injection)
+#   abstract 1 → patch site 4 (D4, |+⟩)
+#   abstract 2 → patch site 2 (D2, |0⟩)
+#   abstract 3 → patch site 0 (D0, |0⟩)
+#   abstract 4 → patch site 1 (D1, |+⟩)
+#   abstract 5 → patch site 5 (D5, |0⟩)
+#   abstract 6 → patch site 3 (D3, |+⟩)
+# Map from abstract Steane qubit index (0–6) to 14-site patch data site.
+_STEANE_TO_14_SITE_PATCH: tuple[int, ...] = (6, 4, 2, 0, 1, 5, 3)
+
+
+# -----------------------------------------------------------------------------
+# Stabilizers and logical operators
+# -----------------------------------------------------------------------------
+
 
 PATCH_14_SITE_X_STABILIZERS: tuple[tuple[int, ...], ...] = (
     (0, 1, 4, 5),
@@ -288,22 +366,81 @@ PATCH_14_SITE_LOGICAL_Z_REPRESENTATIVES: tuple[tuple[int, ...], ...] = (
     PATCH_14_SITE_LOGICAL_X_REPRESENTATIVES
 )
 
-# ---------------------------------------------------------------------------
-# Hirano et al. encoder schedule for this 14-site patch
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Abstract-routed encoder
+# -----------------------------------------------------------------------------
+
+
+# The routed abstract encoder uses the fixed patch geometry, starts its
+# arbitrary input on D3, and returns all seven encoded qubits to D0–D6. H8–H12
+# are routing workspace; H7 and D2' are idle. Every non-data site finishes in
+# |0>, so the superdense and cultivation schedules can follow immediately.
+PATCH_14_SITE_ABSTRACT_ROUTED_IBM_MIAMI_QUBITS: tuple[int, ...] = (
+    23,
+    21,
+    15,
+    3,
+    33,
+    12,
+    44,
+    32,
+    22,
+    34,
+    24,
+    13,
+    14,
+    25,
+)
+PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_INJECTION_SITE: int = 3
+# H8–H12 are the routing workspace and provide five known-zero Z-basis flags.
+PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES: tuple[int, ...] = (8, 9, 10, 11, 12)
+
+# The arbitrary-state abstract isometry routed by reversing an IBM Miami route
+# of the inverse encoder. The search covers all 168 valid output mappings and
+# SABRE seeds 0–63, ranking native depth before involved-site count. The winner
+# uses 33 CXs in 14 two-qubit layers on 12 patch sites after reducing its final
+# four-CX word to an equivalent two-CX word. IBM basis translation preserves
+# the 14-layer depth with 33 CZs. The input state is prepared separately on D3.
+PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_LAYERS: tuple[
+    tuple[tuple[PatchEncoderGateName, tuple], ...], ...
+] = (
+    (("H", (12, 5, 11)),),
+    (("CX", ((11, 0),)),),
+    (("CX", ((0, 4), (11, 3))),),
+    (("CX", ((0, 10), (3, 11))),),
+    (("CX", ((5, 11), (0, 8))),),
+    (("CX", ((11, 12), (8, 0))),),
+    (("CX", ((12, 10), (0, 8), (11, 5))),),
+    (("CX", ((10, 9), (5, 11))),),
+    (("CX", ((9, 10), (11, 5))),),
+    (("CX", ((10, 9), (12, 11), (5, 8))),),
+    (("CX", ((9, 6), (11, 0), (8, 1), (12, 2))),),
+    (("CX", ((6, 9), (0, 11), (1, 8), (2, 12))),),
+    (("CX", ((9, 6), (11, 0), (8, 1), (12, 2))),),
+    (("CX", ((4, 0),)),),
+    (("CX", ((0, 4),)),),
+)
+
+# -----------------------------------------------------------------------------
+# Hirano encoder schedule
+# -----------------------------------------------------------------------------
+
 
 # Tick-by-tick port of ``injection_generator`` from Hirano's ``steane_code.py``,
 # rewritten into 14-site labels.  The encoder only touches the 13 core sites
 # (0–12); D2' (site 13) is idle here and is prepared fresh by the superdense
-# round.  Each tick is a tuple of operations applied in parallel:
+# round. Hirano's final two CXs transfer D1 from H7 into the injection-stage
+# cell (0, 4) in ``PATCH_14_SITE_HIRANO_ENCODER_COORDS``. The mapped abstract
+# encoder instead prepares D1 directly at the fixed (1, 5) cell. Each tick is a
+# tuple of operations applied in parallel:
 #   ("RESET_X", (sites...))    reset the listed sites to |+>
 #   ("RESET_Z", (sites...))    reset the listed sites to |0>
-#   ("CX", ((ctrl, tgt)...))   controlled-X between diagonally adjacent sites
+#   ("CX", ((ctrl, tgt)...))   controlled-X in the reference schedule
 #   ("INJECT", (site,))        apply the magic-state phase gate on the injection
 #                              site (S / S_DAG proxy for T / T_DAG)
 # Hirano's original applies ``S_DAG`` at the injection tick; the framework
 # module chooses S or S_DAG from ``injected_state``.
-PATCH_14_SITE_ENCODER_LAYERS: tuple[tuple[tuple[PatchEncoderGateName, tuple], ...], ...] = (
+PATCH_14_SITE_HIRANO_ENCODER_LAYERS: tuple[tuple[tuple[PatchEncoderGateName, tuple], ...], ...] = (
     (("RESET_X", (12, 0, 5)), ("RESET_Z", (10, 11, 8))),
     (("CX", ((12, 10), (0, 11), (5, 8))),),
     (("CX", ((12, 11), (0, 8))), ("RESET_X", (7, 2))),
@@ -319,14 +456,12 @@ PATCH_14_SITE_ENCODER_LAYERS: tuple[tuple[tuple[PatchEncoderGateName, tuple], ..
     (("CX", ((9, 6), (7, 1))),),
 )
 
-# ---------------------------------------------------------------------------
-# Conceptually-clear superdense stabilizer measurement on the 14-site patch
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Superdense stabilizer-measurement schedule
+# -----------------------------------------------------------------------------
 
-# Site 13 is D2', the superdense second copy of data qubit 2.
-PATCH_14_SITE_D2_PRIME_SITE: int = 13
 
-# Each of the three weight-4 faces owns a neighbouring pair of helper sites,
+# Each of the three weight-4 faces owns a neighboring pair of helper sites,
 # used as a Bell pair: an X-ancilla (A) and a Z-ancilla (B).  Face → (A, B):
 #
 #   Face {0,1,4,5}: A = 7 (1,3),  B = 8  (2,4).
@@ -338,12 +473,7 @@ PATCH_14_SITE_D2_PRIME_SITE: int = 13
 # in X returns the X-stabilizer and B in Z returns the Z-stabilizer.  Every data
 # qubit couples only to whichever ancilla it neighbours — data → ancilla for the
 # Z parity, ancilla → data for the X parity — and the Bell correlation carries
-# each contribution into both readouts.  Ordered face → (X-ancilla, Z-ancilla):
-PATCH_14_SITE_SUPERDENSE_BELL_PAIRS: tuple[tuple[int, int], ...] = (
-    (7, 8),
-    (11, 12),
-    (9, 10),
-)
+# each contribution into both readouts.
 
 # The subtlety is data qubit 2: it is shared by faces {0,2,3,5} and {0,2,4,6}
 # but neighbours only the former's Z-ancilla (12).  D2' (site 13) neighbours the
@@ -361,8 +491,20 @@ PATCH_14_SITE_SUPERDENSE_BELL_PAIRS: tuple[tuple[int, int], ...] = (
 #   ("MEASURE_X"/"MEASURE_Z", (sites))  destructive X / Z ancilla readout (one
 #                                       detector per measurement, +1 reference)
 # The six readouts are ordered [X0145, Z0145, X0235, Z0235, X0246, Z0246].
+PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS: tuple[tuple[int, int], ...] = (
+    (7, 8),
+    (11, 12),
+    (9, 10),
+)
 PATCH_14_SITE_SUPERDENSE_STABILIZER_MEASUREMENT_LAYERS: tuple[
-    tuple[tuple[PatchSuperdenseGateName, tuple], ...], ...
+    tuple[
+        tuple[
+            Literal["CX", "RESET_X", "RESET_Z", "MEASURE_X", "MEASURE_Z"],
+            tuple,
+        ],
+        ...,
+    ],
+    ...,
 ] = (
     # Phase 1 — prepare the three helper Bell pairs (A in |+>, B in |0>, CX A→B).
     (("RESET_X", (7, 11, 9)), ("RESET_Z", (8, 12, 10))),
@@ -371,17 +513,17 @@ PATCH_14_SITE_SUPERDENSE_STABILIZER_MEASUREMENT_LAYERS: tuple[
     (("RESET_Z", (13,)),),
     (("CX", ((2, 13),)),),
     # Phase 3 — Z-stabilizer couplings CX(data → its neighbouring ancilla).
-    (("CX", ((1, 7), (0, 8), (3, 11), (2, 12), (4, 9), (13, 10))),),
+    (("CX", ((0, 8), (3, 11), (2, 12), (4, 9), (13, 10))),),
     (("CX", ((4, 7), (5, 8), (0, 11), (6, 9))),),
-    (("CX", ((5, 11), (0, 10))),),
+    (("CX", ((1, 8), (5, 11), (0, 10))),),
     # Phase 4 — swap the D2/D2' Z-rep code for an X-basis repetition code.
     (("CX", ((2, 13),)),),
     (("RESET_X", (13,)),),
     (("CX", ((13, 2),)),),
     # Phase 5 — X-stabilizer couplings CX(ancilla → its neighbouring data).
-    (("CX", ((7, 1), (8, 0), (11, 3), (12, 2), (9, 4), (10, 13))),),
+    (("CX", ((8, 0), (11, 3), (12, 2), (9, 4), (10, 13))),),
     (("CX", ((7, 4), (8, 5), (11, 0), (9, 6))),),
-    (("CX", ((11, 5), (10, 0))),),
+    (("CX", ((8, 1), (11, 5), (10, 0))),),
     # Phase 6 — disentangle the D2/D2' X-rep code, restoring data qubit 2.
     (("CX", ((13, 2),)),),
     # Phase 7 — unentangle each Bell pair with a final CX A→B.
@@ -396,3 +538,110 @@ PATCH_14_SITE_SUPERDENSE_STABILIZER_MEASUREMENT_LAYERS: tuple[
         ("MEASURE_Z", (10,)),
     ),
 )
+
+
+def select_14_site_patch_superdense_measurement_layers(
+    basis: PatchStabilizerBasis,
+    stabilizer_indices: Sequence[int] | None,
+    *,
+    measure_bell_partner_flags: bool = True,
+) -> tuple[tuple[tuple[str, tuple], ...], ...]:
+    """Return the complete superdense layers needed by selected face readouts.
+
+    Unselected Bell pairs and opposite-basis coupling phases are removed while
+    the default selection retains the original collision-free schedule exactly.
+    For a single-basis check, ``measure_bell_partner_flags`` also reads the
+    other Bell ancilla in its native basis. That known-zero Bell-partner
+    outcome detects faults hidden by the requested parity and is required by
+    the serialized 14-site transfer schedule to retain graphlike distance three.
+    """
+    if basis not in ("X", "Z", "BOTH"):
+        raise ValueError("basis must be 'X', 'Z', or 'BOTH'.")
+    selected_indices = resolve_patch_stabilizer_indices(stabilizer_indices)
+    selected_helper_sites = {
+        site for index in selected_indices for site in PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS[index]
+    }
+    uses_d2_copy = 2 in selected_indices
+    selected_layers: list[tuple[tuple[str, tuple], ...]] = []
+
+    for layer_index, tick_layer in enumerate(
+        PATCH_14_SITE_SUPERDENSE_STABILIZER_MEASUREMENT_LAYERS[:-1]
+    ):
+        if layer_index in (2, 3, 7) and not (uses_d2_copy and basis in ("Z", "BOTH")):
+            continue
+        if layer_index in (8, 9, 13) and not (uses_d2_copy and basis in ("X", "BOTH")):
+            continue
+        if layer_index in (4, 5, 6) and basis not in ("Z", "BOTH"):
+            continue
+        if layer_index in (10, 11, 12) and basis not in ("X", "BOTH"):
+            continue
+
+        selected_operations: list[tuple[str, tuple]] = []
+        for gate_name, operands in tick_layer:
+            if gate_name in ("RESET_X", "RESET_Z"):
+                selected_sites = tuple(
+                    site for site in operands if site in selected_helper_sites or site == 13
+                )
+                if selected_sites:
+                    selected_operations.append((gate_name, selected_sites))
+            else:
+                selected_pairs = tuple(
+                    pair
+                    for pair in operands
+                    if pair == (2, 13)
+                    or pair == (13, 2)
+                    or any(site in selected_helper_sites for site in pair)
+                )
+                if selected_pairs:
+                    selected_operations.append((gate_name, selected_pairs))
+        if selected_operations:
+            selected_layers.append(tuple(selected_operations))
+
+    readout_operations: list[tuple[str, tuple]] = []
+    for index in selected_indices:
+        x_ancilla, z_ancilla = PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS[index]
+        # measure_bell_partner_flags=True behaves like basis="BOTH".
+        if basis in ("X", "BOTH") or measure_bell_partner_flags:
+            readout_operations.append(("MEASURE_X", (x_ancilla,)))
+        if basis in ("Z", "BOTH") or measure_bell_partner_flags:
+            readout_operations.append(("MEASURE_Z", (z_ancilla,)))
+    selected_layers.append(tuple(readout_operations))
+    return tuple(selected_layers)
+
+
+# =============================================================================
+# Shared post-injection QED labels
+# =============================================================================
+
+
+def post_injection_qed_stabilizer_labels(num_patch_qubits: int) -> tuple[str, ...]:
+    """Return the six post-injection QED stabilizer labels for a Steane patch.
+
+    Cultivation and state transfer measure these checks between injection and
+    any later stage. Labels follow each patch's physical measurement order:
+    three X checks then three Z checks for 11 sites, and interleaved X/Z checks
+    by face for the 14-site superdense round.
+    """
+    if num_patch_qubits == NUM_QUBITS_PATCH_11_SITES:
+        labeled_stabilizers = (
+            *(("X", support) for support in PATCH_11_SITE_X_STABILIZERS),
+            *(("Z", support) for support in PATCH_11_SITE_Z_STABILIZERS),
+        )
+    elif num_patch_qubits == NUM_QUBITS_PATCH_14_SITES:
+        labeled_stabilizers = tuple(
+            (basis, stabilizers[index])
+            for index in range(3)
+            for basis, stabilizers in (
+                ("X", PATCH_14_SITE_X_STABILIZERS),
+                ("Z", PATCH_14_SITE_Z_STABILIZERS),
+            )
+        )
+    else:
+        raise ValueError(
+            f"No post-injection QED labels for a {num_patch_qubits}-qubit patch; "
+            f"expected {NUM_QUBITS_PATCH_11_SITES} or {NUM_QUBITS_PATCH_14_SITES}."
+        )
+    return tuple(
+        f"{basis}_{''.join(str(site) for site in support)}"
+        for basis, support in labeled_stabilizers
+    )

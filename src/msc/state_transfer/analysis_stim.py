@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from msc.state_transfer.common import (
+    SteanePatchSites,
     SurfaceCodeTransferSpec,
     SurfaceReadoutBasis,
     interpret_transfer_measurements,
@@ -19,6 +20,7 @@ def parse_transfer_measurements(
     shot: Sequence[bool | int] | np.ndarray,
     *,
     spec: SurfaceCodeTransferSpec,
+    patch_sites: SteanePatchSites = 14,
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
@@ -31,9 +33,15 @@ def parse_transfer_measurements(
     if layout is None:
         layout = transfer_measurement_layout(
             spec,
+            patch_sites=patch_sites,
             include_cultivation=include_cultivation,
             include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
             surface_readout_basis=surface_readout_basis,
+        )
+    elif layout.patch_sites != patch_sites:
+        raise ValueError(
+            "layout patch does not match patch_sites: "
+            f"expected {patch_sites}, got {layout.patch_sites}."
         )
     if shot.shape[0] != layout.num_measurements:
         raise ValueError(

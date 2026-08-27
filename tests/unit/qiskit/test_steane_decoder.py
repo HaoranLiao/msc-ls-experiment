@@ -11,16 +11,14 @@ from qiskit_aer import AerSimulator
 
 from msc.decoding import PauliFrame, StabilizerFrame, SteaneDecoder
 from msc.noise import append_pauli_faults
-from msc.steane_code.decoding.decoder import (
-    SYNDROME_BIT_LABELS,
-    X_STABILIZER_LABELS,
-    Z_STABILIZER_LABELS,
-)
 from msc.steane_code.state_injection_common import (
     NUM_QUBITS_PATCH_11_SITES,
     PATCH_11_SITE_DATA_SITES,
     PATCH_11_SITE_DEFAULT_LOGICAL_X,
     PATCH_11_SITE_DEFAULT_LOGICAL_Z,
+    PATCH_11_SITE_X_STABILIZERS,
+    PATCH_11_SITE_Z_STABILIZERS,
+    post_injection_qed_stabilizer_labels,
 )
 from msc.steane_code.state_injection_qiskit import (
     InjectedStateName,
@@ -82,6 +80,11 @@ _X_LOGICAL = SparsePauliOp(
 _PATCH_QUBIT_INDICES = list(range(NUM_QUBITS_PATCH_11_SITES))
 
 
+# Ordered raw-syndrome bit labels the stabilizer-measurement register produces:
+# three X checks, then three Z checks.
+SYNDROME_BIT_LABELS: tuple[str, ...] = ("x0", "x1", "x2", "z0", "z1", "z2")
+
+
 def _parse_syndrome_round(
     syndrome_counts_key: str,
 ) -> tuple[tuple[int, ...], tuple[int, ...]]:
@@ -90,6 +93,19 @@ def _parse_syndrome_round(
     return (
         tuple(syndrome_bits[label] for label in SYNDROME_BIT_LABELS[:3]),
         tuple(syndrome_bits[label] for label in SYNDROME_BIT_LABELS[3:]),
+    )
+
+
+def _build_11_site_decoder() -> SteaneDecoder:
+    """Construct the patch-agnostic Steane decoder for the 11-site geometry."""
+    qed_labels = post_injection_qed_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES)
+    num_x = len(PATCH_11_SITE_X_STABILIZERS)
+    return SteaneDecoder(
+        data_sites=PATCH_11_SITE_DATA_SITES,
+        x_stabilizers=dict(zip(qed_labels[:num_x], PATCH_11_SITE_X_STABILIZERS, strict=True)),
+        z_stabilizers=dict(zip(qed_labels[num_x:], PATCH_11_SITE_Z_STABILIZERS, strict=True)),
+        logical_x=PATCH_11_SITE_DEFAULT_LOGICAL_X,
+        logical_z=PATCH_11_SITE_DEFAULT_LOGICAL_Z,
     )
 
 
@@ -134,10 +150,12 @@ def test_one_round_logical_expectations(
     # Decode the syndrome into the logical Pauli frame.
     x_raw, z_raw = _parse_syndrome_round(syndrome_counts_key)
     stabilizer_frame = StabilizerFrame()
-    stabilizer_frame.record_many(dict.fromkeys((*X_STABILIZER_LABELS, *Z_STABILIZER_LABELS), 0))
+    stabilizer_frame.record_many(
+        dict.fromkeys(post_injection_qed_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES), 0)
+    )
     pauli_frame = PauliFrame()
     pauli_frame.register("L0")
-    SteaneDecoder().decode_raw_syndromes(
+    _build_11_site_decoder().decode_raw_syndromes(
         pauli_frame=pauli_frame,
         logical_qubit_label="L0",
         x_raw=x_raw,
@@ -218,10 +236,12 @@ def test_two_round_logical_expectations(
 
     # Decode both rounds; the stabilizer frame converts raw values into changes.
     stabilizer_frame = StabilizerFrame()
-    stabilizer_frame.record_many(dict.fromkeys((*X_STABILIZER_LABELS, *Z_STABILIZER_LABELS), 0))
+    stabilizer_frame.record_many(
+        dict.fromkeys(post_injection_qed_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES), 0)
+    )
     pauli_frame = PauliFrame()
     pauli_frame.register("L0")
-    decoder = SteaneDecoder()
+    decoder = _build_11_site_decoder()
     first_x_raw, first_z_raw = _parse_syndrome_round(first_syndrome_counts_key)
     decoder.decode_raw_syndromes(
         pauli_frame=pauli_frame,

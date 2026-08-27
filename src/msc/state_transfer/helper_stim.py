@@ -19,6 +19,7 @@ _STEANE_POSTSELECTION_DETECTOR_FAMILIES = (
     "steane_qed",
     "cult",
     "steane_verify",
+    "steane_bell_partner_flags",
 )
 
 
@@ -27,18 +28,20 @@ _STEANE_POSTSELECTION_DETECTOR_FAMILIES = (
 # =============================================================================
 
 
-def transfer_qubits(spec: common.SurfaceCodeTransferSpec) -> dict[str, int]:
+def transfer_qubits(
+    spec: common.SurfaceCodeTransferSpec,
+    *,
+    patch_sites: common.SteanePatchSites = 14,
+) -> dict[str, int]:
     """Allocate one paper-labeled Stim index for every transfer qubit.
 
-    The 11-site Steane patch retains indices ``0..10``. Surface data follow in
-    target order, then surface Z ancillas, surface X ancillas, and one ancilla
-    per interface check.
+    The selected Steane patch retains indices ``0..patch_sites-1``. Surface data
+    follow in target order, then surface Z ancillas, surface X ancillas, and one
+    ancilla per interface check.
     """
-    qubits = {
-        **common.HIRANO_LABEL_TO_GOOGLE_SITE,
-        **common.STEANE_HELPER_LABEL_TO_GOOGLE_SITE,
-    }
-    next_qubit = steane.NUM_QUBITS_PATCH_11_SITES
+    patch_spec = common.resolve_steane_transfer_patch_spec(patch_sites)
+    qubits = {label: site for site, label in enumerate(patch_spec.site_labels)}
+    next_qubit = len(patch_spec.site_labels)
     for label in (
         *spec.surface_order,
         *(name.lower() for name in spec.z_labels),
@@ -54,6 +57,7 @@ def transfer_qubits(spec: common.SurfaceCodeTransferSpec) -> dict[str, int]:
 class TransferMeasurementLayout:
     """Relate semantic measurement families to Stim's global record."""
 
+    patch_sites: common.SteanePatchSites
     labels: dict[str, tuple[str, ...]]
     positions: dict[str, tuple[int, ...]]
     num_measurements: int
@@ -98,12 +102,18 @@ class TransferMeasurementLayout:
             labels[name] = tuple(family_labels)
             positions[name] = tuple(range(next_position, next_position + len(family_labels)))
             next_position += len(family_labels)
-        return TransferMeasurementLayout(labels, positions, next_position)
+        return TransferMeasurementLayout(
+            patch_sites=self.patch_sites,
+            labels=labels,
+            positions=positions,
+            num_measurements=next_position,
+        )
 
 
 def transfer_measurement_layout(
     spec: common.SurfaceCodeTransferSpec,
     *,
+    patch_sites: common.SteanePatchSites = 14,
     include_cultivation: bool,
     surface_readout_basis: common.SurfaceReadoutBasis | None,
     include_post_transfer_stabilizer_rounds: bool = False,
@@ -118,6 +128,7 @@ def transfer_measurement_layout(
     """
     labels = common.transfer_measurement_labels(
         spec,
+        patch_sites=patch_sites,
         include_cultivation=include_cultivation,
         surface_readout_basis=surface_readout_basis,
         include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
@@ -159,13 +170,26 @@ def transfer_measurement_layout(
             )
         )
         verification_checks = common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]
-        if verification_checks:
-            measurement_chunks.append(
-                (
-                    "steane_verify",
-                    take_measurement_labels("steane_verify", len(verification_checks)),
-                )
+        for check_name in verification_checks:
+            verification_chunk = (
+                "steane_verify",
+                take_measurement_labels("steane_verify", 1),
             )
+            if patch_sites == 11:
+                measurement_chunks.append(verification_chunk)
+            elif patch_sites == 14:
+                bell_partner_flag_chunk = (
+                    "steane_bell_partner_flags",
+                    take_measurement_labels("steane_bell_partner_flags", 1),
+                )
+                if check_name.startswith("X"):
+                    measurement_chunks.extend((verification_chunk, bell_partner_flag_chunk))
+                elif check_name.startswith("Z"):
+                    measurement_chunks.extend((bell_partner_flag_chunk, verification_chunk))
+                else:
+                    raise ValueError(f"unsupported Steane check {check_name!r}.")
+            else:
+                raise ValueError("patch_sites must be 11 or 14.")
 
     measurement_chunks.extend(
         (name, take_measurement_labels(name, len(labels[name])))
@@ -201,9 +225,10 @@ def transfer_measurement_layout(
     if any(tuple(family_labels[name]) != expected for name, expected in labels.items()):
         raise RuntimeError("Stim measurement order does not cover the shared schema.")
     return TransferMeasurementLayout(
-        labels,
-        {name: tuple(positions) for name, positions in family_positions.items()},
-        next_position,
+        patch_sites=patch_sites,
+        labels=labels,
+        positions={name: tuple(positions) for name, positions in family_positions.items()},
+        num_measurements=next_position,
     )
 
 
@@ -215,6 +240,7 @@ def transfer_measurement_layout(
 def build_lattice_surgery_circuit(
     spec: common.SurfaceCodeTransferSpec,
     *,
+    patch_sites: common.SteanePatchSites = 14,
     injected_state: steane.StimInjectedStateName = steane.DEFAULT_STIM_INJECTED_STATE,
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
@@ -226,8 +252,9 @@ def build_lattice_surgery_circuit(
     The fixed-patch sequence follows Section III A of Hirano et al. and is
     specialized by ``spec`` to the rotated target:
 
-    1. Encode ``injected_state`` with the routed 11-site Rosenfeld et al. encoder and
-       measure encoder-flag acceptance bits.
+    1. Encode ``injected_state`` on the selected Steane patch and measure its
+       encoder-flag acceptance bits. The default 14-site path uses the
+       abstract-routed encoder; the 11-site path uses Rosenfeld's encoder.
     2. Measure every Steane X and Z stabilizer for post-injection QED.
     3. Optionally apply logical-Y cultivation, the Stim proxy for H_XY
        cultivation.
@@ -236,7 +263,8 @@ def build_lattice_surgery_circuit(
        Z reference; X checks are compared with their known +1 values.
     5. Perform exactly three merged rounds. Each measures interface-Z checks,
        compatible surface Z/X checks, and the paper-defined Steane groups in
-       rounds one and two.
+       rounds one and two. On the 14-site patch, every selective check also
+       measures the opposite-basis Bell partner as a known-zero fault flag.
     6. Demolish Steane data in X and recover withheld top-edge X checks.
     7. Optionally append ``distance`` full surface-stabilizer rounds.
     8. Optionally append a destructive surface logical readout.
@@ -247,11 +275,14 @@ def build_lattice_surgery_circuit(
     transfer boundary; an X, Y, or Z readout is an analysis addition.
 
     Each merge round appends interface checks -> compatible surface checks ->
-    color-code verification. Mixed checks use Hirano's hook-safe alternating
-    paths, especially ``3 -> b -> 5 -> c`` for ``Z35bc``. The merged surface
-    measurements form spacetime-decoder input after execution. Interface
-    changes and Steane checks are strict postselection; surface syndromes are
-    decoded, and corrections remain in a classical Pauli frame.
+    color-code verification. The 14-site Bell-partner flags close a two-fault path
+    that is invisible if a selective superdense check reads only its requested
+    Bell ancilla, retaining graphlike distance three in this serialized
+    schedule. Mixed checks use Hirano's hook-safe alternating paths, especially
+    ``3 -> b -> 5 -> c`` for ``Z35bc``. The merged surface measurements form
+    spacetime-decoder input after execution. Interface changes, Steane checks,
+    and Bell-partner flags are strict postselection; surface syndromes are decoded,
+    and corrections remain in a classical Pauli frame.
 
     Compatible X checks use the known +1 product-preparation boundary;
     nondeterministic Z checks use the pre-merge initialization results as their
@@ -267,28 +298,11 @@ def build_lattice_surgery_circuit(
     """
     if surface_readout_basis is not None:
         surface_readout_basis = normalize_pauli_char(surface_readout_basis)
-    qubits = transfer_qubits(spec)
-    steane_patch = [
-        qubits[common.HIRANO_PATCH_LABEL_BY_GOOGLE_SITE[site]]
-        for site in range(steane.NUM_QUBITS_PATCH_11_SITES)
-    ]
+    patch_spec = common.resolve_steane_transfer_patch_spec(patch_sites)
+    qubits = transfer_qubits(spec, patch_sites=patch_sites)
+    steane_patch = [qubits[label] for label in patch_spec.site_labels]
     surface_qubits = [qubits[label] for label in spec.surface_order]
     circuit = stim.Circuit()
-    patch_coords = (
-        (2, 0),
-        (1, 1),
-        (3, 1),
-        (0, 2),
-        (2, 2),
-        (4, 2),
-        (1, 3),
-        (3, 3),
-        (0, 4),
-        (2, 4),
-        (4, 4),
-    )
-    for qubit, coords in enumerate(patch_coords):
-        circuit.append("QUBIT_COORDS", [qubit], coords)
     for index, label in enumerate(spec.surface_order):
         circuit.append(
             "QUBIT_COORDS",
@@ -297,16 +311,32 @@ def build_lattice_surgery_circuit(
         )
 
     # 1. Accepted input: injection -> QED -> optional logical-Y cultivation (H_XY proxy).
-    cultivation.append_steane_injection_and_cultivation(
-        circuit,
-        patch_qubits=steane_patch,
-        injected_state=injected_state,
-        cultivation_rounds=int(include_cultivation),
-        measure_encoder_flags=True,
-        add_qed_round=True,
-        add_ticks=add_ticks,
-        skip_cx_1_4=False,
-    )
+    if patch_sites == 11:
+        cultivation.append_11_site_patch_injection_and_cultivation(
+            circuit,
+            patch_qubits=steane_patch,
+            injected_state=injected_state,
+            cultivation_rounds=int(include_cultivation),
+            measure_encoder_flags=True,
+            add_qed_round=True,
+            add_ticks=add_ticks,
+            skip_cx_1_4=False,
+        )
+        append_steane_logical_measurement = steane.append_11_site_patch_logical_measurement
+    elif patch_sites == 14:
+        cultivation.append_14_site_patch_injection_and_cultivation(
+            circuit,
+            patch_qubits=steane_patch,
+            injected_state=injected_state,
+            encoder="abstract_routed",
+            cultivation_rounds=int(include_cultivation),
+            measure_encoder_flags=True,
+            add_qed_round=True,
+            add_ticks=add_ticks,
+        )
+        append_steane_logical_measurement = steane.append_14_site_patch_logical_measurement
+    else:
+        raise ValueError("patch_sites must be 11 or 14.")
 
     # 2. Prepare surface |+_L>. Product |+> fixes every X check to +1; measure
     # them physically for Hirano's initial detector layer. The simultaneous Z
@@ -347,26 +377,35 @@ def build_lattice_surgery_circuit(
         )
         verification_checks = common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]
         for check_name in verification_checks:
-            steane.append_11_site_patch_stabilizer_measurement(
-                circuit,
-                patch_qubits=steane_patch,
-                basis=check_name[0].lower(),
-                stabilizer_indices=(
-                    common.STEANE_MERGE_VERIFICATION_STABILIZER_INDICES[check_name],
-                ),
-                add_ticks=False,
-            )
-        if verification_checks and add_ticks:
-            circuit.append("TICK", [])
+            if patch_sites == 11:
+                steane.append_11_site_patch_stabilizer_measurement(
+                    circuit,
+                    patch_qubits=steane_patch,
+                    basis=check_name[0],
+                    stabilizer_indices=(
+                        patch_spec.merge_verification_stabilizer_indices[check_name],
+                    ),
+                    add_ticks=add_ticks,
+                )
+            elif patch_sites == 14:
+                steane.append_14_site_patch_superdense_stabilizer_measurement(
+                    circuit,
+                    patch_qubits=steane_patch,
+                    basis=check_name[0],
+                    stabilizer_indices=(
+                        patch_spec.merge_verification_stabilizer_indices[check_name],
+                    ),
+                    add_ticks=add_ticks,
+                )
+            else:
+                raise ValueError("patch_sites must be 11 or 14.")
 
     # 4. Demolish Steane in X and restore the withheld surface-X boundary.
-    steane.append_11_site_patch_logical_measurement(
+    append_steane_logical_measurement(
         circuit,
         "X",
         patch_qubits=steane_patch,
-        support=tuple(
-            common.HIRANO_LABEL_TO_GOOGLE_SITE[label] for label in common.HIRANO_STEANE_DATA_ORDER
-        ),
+        support=patch_spec.data_sites_in_hirano_order,
         destructive=True,
     )
     if add_ticks:
@@ -398,6 +437,7 @@ def build_lattice_surgery_circuit(
 
     layout = transfer_measurement_layout(
         spec,
+        patch_sites=patch_sites,
         include_cultivation=include_cultivation,
         include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,

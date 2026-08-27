@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from msc.state_transfer.common import (
+    SteanePatchSites,
     SurfaceCodeTransferSpec,
     SurfaceReadoutBasis,
     interpret_transfer_measurements,
@@ -13,6 +14,7 @@ def parse_transfer_measurements(
     bitstring: str,
     *,
     spec: SurfaceCodeTransferSpec,
+    patch_sites: SteanePatchSites = 14,
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
@@ -20,6 +22,7 @@ def parse_transfer_measurements(
     """Label one count key, then derive checks, recovery, and Pauli byproducts."""
     labels = transfer_measurement_labels(
         spec,
+        patch_sites=patch_sites,
         include_cultivation=include_cultivation,
         include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,

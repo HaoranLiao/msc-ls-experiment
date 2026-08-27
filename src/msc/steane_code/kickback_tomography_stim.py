@@ -7,10 +7,9 @@ verifies ``|S>`` instead of ``|T>``. All returned summaries report
 the native ``S``-state logical error rate; no conversion to a ``T``-state
 estimate is applied.
 
-The public builder and experiment container intentionally use the same names as
-their Qiskit counterparts. The module name identifies the framework. Shared
-layout and summary dataclasses store Stim measurement-record indices, which are
-zero-based in append order.
+The public builders parallel their Qiskit counterparts for both the 11-site
+and 14-site patches. Shared layout and summary dataclasses store Stim
+measurement-record indices, which are zero-based in append order.
 """
 
 from __future__ import annotations
@@ -21,29 +20,32 @@ from dataclasses import dataclass
 import numpy as np
 import stim
 
-from msc.steane_code.kickback_tomography_qiskit import (
+from msc.steane_code.kickback_tomography_common import (
     KT_DEFAULT_QED_CYCLE_INDICES,
     KT_STABILIZER_BITS_PER_CYCLE,
     FinalStabilizerMode,
     KickbackCultivationRoundBits,
     KickbackTomographyBitLayout,
+    KickbackTomographyPatchSites,
+    KickbackTomographyPatchSpec,
     KickbackTomographySummary,
     cultivation_round_bits_from_positions,
     final_stabilizer_bit_count,
     normalize_qed_cycle_indices,
-)
-from msc.steane_code.magic_state_cultivation_qiskit import (
-    CULTIVATION_MEASUREMENTS_PER_ROUND,
+    resolve_kickback_tomography_patch_spec,
 )
 from msc.steane_code.magic_state_cultivation_stim import (
-    append_y_projection_round,
+    append_11_site_patch_y_projection_round,
+    append_14_site_patch_y_projection_round,
 )
 from msc.steane_code.state_injection_stim import (
+    DEFAULT_STIM_14_SITE_PATCH_QUBITS,
     DEFAULT_STIM_INJECTED_STATE,
-    PATCH_11_SITE_HELPER_SITES,
     StimInjectedStateName,
     append_11_site_patch_rosenfeld_encoder,
     append_11_site_patch_stabilizer_measurement,
+    append_14_site_patch_abstract_routed_encoder,
+    append_14_site_patch_superdense_stabilizer_measurement,
 )
 from msc.utils import circuit_stim
 
@@ -59,15 +61,16 @@ class KickbackTomographyExperiment:
 def build_kickback_tomography_experiment(
     injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
     *,
+    patch_sites: KickbackTomographyPatchSites = 14,
     include_preparation_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     qed_cycle_indices: Iterable[int] = KT_DEFAULT_QED_CYCLE_INDICES,
     final_stabilizer_basis: FinalStabilizerMode = "X",
     add_ticks: bool = True,
 ) -> KickbackTomographyExperiment:
-    """Build a Clifford (Stim) Steane-patch kickback tomography experiment.
+    """Build a logical-Y proxy KT experiment, defaulting to 14 sites.
 
-    The protocol order is
+    The shared protocol order is
 
     ``encode -> QED1 -> [prep cultivation] -> QED2 -> KT measure -> QED3
     -> KT check -> QED4 -> final stabilizer check``.
@@ -76,24 +79,41 @@ def build_kickback_tomography_experiment(
     with logical-Y cultivation (proxy for logical ``H_XY``).
     Every cultivation and KT round therefore measures the logical-Y axis.
 
-    When ``measure_encoder_flags`` is true, the four Rosenfeld-encoder flag
-    qubits are measured immediately after encoding, before any QED cycle. KT
-    postselection then requires each flag to be zero, flagging encoding faults.
+    The 11-site path uses the Rosenfeld encoder, and the 14-site path uses the
+    abstract-routed encoder. When ``measure_encoder_flags`` is true, their
+    available flags are measured after encoding and postselected to zero.
+
+    Both 14-site KT rounds preserve the measured D0 branch instead of resetting
+    it: ``-1`` is a logical outcome being estimated, and resetting it would
+    make H10 fire and remove those shots from the estimate.
 
     ``qed_cycle_indices`` uses the paper's one-based numbering and defaults to
     ``(1, 3)``. An empty tuple omits the QED cycles. The final stabilizer basis
-    may be ``"X"``, ``"Z"``, ``"BOTH"``, or ``"NONE"``.
+    may be ``"X"``, ``"Z"``, ``"BOTH"``, or ``"NONE"``. A 14-site X- or
+    Z-only final block also records and postselects the three default
+    Bell-partner flags.
     """
+    spec = resolve_kickback_tomography_patch_spec(patch_sites)
     qed_indices = normalize_qed_cycle_indices(qed_cycle_indices)
 
     circuit = stim.Circuit()
-    record_count = 0
+    _append_patch_encoder(
+        circuit,
+        spec,
+        injected_state=injected_state,
+        measure_encoder_flags=measure_encoder_flags,
+        add_ticks=add_ticks,
+    )
+    record_count = spec.encoder_flag_count if measure_encoder_flags else 0
+    encoder_flag_positions = tuple(range(record_count))
     qed_positions: dict[int, tuple[int, ...]] = {}
 
     def add_qed_cycle(index: int) -> None:
         nonlocal record_count
-        append_11_site_patch_stabilizer_measurement(
+        _append_patch_stabilizer_measurement(
             circuit,
+            spec,
+            basis="BOTH",
             add_ticks=add_ticks,
         )
         qed_positions[index] = tuple(
@@ -103,36 +123,22 @@ def build_kickback_tomography_experiment(
 
     def add_cultivation_round(
         *,
-        tomography: bool = False,
+        running_kt: bool = False,
     ) -> KickbackCultivationRoundBits:
         nonlocal record_count
-        append_y_projection_round(
+        positions = _append_patch_projection_round(
             circuit,
+            spec,
             add_ticks=add_ticks,
-            pin_folded_root=not tomography,
+            running_kt=running_kt,
         )
-        positions = tuple(
-            range(
-                record_count,
-                record_count + CULTIVATION_MEASUREMENTS_PER_ROUND,
-            )
+        bits = cultivation_round_bits_from_positions(
+            positions,
+            root_check_index=spec.cultivation_root_check_index,
+            reset_before_root_check=spec.patch_sites == 11,
         )
-        bits = cultivation_round_bits_from_positions(positions)
-        record_count += CULTIVATION_MEASUREMENTS_PER_ROUND
+        record_count += spec.cultivation_measurement_count
         return bits
-
-    append_11_site_patch_rosenfeld_encoder(
-        circuit,
-        injected_state=injected_state,
-        measure_flags=measure_encoder_flags,
-        add_ticks=add_ticks,
-    )
-    encoder_flag_positions: tuple[int, ...] = ()
-    if measure_encoder_flags:
-        encoder_flag_positions = tuple(
-            range(record_count, record_count + len(PATCH_11_SITE_HELPER_SITES))
-        )
-        record_count += len(PATCH_11_SITE_HELPER_SITES)
 
     if 1 in qed_indices:
         add_qed_cycle(1)
@@ -142,26 +148,39 @@ def build_kickback_tomography_experiment(
     if 2 in qed_indices:
         add_qed_cycle(2)
 
-    measurement_bits = add_cultivation_round(tomography=True)
+    measurement_bits = add_cultivation_round(running_kt=True)
 
     if 3 in qed_indices:
         add_qed_cycle(3)
 
-    check_bits = add_cultivation_round(tomography=True)
+    check_bits = add_cultivation_round(running_kt=True)
 
     if 4 in qed_indices:
         add_qed_cycle(4)
 
     final_bit_count = final_stabilizer_bit_count(final_stabilizer_basis)
     final_positions: tuple[int, ...] = ()
+    final_bell_partner_positions: tuple[int, ...] = ()
     if final_bit_count:
-        append_11_site_patch_stabilizer_measurement(
+        _append_patch_stabilizer_measurement(
             circuit,
+            spec,
             basis=final_stabilizer_basis,
             add_ticks=add_ticks,
         )
-        final_positions = tuple(range(record_count, record_count + final_bit_count))
-        record_count += final_bit_count
+        final_record_width = final_bit_count
+        if spec.patch_sites == 14 and final_stabilizer_basis in ("X", "Z"):
+            final_record_width *= 2
+            requested_offset = int(final_stabilizer_basis == "Z")
+            final_positions = tuple(
+                range(record_count + requested_offset, record_count + final_record_width, 2)
+            )
+            final_bell_partner_positions = tuple(
+                range(record_count + 1 - requested_offset, record_count + final_record_width, 2)
+            )
+        else:
+            final_positions = tuple(range(record_count, record_count + final_record_width))
+        record_count += final_record_width
 
     layout = KickbackTomographyBitLayout(
         preparation_round=preparation_bits,
@@ -170,6 +189,7 @@ def build_kickback_tomography_experiment(
         qed_cycles=tuple(qed_positions[index] for index in qed_indices),
         qed_cycle_indices=qed_indices,
         final_stabilizers=final_positions,
+        final_bell_partner_flags=final_bell_partner_positions,
         encoder_flags=encoder_flag_positions,
     )
     if circuit.num_measurements != record_count:
@@ -181,81 +201,86 @@ def build_kickback_tomography_experiment(
     return KickbackTomographyExperiment(circuit=circuit, layout=layout)
 
 
+def _append_patch_encoder(
+    circuit: stim.Circuit,
+    spec: KickbackTomographyPatchSpec,
+    *,
+    injected_state: StimInjectedStateName,
+    measure_encoder_flags: bool,
+    add_ticks: bool,
+) -> None:
+    """Append the selected patch encoder and optional flag measurements."""
+    if spec.patch_sites == 11:
+        append_11_site_patch_rosenfeld_encoder(
+            circuit,
+            injected_state=injected_state,
+            measure_flags=measure_encoder_flags,
+            add_ticks=add_ticks,
+        )
+    elif spec.patch_sites == 14:
+        append_14_site_patch_abstract_routed_encoder(
+            circuit,
+            injected_state=injected_state,
+            measure_flags=measure_encoder_flags,
+            add_ticks=add_ticks,
+        )
+    else:
+        raise ValueError(f"Unsupported KT patch_sites: {spec.patch_sites}.")
+
+
+def _append_patch_stabilizer_measurement(
+    circuit: stim.Circuit,
+    spec: KickbackTomographyPatchSpec,
+    *,
+    basis: FinalStabilizerMode,
+    add_ticks: bool,
+) -> None:
+    """Append one full-QED or final stabilizer measurement on the patch."""
+    if spec.patch_sites == 11:
+        append_11_site_patch_stabilizer_measurement(
+            circuit,
+            basis=basis,
+            add_ticks=add_ticks,
+        )
+    elif spec.patch_sites == 14:
+        append_14_site_patch_superdense_stabilizer_measurement(
+            circuit,
+            patch_qubits=DEFAULT_STIM_14_SITE_PATCH_QUBITS,
+            basis=basis,
+            add_ticks=add_ticks,
+        )
+    else:
+        raise ValueError(f"Unsupported KT patch_sites: {spec.patch_sites}.")
+
+
+def _append_patch_projection_round(
+    circuit: stim.Circuit,
+    spec: KickbackTomographyPatchSpec,
+    *,
+    add_ticks: bool,
+    running_kt: bool,
+) -> tuple[int, ...]:
+    """Append one detector-annotated cultivation-derived measurement."""
+    if spec.patch_sites == 11:
+        return append_11_site_patch_y_projection_round(
+            circuit,
+            add_ticks=add_ticks,
+            running_kt=running_kt,
+        )
+    elif spec.patch_sites == 14:
+        return append_14_site_patch_y_projection_round(
+            circuit,
+            patch_qubits=DEFAULT_STIM_14_SITE_PATCH_QUBITS,
+            add_ticks=add_ticks,
+            running_kt=running_kt,
+        )
+    else:
+        raise ValueError(f"Unsupported KT patch_sites: {spec.patch_sites}.")
+
+
 # =============================================================================
 # Shot parsing and KT estimators
 # =============================================================================
-
-
-def _required_layout_positions(
-    layout: KickbackTomographyBitLayout,
-) -> tuple[int, ...]:
-    """Return every measurement-record position read during analysis."""
-    measurement_round = layout.tomography_measure_round
-    check_round = layout.tomography_check_round
-    return (
-        *layout.detector_positions,
-        measurement_round.folded_root,
-        measurement_round.folded_root_double_check,
-        check_round.folded_root,
-        check_round.folded_root_double_check,
-    )
-
-
-def _validate_shots(
-    shots: np.ndarray,
-    layout: KickbackTomographyBitLayout,
-) -> None:
-    """Validate a sampled-shot array against a KT bit layout."""
-    if shots.ndim != 2:
-        raise ValueError("shots must be a two-dimensional array.")
-
-    positions = _required_layout_positions(layout)
-    if any(position < 0 or position >= shots.shape[1] for position in positions):
-        raise ValueError("layout contains a position outside the shots array.")
-
-
-def _retained_shot_mask(
-    shots: np.ndarray,
-    layout: KickbackTomographyBitLayout,
-    *,
-    retain_measure_check_disagreement: bool,
-) -> np.ndarray:
-    """Return the KT postselection mask for validated sampled shots."""
-    detector_positions = layout.detector_positions
-    retained = np.ones(shots.shape[0], dtype=bool)
-    if detector_positions:
-        retained &= ~shots[:, detector_positions].any(axis=1)
-
-    measurement_round = layout.tomography_measure_round
-    check_round = layout.tomography_check_round
-    measurement_root = shots[:, measurement_round.folded_root]
-    check_root = shots[:, check_round.folded_root]
-
-    retained &= shots[:, measurement_round.folded_root_double_check] == measurement_root
-    retained &= shots[:, check_round.folded_root_double_check] == check_root
-    if not retain_measure_check_disagreement:
-        retained &= measurement_root == check_root
-    return retained
-
-
-def kickback_tomography_shot_is_retained(
-    shot: np.ndarray,
-    layout: KickbackTomographyBitLayout,
-    *,
-    retain_measure_check_disagreement: bool = True,
-) -> bool:
-    """Return whether one Stim KT shot passes detector postselection."""
-    shot_array = np.asarray(shot, dtype=bool)
-    if shot_array.ndim != 1:
-        raise ValueError("shot must be a one-dimensional array.")
-    shots = shot_array[np.newaxis, :]
-    _validate_shots(shots, layout)
-    retained = _retained_shot_mask(
-        shots,
-        layout,
-        retain_measure_check_disagreement=retain_measure_check_disagreement,
-    )
-    return bool(retained[0])
 
 
 def summarize_kickback_tomography_shots(
@@ -264,29 +289,55 @@ def summarize_kickback_tomography_shots(
     *,
     retain_measure_check_disagreement: bool = True,
 ) -> KickbackTomographySummary:
-    """Summarize KT retainment and logical error from a sampled shot array.
+    """Postselect Stim samples and summarize the two KT logical readouts.
 
     ``shots`` is a boolean array of shape ``(num_shots, num_measurements)`` from
-    ``circuit.compile_sampler().sample(...)``. The postselection and logical
-    classification exactly mirror :func:`summarize_kickback_tomography_counts`,
-    but read Stim measurement-record indices directly instead of parsing Qiskit
-    bitstrings.
+    ``circuit.compile_sampler().sample(...)``. Fixed-zero detector columns
+    reject first. The 11-site roots must also agree with their repeated site-7
+    checks; the 14-site round has no root check. Inter-round root disagreements
+    are retained by default and reported separately; agreeing roots classify
+    logical success (zero) or logical error (one).
     """
     shots = np.asarray(shots, dtype=bool)
-    _validate_shots(shots, layout)
-    total_shots = int(shots.shape[0])
+    if shots.ndim != 2:
+        raise ValueError("shots must be a two-dimensional array.")
 
     measurement_round = layout.tomography_measure_round
     check_round = layout.tomography_check_round
+    required_positions = (
+        *layout.detector_positions,
+        *measurement_round.all_positions,
+        *check_round.all_positions,
+    )
+    if any(position < 0 or position >= shots.shape[1] for position in required_positions):
+        raise ValueError("layout contains a position outside the shots array.")
+
+    total_shots = int(shots.shape[0])
+
+    # Fixed-zero encoder, preparation, QED, KT-flag, and final-check columns.
+    retained = np.ones(total_shots, dtype=bool)
+    if layout.detector_positions:
+        retained &= ~shots[:, layout.detector_positions].any(axis=1)
+
+    # The 11-site repeated-root check must match its round's logical root. All
+    # six 14-site helper measurements are fixed-zero flags handled above.
     measurement_root = shots[:, measurement_round.folded_root]
     check_root = shots[:, check_round.folded_root]
-    retained = _retained_shot_mask(
-        shots,
-        layout,
-        retain_measure_check_disagreement=retain_measure_check_disagreement,
-    )
+    if measurement_round.folded_root_check is not None:
+        expected_measurement_root_check = (
+            measurement_root if measurement_round.reset_before_root_check else False
+        )
+        retained &= shots[:, measurement_round.folded_root_check] == expected_measurement_root_check
+    if check_round.folded_root_check is not None:
+        expected_check_root_check = check_root if check_round.reset_before_root_check else False
+        retained &= shots[:, check_round.folded_root_check] == expected_check_root_check
 
+    # Inter-round disagreement is diagnostic unless explicitly postselected.
     agree = measurement_root == check_root
+    if not retain_measure_check_disagreement:
+        retained &= agree
+
+    # Only agreeing retained roots enter logical success/error numerators.
     disagreement = retained & ~agree
     logical_error = retained & agree & measurement_root
     logical_success = retained & agree & ~measurement_root

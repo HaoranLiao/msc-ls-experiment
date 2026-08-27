@@ -149,7 +149,7 @@ class _RotatedDecoderBase:
             for syndrome_round in syndrome_history
         )
 
-    def _apply_recovery(
+    def apply_recovery(
         self,
         pauli_frame: PauliFrame,
         logical_qubit_label: str,
@@ -266,7 +266,7 @@ class RotatedDecoder(_RotatedDecoderBase):
             z_deltas=stab_frame.advance(z_raw),
             x_deltas=stab_frame.advance(x_raw),
         )
-        self._apply_recovery(pauli_frame, logical_qubit_label, detected_errors)
+        self.apply_recovery(pauli_frame, logical_qubit_label, detected_errors)
         return detected_errors
 
 
@@ -393,7 +393,7 @@ class SpaceTimeRotatedDecoder(_RotatedDecoderBase):
             z_delta_history=z_delta_history,
             x_delta_history=x_delta_history,
         )
-        self._apply_recovery(pauli_frame, logical_qubit_label, detected_errors)
+        self.apply_recovery(pauli_frame, logical_qubit_label, detected_errors)
         return detected_errors
 
     def decode_logical_corrections_batch(

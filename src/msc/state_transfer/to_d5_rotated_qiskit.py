@@ -28,11 +28,11 @@ TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
         d5.append_logical_measurement,
     ),
 )
-MERGED_BOUNDARY_CHECKS = TRANSFER_SPEC.merged_boundary_checks
 
 
 def build_steane_to_rotated_d5_lattice_surgery_circuit(
     *,
+    patch_sites: common.SteanePatchSites = 14,
     injected_state: InjectedStateName = "T",
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
@@ -47,18 +47,20 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     destructive Steane-X demolition and then recovered unconditionally; the
     first ``X_cd`` recovery is not hard-postselected.
 
-    The circuit includes Rosenfeld et al. injection, post-injection Steane QED,
-    optional logical-H_XY cultivation, both paper-defined Steane verification
-    groups, and every raw measurement needed for classical spacetime decoding.
-    Setting ``include_post_transfer_stabilizer_rounds`` appends five full d5
-    rounds. ``surface_readout_basis`` optionally appends destructive X/Y/Z
-    analysis; ``None`` ends at the Figure 6 transfer boundary.
+    The circuit includes injection on the selected Steane patch,
+    post-injection QED, optional logical-H_XY cultivation, both paper-defined
+    Steane verification groups, and every raw measurement needed for classical
+    spacetime decoding. Setting ``include_post_transfer_stabilizer_rounds``
+    appends five full d5 rounds. ``surface_readout_basis`` optionally appends
+    destructive X/Y/Z analysis; ``None`` ends at the Figure 6 transfer
+    boundary.
 
     The optional fixed-patch continuation and terminal readout are analysis
     aids, not part of Figure 6; the paper instead continues after code expansion.
     """
     return helper.build_lattice_surgery_circuit(
         TRANSFER_SPEC,
+        patch_sites=patch_sites,
         injected_state=injected_state,
         include_cultivation=include_cultivation,
         include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
@@ -70,6 +72,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
 def parse_transfer_measurements(
     bitstring: str,
     *,
+    patch_sites: common.SteanePatchSites = 14,
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
@@ -77,6 +80,7 @@ def parse_transfer_measurements(
     return analysis.parse_transfer_measurements(
         bitstring,
         spec=TRANSFER_SPEC,
+        patch_sites=patch_sites,
         include_cultivation=include_cultivation,
         include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,

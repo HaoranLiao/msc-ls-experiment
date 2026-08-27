@@ -1,60 +1,35 @@
-"""Lookup decoder for the Steane [[7,1,3]] code on the 11-site patch.
+"""Lookup decoder for the Steane [[7,1,3]] code.
 
 The self-dual CSS code decodes Z-check and X-check syndromes independently to
 physical X and Z recoveries, then folds their logical effect into a Pauli frame.
+The caller supplies the patch geometry (data sites, stabilizer supports, and
+logical representatives) at construction, so the decoder is patch-agnostic.
 """
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 
 from msc.decoding.pauli_frame import PauliFrame
 from msc.decoding.stabilizer_frame import StabilizerFrame
-from msc.steane_code.state_injection_common import (
-    PATCH_11_SITE_DATA_SITES,
-    PATCH_11_SITE_DEFAULT_LOGICAL_X,
-    PATCH_11_SITE_DEFAULT_LOGICAL_Z,
-    PATCH_11_SITE_X_STABILIZERS,
-    PATCH_11_SITE_Z_STABILIZERS,
-)
 
 # =============================================================================
-# Canonical stabilizer labels
-# =============================================================================
-
-X_STABILIZER_LABELS: tuple[str, ...] = tuple(
-    f"X_{''.join(str(s) for s in support)}" for support in PATCH_11_SITE_X_STABILIZERS
-)
-Z_STABILIZER_LABELS: tuple[str, ...] = tuple(
-    f"Z_{''.join(str(s) for s in support)}" for support in PATCH_11_SITE_Z_STABILIZERS
-)
-SYNDROME_BIT_LABELS: tuple[str, ...] = ("x0", "x1", "x2", "z0", "z1", "z2")
-
-# =============================================================================
-# Lookup tables
-# =============================================================================
-
-_Z_SYNDROME_TABLE: dict[tuple[int, ...], int | None] = {(0, 0, 0): None}
-_X_SYNDROME_TABLE: dict[tuple[int, ...], int | None] = {(0, 0, 0): None}
-for data_site in PATCH_11_SITE_DATA_SITES:
-    _Z_SYNDROME_TABLE[
-        tuple(int(data_site in support) for support in PATCH_11_SITE_Z_STABILIZERS)
-    ] = data_site
-    _X_SYNDROME_TABLE[
-        tuple(int(data_site in support) for support in PATCH_11_SITE_X_STABILIZERS)
-    ] = data_site
-
-
-# =============================================================================
-# Recovery result
+# Decoding results data structure
 # =============================================================================
 
 
-class SteaneDetectedError(NamedTuple):
-    """Physical X/Z recovery sites decoded from one syndrome round."""
+@dataclass(frozen=True)
+class SteaneDetectedErrors:
+    """Physical X/Z recovery sites decoded from one syndrome round.
 
-    x_error_site: int | None
-    z_error_site: int | None
+    Like the rotated-code result classes, ``x_error_sites`` and
+    ``z_error_sites`` hold the at-most-one data site each CSS sector's lookup
+    localizes, and stay empty when that sector is trivial.
+    """
+
+    x_error_sites: frozenset[int]
+    z_error_sites: frozenset[int]
 
 
 # =============================================================================
@@ -68,44 +43,68 @@ class SteaneDecoder:
     def __init__(
         self,
         *,
-        logical_x_support: tuple[int, ...] = PATCH_11_SITE_DEFAULT_LOGICAL_X,
-        logical_z_support: tuple[int, ...] = PATCH_11_SITE_DEFAULT_LOGICAL_Z,
+        data_sites: Sequence[int],
+        x_stabilizers: Mapping[str, tuple[int, ...]],
+        z_stabilizers: Mapping[str, tuple[int, ...]],
+        logical_x: tuple[int, ...],
+        logical_z: tuple[int, ...],
     ) -> None:
-        """Store the logical representatives used to interpret recoveries."""
-        self._logical_x_support = frozenset(logical_x_support)
-        self._logical_z_support = frozenset(logical_z_support)
+        """Build the single-error lookup tables and store the decode geometry.
+
+        The stabilizer labels (mapping keys) key the supplied
+        :class:`StabilizerFrame`, so they must match those the caller recorded.
+        Each mapping value is the check's data-site support, from which the
+        weight-one syndrome tables are precomputed.
+        """
+        self.x_stabilizer_labels = tuple(x_stabilizers)
+        self.z_stabilizer_labels = tuple(z_stabilizers)
+        self.logical_x = frozenset(logical_x)
+        self.logical_z = frozenset(logical_z)
+        # A Z-check syndrome localizes an X error and vice versa.
+        self._z_syndrome_table = self._build_syndrome_table(data_sites, z_stabilizers.values())
+        self._x_syndrome_table = self._build_syndrome_table(data_sites, x_stabilizers.values())
+
+    @staticmethod
+    def _build_syndrome_table(
+        data_sites: Sequence[int],
+        stabilizer_supports: Iterable[tuple[int, ...]],
+    ) -> dict[tuple[int, ...], int | None]:
+        """Map each weight-one syndrome to its data site (all-zero syndrome to None)."""
+        supports = tuple(stabilizer_supports)
+        table: dict[tuple[int, ...], int | None] = {(0,) * len(supports): None}
+        for data_site in data_sites:
+            table[tuple(int(data_site in support) for support in supports)] = data_site
+        return table
 
     def decode(
         self,
         *,
         z_syndrome: tuple[int, int, int],
         x_syndrome: tuple[int, int, int],
-    ) -> SteaneDetectedError:
+    ) -> SteaneDetectedErrors:
         """Decode Z/X three-bit delta syndromes to physical X/Z recoveries."""
-        return SteaneDetectedError(
-            x_error_site=_Z_SYNDROME_TABLE[z_syndrome],
-            z_error_site=_X_SYNDROME_TABLE[x_syndrome],
+        x_error_site = self._z_syndrome_table[z_syndrome]
+        z_error_site = self._x_syndrome_table[x_syndrome]
+        return SteaneDetectedErrors(
+            x_error_sites=frozenset() if x_error_site is None else frozenset({x_error_site}),
+            z_error_sites=frozenset() if z_error_site is None else frozenset({z_error_site}),
         )
 
     def apply_recovery(
         self,
         pauli_frame: PauliFrame,
         logical_qubit_label: str,
-        detected_errors: SteaneDetectedError,
+        detected_errors: SteaneDetectedErrors,
     ) -> None:
         """Fold physical recoveries crossing opposite logicals into the frame."""
-        x_error_site = detected_errors.x_error_site
-        z_error_site = detected_errors.z_error_site
-        if x_error_site is not None:
-            pauli_frame.update_x(
-                logical_qubit_label,
-                x_error_site in self._logical_z_support,
-            )
-        if z_error_site is not None:
-            pauli_frame.update_z(
-                logical_qubit_label,
-                z_error_site in self._logical_x_support,
-            )
+        pauli_frame.update_x(
+            logical_qubit_label,
+            bool(len(detected_errors.x_error_sites & self.logical_z) % 2),
+        )
+        pauli_frame.update_z(
+            logical_qubit_label,
+            bool(len(detected_errors.z_error_sites & self.logical_x) % 2),
+        )
 
     def decode_raw_syndromes(
         self,
@@ -115,12 +114,12 @@ class SteaneDecoder:
         x_raw: tuple[int, int, int],
         z_raw: tuple[int, int, int],
         stab_frame: StabilizerFrame,
-    ) -> SteaneDetectedError:
+    ) -> SteaneDetectedErrors:
         """Advance both frames from one raw syndrome round and return its recovery."""
-        x_deltas = stab_frame.advance(dict(zip(X_STABILIZER_LABELS, x_raw, strict=True)))
-        z_deltas = stab_frame.advance(dict(zip(Z_STABILIZER_LABELS, z_raw, strict=True)))
-        x_delta_syndrome = tuple(x_deltas[label] for label in X_STABILIZER_LABELS)
-        z_delta_syndrome = tuple(z_deltas[label] for label in Z_STABILIZER_LABELS)
+        x_deltas = stab_frame.advance(dict(zip(self.x_stabilizer_labels, x_raw, strict=True)))
+        z_deltas = stab_frame.advance(dict(zip(self.z_stabilizer_labels, z_raw, strict=True)))
+        x_delta_syndrome = tuple(x_deltas[label] for label in self.x_stabilizer_labels)
+        z_delta_syndrome = tuple(z_deltas[label] for label in self.z_stabilizer_labels)
         detected_errors = self.decode(
             z_syndrome=z_delta_syndrome,
             x_syndrome=x_delta_syndrome,

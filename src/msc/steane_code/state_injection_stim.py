@@ -1,10 +1,10 @@
-"""Stim port of the Steane state-injection Rosenfeld et al. encoder.
+"""Clifford Stim counterparts of the Steane state-injection helpers.
 
-This is the Clifford-only Stim model of the 11-site patch state injection. The
-non-Clifford ``T`` injection used on hardware is replaced by its Clifford proxy
-``S``: the encoder prepares ``S|+> = |i>`` (a Pauli-``Y`` eigenstate) as the
-stand-in for ``T|+> = |T>``. Stim analysis reports the native ``S``-state
-logical error rate without converting it to a ``T``-state estimate.
+Stim can encode any supported Clifford input through the abstract 7-qubit,
+11-site, and 14-site encoders. The non-Clifford ``T`` injection used on hardware
+is represented by its Clifford proxy ``S|+> = |i>``. Stim analysis reports the
+native ``S``-state logical error rate without converting it to a ``T``-state
+estimate.
 
 The public helpers intentionally have the same names as their Qiskit
 counterparts. The module name identifies the framework at import time. Shared
@@ -21,8 +21,12 @@ from typing import Literal
 import stim
 
 from msc.steane_code.state_injection_common import (
+    _STEANE_TO_11_SITE_PATCH,
+    _STEANE_TO_14_SITE_PATCH,
+    ABSTRACT_ENCODER_CNOT_LAYERS,
     NUM_QUBITS_PATCH_11_SITES,
     NUM_QUBITS_PATCH_14_SITES,
+    PATCH_11_SITE_COORDS,
     PATCH_11_SITE_DEFAULT_LOGICAL_X,
     PATCH_11_SITE_DEFAULT_LOGICAL_Z,
     PATCH_11_SITE_HELPER_SITES,
@@ -31,13 +35,18 @@ from msc.steane_code.state_injection_common import (
     PATCH_11_SITE_STABILIZER_ANCILLA_SITES,
     PATCH_11_SITE_X_STABILIZERS,
     PATCH_11_SITE_Z_STABILIZERS,
+    PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES,
+    PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_INJECTION_SITE,
+    PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_LAYERS,
     PATCH_14_SITE_COORDS,
-    PATCH_14_SITE_ENCODER_INJECTION_SITE,
-    PATCH_14_SITE_ENCODER_LAYERS,
+    PATCH_14_SITE_DEFAULT_LOGICAL_X,
+    PATCH_14_SITE_DEFAULT_LOGICAL_Z,
     PATCH_14_SITE_HELPER_SITES,
-    PATCH_14_SITE_SUPERDENSE_STABILIZER_MEASUREMENT_LAYERS,
+    PATCH_14_SITE_HIRANO_ENCODER_COORDS,
+    PATCH_14_SITE_HIRANO_ENCODER_LAYERS,
     PatchStabilizerBasis,
-    resolve_11_site_patch_stabilizer_indices,
+    resolve_patch_stabilizer_indices,
+    select_14_site_patch_superdense_measurement_layers,
 )
 from msc.utils import circuit_stim
 from msc.utils.circuit_stim import (
@@ -93,9 +102,70 @@ def prepare_physical_state(
     raise ValueError(f"Unknown Clifford state name: {state!r}")
 
 
+def append_abstract_encoder(
+    circuit: stim.Circuit,
+    *,
+    data_qubits: Sequence[int],
+    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    add_ticks: bool = True,
+) -> stim.Circuit:
+    """Append the abstract Steane encoder on seven caller-owned data qubits.
+
+    This is the Clifford parallel of Qiskit's :func:`append_abstract_encoder`.
+    It implements
+    ``|psi> |+> |0> |0> |+> |0> |+> -> |psi_L>`` for any single-qubit
+    Clifford state supported by Stim and inserts explicit tick boundaries for
+    the seven collision-free CX layers.
+    """
+    if len(data_qubits) < 7:
+        raise ValueError("data_qubits must contain at least 7 qubits.")
+    data_qubits = list(data_qubits)
+
+    prepare_physical_state(circuit, data_qubits[0], injected_state)
+    circuit.append("H", [data_qubits[site] for site in (1, 4, 6)])
+    if add_ticks:
+        circuit.append("TICK", [])
+
+    for layer in ABSTRACT_ENCODER_CNOT_LAYERS:
+        targets: list[int] = []
+        for control, target in layer:
+            targets.extend((data_qubits[control], data_qubits[target]))
+        circuit.append("CX", targets)
+        if add_ticks:
+            circuit.append("TICK", [])
+    return circuit
+
+
 # =============================================================================
-# 11-site patch (Rosenfeld et al., arXiv:2306.17195)
+# 11-site patch (abstract and Rosenfeld encoders)
 # =============================================================================
+
+
+def append_11_site_patch_abstract_encoder(
+    circuit: stim.Circuit,
+    *,
+    patch_qubits: Sequence[int] = DEFAULT_STIM_11_SITE_PATCH_QUBITS,
+    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    add_ticks: bool = True,
+) -> stim.Circuit:
+    """Append the abstract Steane encoder on the 11-site patch data sites.
+
+    This is the Clifford parallel of Qiskit's
+    :func:`append_11_site_patch_abstract_encoder`. Abstract qubits 0–6 map to
+    patch sites ``(0, 3, 5, 4, 8, 9, 10)``; the four helper sites remain idle.
+    """
+    patch_qubits = resolve_patch_qubits(
+        patch_qubits,
+        expected_count=NUM_QUBITS_PATCH_11_SITES,
+    )
+    for qubit, coords in zip(patch_qubits, PATCH_11_SITE_COORDS, strict=True):
+        circuit.append("QUBIT_COORDS", [qubit], coords)
+    return append_abstract_encoder(
+        circuit,
+        data_qubits=[patch_qubits[site] for site in _STEANE_TO_11_SITE_PATCH],
+        injected_state=injected_state,
+        add_ticks=add_ticks,
+    )
 
 
 def append_11_site_patch_rosenfeld_encoder(
@@ -109,10 +179,10 @@ def append_11_site_patch_rosenfeld_encoder(
     """Append the Clifford (Stim) Rosenfeld et al. Steane injection encoder.
 
     Mirrors the Qiskit ``append_11_site_patch_rosenfeld_encoder``.
-    The injection site is prepared in ``injected_state`` and the Rosenfeld
-    et al. ``H``/``CZ`` layers (imported from the Qiskit module) then entangle
-    the 11-site patch into the encoded state. Measured helper flags are always
-    annotated as known-zero detectors.
+    The injection site is prepared in ``injected_state`` and the shared
+    Rosenfeld et al. ``H``/``CZ`` layers then entangle the 11-site patch into
+    the encoded state. Measured helper flags are annotated as known-zero
+    detectors.
 
     Parameters
     ----------
@@ -141,6 +211,8 @@ def append_11_site_patch_rosenfeld_encoder(
         patch_qubits,
         expected_count=NUM_QUBITS_PATCH_11_SITES,
     )
+    for qubit, coords in zip(patch_qubits, PATCH_11_SITE_COORDS, strict=True):
+        circuit.append("QUBIT_COORDS", [qubit], coords)
 
     prepare_physical_state(
         circuit,
@@ -217,7 +289,7 @@ def append_11_site_patch_stabilizer_measurement(
         patch_qubits,
         expected_count=NUM_QUBITS_PATCH_11_SITES,
     )
-    selected_indices = resolve_11_site_patch_stabilizer_indices(stabilizer_indices)
+    selected_indices = resolve_patch_stabilizer_indices(stabilizer_indices)
     first_stabilizer_position = circuit.num_measurements
     anc = PATCH_11_SITE_STABILIZER_ANCILLA_SITES
     selected_ancilla_sites = tuple(anc[index] for index in selected_indices)
@@ -307,8 +379,123 @@ def append_11_site_patch_logical_measurement(
 
 
 # =============================================================================
-# 14-site patch (Hirano et al., arXiv:2510.24615)
+# 14-site patch (abstract, abstract-routed, and Hirano encoders)
 # =============================================================================
+
+
+def append_14_site_patch_abstract_encoder(
+    circuit: stim.Circuit,
+    *,
+    patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
+    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    add_ticks: bool = True,
+) -> stim.Circuit:
+    """Append the abstract Steane encoder directly on the 14-site data sites.
+
+    This is the fixed-geometry, unrouted reference encoder. Unlike Hirano's
+    specialized phase-injection schedule, the abstract Steane isometry is not
+    restricted to logical-Y eigenstates: it encodes any Clifford single-qubit
+    input supported by Stim. It maps the abstract Steane triangle onto Hirano
+    data labels ``(6, 4, 2, 0, 1, 5, 3)`` and never uses the six helper sites or
+    D2'. In particular, D1 is data site 1 at ``(1, 5)`` from the start; no
+    post-injection relocation is needed::
+
+              x=0    x=1    x=2    x=3    x=4    x=5    x=6
+       y=0                   D6/A0
+       y=1                          H9            D2'
+       y=2                   D4/A1         H10           D2/A2
+       y=3           H7            D0/A3          H12
+       y=4                  H8            H11
+       y=5           D1/A4         D5/A5          D3/A6
+
+    ``A<i>`` denotes abstract encoder qubit ``i``. The injected physical state
+    is therefore prepared on D6/A0; abstract qubits A1, A4, and A6 are prepared
+    in ``|+>`` before the seven-layer CX encoder. The abstract CXs are not routed
+    through the patch connectivity.
+    """
+    patch_qubits = resolve_patch_qubits(
+        patch_qubits,
+        expected_count=NUM_QUBITS_PATCH_14_SITES,
+    )
+    for qubit, coords in zip(patch_qubits, PATCH_14_SITE_COORDS, strict=True):
+        circuit.append("QUBIT_COORDS", [qubit], coords)
+    return append_abstract_encoder(
+        circuit,
+        data_qubits=[patch_qubits[site] for site in _STEANE_TO_14_SITE_PATCH],
+        injected_state=injected_state,
+        add_ticks=add_ticks,
+    )
+
+
+def append_14_site_patch_abstract_routed_encoder(
+    circuit: stim.Circuit,
+    *,
+    patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
+    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    measure_flags: bool = True,
+    add_ticks: bool = True,
+) -> stim.Circuit:
+    """Append the Clifford parallel of the routed IBM Miami encoder.
+
+    This is the same arbitrary-input Steane isometry as
+    :func:`append_14_site_patch_abstract_encoder`, restricted only by Stim to
+    Clifford input states. It starts the input on D3 and returns the encoded
+    state to D0–D6, while every helper and D2' finishes disentangled in
+    ``|0>``. H8–H12 provide routing workspace; H7 and D2' are idle::
+
+              x=0    x=1    x=2    x=3    x=4    x=5    x=6
+       y=0                   D6
+       y=1                          H9            D2'
+       y=2                   D4            H10           D2
+       y=3           H7            D0            H12
+       y=4                  H8            H11
+       y=5           D1            D5            D3*
+
+    ``*`` marks the arbitrary-input site. Every CX is diagonal-local in the
+    fixed rotated patch geometry, and the two-qubit depth is 14. H8–H12 return
+    to ``|0>`` and can be measured in Z as known-zero routing flags.
+
+    Parameters
+    ----------
+    measure_flags
+        Whether to measure H8–H12 in Z and append a known-zero detector for
+        each routing flag.
+    """
+    patch_qubits = resolve_patch_qubits(
+        patch_qubits,
+        expected_count=NUM_QUBITS_PATCH_14_SITES,
+    )
+    for qubit, coords in zip(patch_qubits, PATCH_14_SITE_COORDS, strict=True):
+        circuit.append("QUBIT_COORDS", [qubit], coords)
+    prepare_physical_state(
+        circuit,
+        patch_qubits[PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_INJECTION_SITE],
+        injected_state,
+    )
+    for tick_layer in PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_LAYERS:
+        for gate_name, operands in tick_layer:
+            if gate_name == "H":
+                circuit.append("H", [patch_qubits[site] for site in operands])
+            else:  # "CX"
+                targets: list[int] = []
+                for control_site, target_site in operands:
+                    targets.extend((patch_qubits[control_site], patch_qubits[target_site]))
+                circuit.append("CX", targets)
+        if add_ticks:
+            circuit.append("TICK", [])
+
+    if measure_flags:
+        first_flag_position = circuit.num_measurements
+        circuit.append(
+            "M",
+            [patch_qubits[site] for site in PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES],
+        )
+        for position in range(first_flag_position, circuit.num_measurements):
+            circuit_stim.append_detector(
+                circuit,
+                measurement_positions=(position,),
+            )
+    return circuit
 
 
 def append_14_site_patch_hirano_encoder(
@@ -324,10 +511,15 @@ def append_14_site_patch_hirano_encoder(
     Ports ``injection_generator`` from Hirano's lattice-surgery cultivation
     (arXiv:2510.24615) onto the rotated 14-site patch.  The encoder entangles
     the 13 core sites (0–12); D2' (site 13) is idle here and is prepared fresh
-    by the superdense round.  Every CX is between diagonally adjacent patch
-    sites, so the schedule is geometrically local as written; the magic state is
+    by the superdense round. It retains Hirano's injection-stage coordinates,
+    with D1 at ``(0, 4)`` next to H7; every encoder CX is therefore local in
+    this specialized geometry. Use
+    :func:`append_14_site_patch_abstract_encoder` for the direct fixed-geometry
+    reference or :func:`append_14_site_patch_abstract_routed_encoder` for
+    its hardware-local arbitrary-state realization. The magic state is
     injected mid-encoding by a single phase gate (``S`` or ``S_DAG``) on data
-    site 4 (Steane qubit 4).  Because that lone phase gate is the only tunable
+    site 4 (Steane qubit 4).
+    Because that lone phase gate is the only tunable
     operation, this circuit can encode **only a logical-Y eigenstate** — it
     cannot prepare ``|0>``/``|1>``/``|+>``/``|->`` or any other non-Y state.  The
     seven data sites finish in a Steane logical-Y eigenstate and the six helper
@@ -373,8 +565,8 @@ def append_14_site_patch_hirano_encoder(
     Returns
     -------
     stim.Circuit
-        The same circuit object, after appending ``QUBIT_COORDS`` for the patch
-        sites and the encoder layers.
+        The same circuit object, after appending patch coordinates and encoder
+        layers.
     """
     patch_qubits = resolve_patch_qubits(
         patch_qubits,
@@ -393,10 +585,13 @@ def append_14_site_patch_hirano_encoder(
             f"{injected_state!r}."
         )
 
-    for site, (x, y) in enumerate(PATCH_14_SITE_COORDS):
-        circuit.append("QUBIT_COORDS", [patch_qubits[site]], [x, y])
-
-    for tick_layer in PATCH_14_SITE_ENCODER_LAYERS:
+    for qubit, coords in zip(
+        patch_qubits,
+        PATCH_14_SITE_HIRANO_ENCODER_COORDS,
+        strict=True,
+    ):
+        circuit.append("QUBIT_COORDS", [qubit], coords)
+    for tick_layer in PATCH_14_SITE_HIRANO_ENCODER_LAYERS:
         for gate_name, operands in tick_layer:
             if gate_name in ("RESET_X", "RESET_Z"):
                 stim_reset = "RX" if gate_name == "RESET_X" else "RZ"
@@ -409,7 +604,7 @@ def append_14_site_patch_hirano_encoder(
             else:  # "INJECT"
                 circuit.append(
                     gate_on_injection_site,
-                    [patch_qubits[PATCH_14_SITE_ENCODER_INJECTION_SITE]],
+                    [patch_qubits[operands[0]]],
                 )
         if add_ticks:
             circuit.append("TICK", [])
@@ -435,17 +630,20 @@ def append_14_site_patch_superdense_stabilizer_measurement(
     circuit: stim.Circuit,
     *,
     patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
+    basis: PatchStabilizerBasis = "BOTH",
+    stabilizer_indices: Sequence[int] | None = None,
+    measure_bell_partner_flags: bool = True,
     add_ticks: bool = True,
 ) -> None:
     """Append one conceptually-clear superdense round on the 14-site patch.
 
-    Reads all three weight-4 Steane faces at once.  Each face owns a
+    Reads selected weight-4 Steane faces at once. Each face owns a
     neighbouring helper Bell pair (X-ancilla A, Z-ancilla B); every data qubit
     couples only to whichever ancilla it neighbours (data → ancilla for the Z
     parity, ancilla → data for the X parity), and the Bell correlation
     (``X_A X_B`` and ``Z_A Z_B``) carries each contribution into both readouts.
-    The six ancilla measurements — ``MX`` on each A, ``MZ`` on each B — return
-    the three faces' X- and Z-stabilizers simultaneously, ordered
+    With the default selection, six ancilla measurements — ``MX`` on each A,
+    ``MZ`` on each B — return the three faces' X- and Z-stabilizers, ordered
     ``[X0145, Z0145, X0235, Z0235, X0246, Z0246]``.  Each is annotated with a
     single-measurement detector against its ``+1`` preparation reference, so a
     noiseless codeword produces no detection events.
@@ -463,6 +661,16 @@ def append_14_site_patch_superdense_stabilizer_measurement(
         Stim circuit being appended to.
     patch_qubits
         Fourteen Stim qubit indices ordered by the 14-site patch labels.
+    basis
+        Stabilizer basis to measure (``"X"``, ``"Z"``, or ``"BOTH"``).
+    stabilizer_indices
+        Ordered subset of the three canonical stabilizers to measure. ``None``
+        measures all three.
+    measure_bell_partner_flags
+        For a single-basis check, also measure the other Bell ancilla in its
+        native basis and postselect its known-zero outcome. This defaults to
+        true because the flag retains graphlike distance three in serialized
+        schedules; callers that cannot retain it must explicitly disable it.
     add_ticks
         Whether to insert ``TICK`` layer separators between round layers.
     """
@@ -471,7 +679,11 @@ def append_14_site_patch_superdense_stabilizer_measurement(
         expected_count=NUM_QUBITS_PATCH_14_SITES,
     )
 
-    for tick_layer in PATCH_14_SITE_SUPERDENSE_STABILIZER_MEASUREMENT_LAYERS:
+    for tick_layer in select_14_site_patch_superdense_measurement_layers(
+        basis,
+        stabilizer_indices,
+        measure_bell_partner_flags=measure_bell_partner_flags,
+    ):
         for gate_name, operands in tick_layer:
             if gate_name in ("RESET_X", "RESET_Z"):
                 stim_reset = "RX" if gate_name == "RESET_X" else "RZ"
@@ -491,3 +703,47 @@ def append_14_site_patch_superdense_stabilizer_measurement(
                     )
         if add_ticks:
             circuit.append("TICK", [])
+
+
+def append_14_site_patch_logical_measurement(
+    circuit: stim.Circuit,
+    basis: str = "Y",
+    *,
+    patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
+    support: tuple[int, ...] | None = None,
+    ancilla_qubit: int | None = None,
+    destructive: bool = True,
+    observable_index: int | None = None,
+) -> None:
+    """Append a logical Pauli measurement on the 14-site patch.
+
+    Mirrors ``append_11_site_patch_logical_measurement``. The helper supports
+    X, Y, or Z readout; its Y default matches the current 14-site cultivation
+    protocol, not a restriction of the mapped abstract encoder. Set
+    ``observable_index`` to append this measurement parity to a Stim logical
+    observable; omit it when the result is protocol data or a Pauli-frame input
+    rather than a terminal observable.
+    """
+    patch_qubits = resolve_patch_qubits(
+        patch_qubits,
+        expected_count=NUM_QUBITS_PATCH_14_SITES,
+    )
+    first_measurement_position = circuit.num_measurements
+    append_logical_measurement_on_indexed_qubits(
+        circuit,
+        basis,
+        indexed_qubits=patch_qubits,
+        default_logical_x=PATCH_14_SITE_DEFAULT_LOGICAL_X,
+        default_logical_z=PATCH_14_SITE_DEFAULT_LOGICAL_Z,
+        support=support,
+        ancilla_qubit=ancilla_qubit,
+        destructive=destructive,
+    )
+    if observable_index is not None:
+        circuit_stim.append_observable_include(
+            circuit,
+            measurement_positions=tuple(
+                range(first_measurement_position, circuit.num_measurements)
+            ),
+            observable_index=observable_index,
+        )

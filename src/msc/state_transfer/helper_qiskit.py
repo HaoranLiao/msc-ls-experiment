@@ -14,6 +14,7 @@ from msc.utils.normalize import normalize_pauli_char
 def build_lattice_surgery_circuit(
     spec: common.SurfaceCodeTransferSpec,
     *,
+    patch_sites: common.SteanePatchSites = 14,
     injected_state: steane.InjectedStateName = "T",
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
@@ -22,11 +23,13 @@ def build_lattice_surgery_circuit(
 ) -> QuantumCircuit:
     """Build injection -> QED/cultivation -> three-round transfer -> continuation.
 
-    The circuit encodes the Steane input with the Rosenfeld et al. encoder, performs
+    The circuit encodes the Steane input on the selected patch, performs
     post-injection QED and optional H_XY cultivation, prepares surface
     ``|+_L>``, executes the three-row merge table, demolishes Steane in X, and
-    restores the withheld top-edge surface X checks. Optional fixed-patch
-    syndrome rounds and destructive logical readout are analysis additions.
+    restores the withheld top-edge surface X checks. The default 14-site path
+    uses the abstract-routed encoder; the 11-site path uses Rosenfeld's encoder.
+    Optional fixed-patch syndrome rounds and destructive logical readout are
+    analysis additions.
 
     Each merge round appends interface checks, compatible surface checks, then
     its color-code verification group. Mixed-check CNOTs alternate code sides,
@@ -40,24 +43,25 @@ def build_lattice_surgery_circuit(
     ``3 -> b -> 5 -> c``, and, for d=5, ``d -> e``. The product of the target's
     interface checks is logical ``Z_L Z_L``; the alternating ``Z35bc`` order is
     Hirano's hook-safe path. Interface and color-code outcomes are later
-    postselected, while surface histories are spacetime-decoded into the Pauli
-    frame.
+    postselected. On the 14-site patch, each selective color-code check also
+    records the opposite-basis Bell partner as a known-zero flag; this closes
+    an otherwise-hidden two-fault path and retains graphlike distance three in
+    the serialized schedule. Surface histories are spacetime-decoded into the
+    Pauli frame.
     """
     if surface_readout_basis is not None:
         surface_readout_basis = normalize_pauli_char(surface_readout_basis)
+    patch_spec = common.resolve_steane_transfer_patch_spec(patch_sites)
 
     # Quantum allocation uses one single-qubit register per physical site:
-    # - 7 Steane data registers and 4 Steane helper/routing registers;
+    # - one register per site of the selected Steane patch;
     # - distance**2 surface-data registers (9 for d=3, 25 for d=5);
     # - one ancilla per surface Z or X stabilizer
     #   (4 Z + 4 X for d=3, 12 Z + 12 X for d=5);
     # - one interface ancilla per merged-boundary check
     #   (2 for d=3, 3 for d=5).
     qubit_labels = (
-        *(
-            common.HIRANO_PATCH_LABEL_BY_GOOGLE_SITE[site]
-            for site in range(steane.NUM_QUBITS_PATCH_11_SITES)
-        ),
+        *patch_spec.site_labels,
         *spec.surface_order,
         *(name.lower() for name in spec.z_labels),
         *(name.lower() for name in spec.x_labels),
@@ -65,16 +69,13 @@ def build_lattice_surgery_circuit(
     )
     qregs = {label: QuantumRegister(1, label) for label in qubit_labels}
     qubits = {label: register[0] for label, register in qregs.items()}
-    steane_patch = [
-        qubits[common.HIRANO_PATCH_LABEL_BY_GOOGLE_SITE[site]]
-        for site in range(steane.NUM_QUBITS_PATCH_11_SITES)
-    ]
+    steane_patch = [qubits[label] for label in patch_spec.site_labels]
     surface_qubits = [qubits[label] for label in spec.surface_order]
 
     # Classical allocation uses one register per measurement family:
-    # - enc_flags: 4 state-injection encoder-flag bits;
+    # - enc_flags: 4 Rosenfeld or 5 abstract-routed encoder-flag bits;
     # - steane_qed: 6 post-injection Steane stabilizer bits;
-    # - cult: 5 cultivation bits, when cultivation is enabled;
+    # - cult: 5 (11-site) or 7 (14-site) bits, when cultivation is enabled;
     # - surface_init_z: one bit per surface Z stabilizer
     #   (4 for d=3, 12 for d=5);
     # - interface_z: one bit per interface check in each of the 3 merge rounds
@@ -83,7 +84,9 @@ def build_lattice_surgery_circuit(
     #   (12 for d=3, 36 for d=5);
     # - merged_surface_x: one bit per compatible X stabilizer in each merge round
     #   (9 for d=3, 30 for d=5);
-    # - steane_verify: 8 bits across the two Steane verification groups;
+    # - steane_verify: 8 requested checks across the two verification groups;
+    # - steane_bell_partner_flags: 8 opposite-basis Bell readouts for the 14-site
+    #   patch only; these known-zero flags protect the serialized schedule;
     # - steane_x: 7 Steane demolition bits;
     # - surface_x_recovery: one bit per withheld top-edge X check
     #   (1 for d=3, 2 for d=5);
@@ -93,6 +96,7 @@ def build_lattice_surgery_circuit(
     #   (Y uses the union of the logical-X and logical-Z supports).
     measurement_labels = common.transfer_measurement_labels(
         spec,
+        patch_sites=patch_sites,
         include_cultivation=include_cultivation,
         include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,
@@ -103,18 +107,36 @@ def build_lattice_surgery_circuit(
     circuit = QuantumCircuit(*qregs.values(), *cregs.values())
 
     # 1. Accepted Steane input: injection -> QED -> optional H_XY cultivation.
-    cultivation.append_steane_injection_and_cultivation(
-        circuit,
-        patch_qubits=steane_patch,
-        injected_state=injected_state,
-        encoder_classical_bits=list(cregs["enc_flags"]),
-        qed_classical_bits=list(cregs["steane_qed"]),
-        cultivation_classical_bits=[list(cregs["cult"])] if include_cultivation else [],
-        cultivation_rounds=int(include_cultivation),
-        add_qed_round=True,
-        add_barriers=add_barriers,
-        skip_cx_1_4=False,
-    )
+    if patch_sites == 11:
+        cultivation.append_11_site_patch_injection_and_cultivation(
+            circuit,
+            patch_qubits=steane_patch,
+            injected_state=injected_state,
+            encoder_classical_bits=list(cregs["enc_flags"]),
+            qed_classical_bits=list(cregs["steane_qed"]),
+            cultivation_classical_bits=[list(cregs["cult"])] if include_cultivation else [],
+            cultivation_rounds=int(include_cultivation),
+            add_qed_round=True,
+            add_barriers=add_barriers,
+            skip_cx_1_4=False,
+        )
+        append_steane_logical_measurement = steane.append_11_site_patch_logical_measurement
+    elif patch_sites == 14:
+        cultivation.append_14_site_patch_injection_and_cultivation(
+            circuit,
+            patch_qubits=steane_patch,
+            injected_state=injected_state,
+            encoder="abstract_routed",
+            encoder_classical_bits=list(cregs["enc_flags"]),
+            qed_classical_bits=list(cregs["steane_qed"]),
+            cultivation_classical_bits=[list(cregs["cult"])] if include_cultivation else [],
+            cultivation_rounds=int(include_cultivation),
+            add_qed_round=True,
+            add_barriers=add_barriers,
+        )
+        append_steane_logical_measurement = steane.append_14_site_patch_logical_measurement
+    else:
+        raise ValueError("patch_sites must be 11 or 14.")
 
     # 2. Prepare surface |+_L>. Product |+> fixes every X check to +1; the
     # initial Z measurements project into the code space and establish its
@@ -147,6 +169,7 @@ def build_lattice_surgery_circuit(
     }
     classical_bits_by_family = {name: list(cregs[name]) for name in round_widths}
     verification_bits = iter(cregs["steane_verify"])
+    bell_partner_flag_bits = iter(cregs.get("steane_bell_partner_flags", ()))
     for round_index in range(common.LATTICE_SURGERY_ROUNDS):
         interface_start = round_index * round_widths["interface_z"]
         for (check_name, steane_labels, surface_labels), classical_bit in zip(
@@ -184,27 +207,40 @@ def build_lattice_surgery_circuit(
             add_barriers=False,
         )
         for check_name in common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]:
-            steane.append_11_site_patch_stabilizer_measurement(
-                circuit,
-                patch_qubits=steane_patch,
-                classical_bits=[next(verification_bits)],
-                basis=check_name[0].lower(),
-                stabilizer_indices=(
-                    common.STEANE_MERGE_VERIFICATION_STABILIZER_INDICES[check_name],
-                ),
-                add_barriers=False,
-            )
+            if patch_sites == 11:
+                steane.append_11_site_patch_stabilizer_measurement(
+                    circuit,
+                    patch_qubits=steane_patch,
+                    classical_bits=[next(verification_bits)],
+                    basis=check_name[0],
+                    stabilizer_indices=(
+                        patch_spec.merge_verification_stabilizer_indices[check_name],
+                    ),
+                    add_barriers=False,
+                )
+            elif patch_sites == 14:
+                steane.append_14_site_patch_superdense_stabilizer_measurement(
+                    circuit,
+                    patch_qubits=steane_patch,
+                    classical_bits=[next(verification_bits)],
+                    bell_partner_flag_classical_bits=[next(bell_partner_flag_bits)],
+                    basis=check_name[0],
+                    stabilizer_indices=(
+                        patch_spec.merge_verification_stabilizer_indices[check_name],
+                    ),
+                    add_barriers=False,
+                )
+            else:
+                raise ValueError("patch_sites must be 11 or 14.")
         if add_barriers:
             circuit.barrier(label=f"merged interval round {round_index + 1}")
 
     # 4. Demolish Steane in X and restore the withheld surface-X boundary.
-    steane.append_11_site_patch_logical_measurement(
+    append_steane_logical_measurement(
         circuit,
         "X",
         patch_qubits=steane_patch,
-        support=tuple(
-            common.HIRANO_LABEL_TO_GOOGLE_SITE[label] for label in common.HIRANO_STEANE_DATA_ORDER
-        ),
+        support=patch_spec.data_sites_in_hirano_order,
         classical_bits=list(cregs["steane_x"]),
         destructive=True,
     )

@@ -1,12 +1,14 @@
-"""Parallel Stim tests for the 11-site Rosenfeld et al. Steane encoder.
+"""Stim tests for the abstract, 11-site, and 14-site Steane encoders.
 
-These mirror the Rosenfeld et al. portions of the Qiskit state-injection suite
-using exact Clifford simulation. Qiskit's non-Clifford azimuth-angle cases and
-IBM-backend transpilation test have no Stim equivalent and are intentionally
-excluded.
+These parallel the Clifford-applicable Qiskit state-injection tests using exact
+stabilizer simulation. Non-Clifford inputs, azimuth sweeps, and IBM transpilation
+have no Stim equivalent.
 """
 
 from __future__ import annotations
+
+from itertools import combinations
+from typing import NamedTuple
 
 import numpy as np
 import pytest
@@ -14,32 +16,47 @@ import stim
 
 from msc.noise.fault_injection_stim import append_pauli_faults
 from msc.steane_code.state_injection_common import (
+    LOGICAL_X_REPRESENTATIVES,
+    LOGICAL_Z_REPRESENTATIVES,
     NUM_QUBITS_PATCH_11_SITES,
     NUM_QUBITS_PATCH_14_SITES,
+    PATCH_11_SITE_COORDS,
     PATCH_11_SITE_DATA_SITES,
     PATCH_11_SITE_HELPER_SITES,
     PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES,
     PATCH_11_SITE_LOGICAL_Z_REPRESENTATIVES,
-    PATCH_11_SITE_STABILIZER_ANCILLA_SITES,
     PATCH_11_SITE_X_STABILIZERS,
     PATCH_11_SITE_Z_STABILIZERS,
+    PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES,
     PATCH_14_SITE_COORDS,
-    PATCH_14_SITE_D2_PRIME_SITE,
     PATCH_14_SITE_DATA_SITES,
     PATCH_14_SITE_HELPER_SITES,
+    PATCH_14_SITE_HIRANO_ENCODER_COORDS,
     PATCH_14_SITE_LOGICAL_X_REPRESENTATIVES,
+    PATCH_14_SITE_LOGICAL_Z_REPRESENTATIVES,
+    PATCH_14_SITE_SUPERDENSE_STABILIZER_MEASUREMENT_LAYERS,
     PATCH_14_SITE_X_STABILIZERS,
     PATCH_14_SITE_Z_STABILIZERS,
+    X_STABILIZERS,
+    Z_STABILIZERS,
 )
 from msc.steane_code.state_injection_stim import (
     StimInjectedStateName,
+    append_11_site_patch_abstract_encoder,
     append_11_site_patch_logical_measurement,
     append_11_site_patch_rosenfeld_encoder,
     append_11_site_patch_stabilizer_measurement,
+    append_14_site_patch_abstract_encoder,
+    append_14_site_patch_abstract_routed_encoder,
     append_14_site_patch_hirano_encoder,
+    append_14_site_patch_logical_measurement,
     append_14_site_patch_superdense_stabilizer_measurement,
+    append_abstract_encoder,
 )
 from msc.utils.circuit_common import logical_y_parity_is_inverted
+from msc.utils.normalize import normalize_pauli_char
+
+NUM_DATA_QUBITS = 7
 
 CLIFFORD_STATES: tuple[StimInjectedStateName, ...] = (
     "0",
@@ -53,8 +70,15 @@ CLIFFORD_STATES: tuple[StimInjectedStateName, ...] = (
     "S",
     "Sdg",
 )
-
-LOGICAL_EXPECTATIONS: dict[StimInjectedStateName, tuple[int, int, int]] = {
+HIRANO_STATES: tuple[StimInjectedStateName, ...] = (
+    "S",
+    "i",
+    "Y+",
+    "Sdg",
+    "-i",
+    "Y-",
+)
+LOGICAL_EXPECTATION_VALUES: dict[StimInjectedStateName, tuple[int, int, int]] = {
     "0": (1, 0, 0),
     "1": (-1, 0, 0),
     "+": (0, 1, 0),
@@ -66,57 +90,42 @@ LOGICAL_EXPECTATIONS: dict[StimInjectedStateName, tuple[int, int, int]] = {
     "S": (0, 0, 1),
     "Sdg": (0, 0, -1),
 }
-
 LOGICAL_EXPECTATION_INDEX = {"Z": 0, "X": 1, "Y": 2}
-
-PATCH_11_SITE_LOGICAL_BASIS_CASES = (
-    pytest.param("Z", PATCH_11_SITE_LOGICAL_Z_REPRESENTATIVES, id="Z"),
-    pytest.param("X", PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES, id="X"),
-    pytest.param("Y", PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES, id="Y"),
-)
-
-N_PATCH_STABILIZERS = len(PATCH_11_SITE_X_STABILIZERS)
-N_PATCH_SYNDROME_BITS = 2 * N_PATCH_STABILIZERS
-
-
-def _encoded_circuit(
-    state: StimInjectedStateName,
-    *,
-    measure_flags: bool = False,
-) -> stim.Circuit:
-    """Return a standalone Rosenfeld et al. encoder circuit."""
-    circuit = stim.Circuit()
-    append_11_site_patch_rosenfeld_encoder(
-        circuit,
-        injected_state=state,
-        measure_flags=measure_flags,
-        add_ticks=False,
-    )
-    return circuit
 
 
 def _pauli_string(
-    pauli: str,
     support: tuple[int, ...],
-    *,
-    n_qubits: int = NUM_QUBITS_PATCH_11_SITES,
+    pauli: str,
+    n_qubits: int,
 ) -> stim.PauliString:
-    """Return a patch-sized physical Pauli string."""
-    chars = ["_"] * n_qubits
+    """Return a physical Pauli string on the indexed support."""
+    characters = ["_"] * n_qubits
     for site in support:
-        chars[site] = pauli
-    return stim.PauliString("".join(chars))
+        characters[site] = pauli
+    return stim.PauliString("".join(characters))
 
 
-def _logical_observable(pauli: str, support: tuple[int, ...]) -> stim.PauliString:
-    """Return the correctly signed logical observable on ``support``."""
+def _logical_pauli_observable(
+    support: tuple[int, ...],
+    pauli: str,
+    n_qubits: int,
+) -> stim.PauliString:
+    """Return the correctly signed logical Pauli on a Steane support."""
     if pauli == "Y":
-        return 1j * _pauli_string("X", support) * _pauli_string("Z", support)
-    return _pauli_string(pauli, support)
+        return (
+            1j
+            * _pauli_string(support, "X", n_qubits)
+            * _pauli_string(
+                support,
+                "Z",
+                n_qubits,
+            )
+        )
+    return _pauli_string(support, pauli, n_qubits)
 
 
 def _peek(circuit: stim.Circuit, observable: stim.PauliString) -> int:
-    """Return the exact expectation value of ``observable``."""
+    """Return the exact expectation value of an observable."""
     simulator = stim.TableauSimulator()
     simulator.do_circuit(circuit)
     return simulator.peek_observable_expectation(observable)
@@ -127,502 +136,954 @@ def _sample(circuit: stim.Circuit, shots: int = 100) -> np.ndarray:
     return circuit.compile_sampler().sample(shots)
 
 
-# ===========================================================================
-# 11-site patch (Rosenfeld injection encoder)
-# ===========================================================================
+# =============================================================================
+# Abstract
+# =============================================================================
 
 
-# ---------------------------------------------------------------------------
-# Flag measurements
-# ---------------------------------------------------------------------------
+# --------------------------
+# Logical expectation values
+# --------------------------
 
 
-def test_encoder_flags_are_stim_detectors() -> None:
-    """Verify measured Rosenfeld-encoder helper flags carry detector annotations."""
-    circuit = _encoded_circuit("S", measure_flags=True)
-    detection_events = circuit.compile_detector_sampler(seed=1).sample(32)
-
-    assert circuit.num_detectors == len(PATCH_11_SITE_HELPER_SITES)
-    assert not detection_events.any()
-
-
-# ---------------------------------------------------------------------------
-# Logical observables and measurement circuits
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(("basis", "representatives"), PATCH_11_SITE_LOGICAL_BASIS_CASES)
+@pytest.mark.parametrize("basis", ["X", "Y", "Z"])
 @pytest.mark.parametrize("state", CLIFFORD_STATES)
-def test_patch_logical_expectation(
+def test_logical_expectation(
     state: StimInjectedStateName,
     basis: str,
-    representatives: tuple[tuple[int, ...], ...],
 ) -> None:
-    """Verify every logical representative carries the injected state."""
-    circuit = _encoded_circuit(state)
-    expected = LOGICAL_EXPECTATIONS[state][LOGICAL_EXPECTATION_INDEX[basis]]
-
+    """Verify every Clifford state, Pauli basis, and logical representative."""
+    circuit = stim.Circuit()
+    append_abstract_encoder(
+        circuit,
+        data_qubits=range(NUM_DATA_QUBITS),
+        injected_state=state,
+        add_ticks=False,
+    )
+    representatives = LOGICAL_Z_REPRESENTATIVES if basis == "Z" else LOGICAL_X_REPRESENTATIVES
+    expected = LOGICAL_EXPECTATION_VALUES[state][LOGICAL_EXPECTATION_INDEX[basis]]
     for support in representatives:
-        measured = _peek(circuit, _logical_observable(basis, support))
-        assert measured == expected, (
-            f"State {state!r}, support {support}: "
-            f"<{basis}_L> expected {expected}, got {measured}"
+        assert (
+            _peek(
+                circuit,
+                _logical_pauli_observable(support, basis, NUM_DATA_QUBITS),
+            )
+            == expected
         )
 
 
-@pytest.mark.parametrize(("basis", "representatives"), PATCH_11_SITE_LOGICAL_BASIS_CASES)
-@pytest.mark.parametrize("state", CLIFFORD_STATES)
-def test_patch_logical_via_measurement_circuit(
-    state: StimInjectedStateName,
-    basis: str,
-    representatives: tuple[tuple[int, ...], ...],
-) -> None:
-    """Verify non-destructive ancilla readout for every representative."""
-    expected = LOGICAL_EXPECTATIONS[state][LOGICAL_EXPECTATION_INDEX[basis]]
-    ancilla_qubit = NUM_QUBITS_PATCH_11_SITES
+# =============================================================================
+# 11-site and 14-site patches
+# =============================================================================
 
-    for support in representatives:
-        circuit = _encoded_circuit(state)
-        append_11_site_patch_logical_measurement(
+
+class PatchTestSpec(NamedTuple):
+    """Geometry and operator supports shared by the parameterized patch tests."""
+
+    name: str
+    num_qubits: int
+    data_sites: tuple[int, ...]
+    x_stabilizers: tuple[tuple[int, ...], ...]
+    z_stabilizers: tuple[tuple[int, ...], ...]
+    logical_x_representatives: tuple[tuple[int, ...], ...]
+    logical_z_representatives: tuple[tuple[int, ...], ...]
+
+
+PATCH_11_SITE_TEST_SPEC = PatchTestSpec(
+    "11-site",
+    NUM_QUBITS_PATCH_11_SITES,
+    PATCH_11_SITE_DATA_SITES,
+    PATCH_11_SITE_X_STABILIZERS,
+    PATCH_11_SITE_Z_STABILIZERS,
+    PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES,
+    PATCH_11_SITE_LOGICAL_Z_REPRESENTATIVES,
+)
+PATCH_14_SITE_TEST_SPEC = PatchTestSpec(
+    "14-site",
+    NUM_QUBITS_PATCH_14_SITES,
+    PATCH_14_SITE_DATA_SITES,
+    PATCH_14_SITE_X_STABILIZERS,
+    PATCH_14_SITE_Z_STABILIZERS,
+    PATCH_14_SITE_LOGICAL_X_REPRESENTATIVES,
+    PATCH_14_SITE_LOGICAL_Z_REPRESENTATIVES,
+)
+
+PATCH_ENCODERS = [
+    pytest.param(PATCH_11_SITE_TEST_SPEC, "abstract", id="11-site-abstract"),
+    pytest.param(PATCH_11_SITE_TEST_SPEC, "rosenfeld", id="11-site-rosenfeld"),
+    pytest.param(PATCH_14_SITE_TEST_SPEC, "abstract", id="14-site-abstract"),
+    pytest.param(PATCH_14_SITE_TEST_SPEC, "abstract-routed", id="14-site-abstract-routed"),
+    pytest.param(PATCH_14_SITE_TEST_SPEC, "hirano", id="14-site-hirano"),
+]
+ARBITRARY_STATE_PATCH_ENCODERS = (
+    (PATCH_11_SITE_TEST_SPEC, "abstract"),
+    (PATCH_11_SITE_TEST_SPEC, "rosenfeld"),
+    (PATCH_14_SITE_TEST_SPEC, "abstract"),
+    (PATCH_14_SITE_TEST_SPEC, "abstract-routed"),
+)
+PATCH_ENCODER_STATE_CASES = [
+    pytest.param(spec, encoder, state, id=f"{spec.name}-{encoder}-{state}")
+    for spec, encoder in ARBITRARY_STATE_PATCH_ENCODERS
+    for state in CLIFFORD_STATES
+] + [
+    pytest.param(PATCH_14_SITE_TEST_SPEC, "hirano", state, id=f"14-site-hirano-{state}")
+    for state in HIRANO_STATES
+]
+PATCH_FAULT_ENCODER_STATE_CASES = [
+    pytest.param(spec, encoder, state, id=f"{spec.name}-{encoder}-{state}")
+    for spec, encoder in ARBITRARY_STATE_PATCH_ENCODERS
+    for state in ("0", "S")
+] + [
+    pytest.param(PATCH_14_SITE_TEST_SPEC, "hirano", state, id=f"14-site-hirano-{state}")
+    for state in ("S", "Sdg")
+]
+PATCH_14_SITE_ENCODERS = [
+    pytest.param("abstract", id="abstract"),
+    pytest.param("abstract-routed", id="abstract-routed"),
+    pytest.param("hirano", id="hirano"),
+]
+PATCH_ROUTED_ENCODER_STATE_CASES = (
+    [
+        pytest.param(
+            PATCH_11_SITE_TEST_SPEC,
+            "rosenfeld",
+            state,
+            id=f"11-site-rosenfeld-{state}",
+        )
+        for state in CLIFFORD_STATES
+    ]
+    + [
+        pytest.param(PATCH_14_SITE_TEST_SPEC, "hirano", state, id=f"14-site-hirano-{state}")
+        for state in HIRANO_STATES
+    ]
+    + [
+        pytest.param(
+            PATCH_14_SITE_TEST_SPEC,
+            "abstract-routed",
+            state,
+            id=f"14-site-abstract-routed-{state}",
+        )
+        for state in CLIFFORD_STATES
+    ]
+)
+
+
+def _apply_patch_encoder(
+    circuit: stim.Circuit,
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    injected_state: StimInjectedStateName,
+) -> None:
+    """Append one encoder covered by the shared patch tests."""
+    if patch_spec.name == "11-site" and encoder == "abstract":
+        append_11_site_patch_abstract_encoder(
             circuit,
-            basis,
-            support=support,
-            ancilla_qubit=ancilla_qubit,
-            destructive=False,
+            injected_state=injected_state,
+            add_ticks=False,
         )
+    elif patch_spec.name == "11-site" and encoder == "rosenfeld":
+        append_11_site_patch_rosenfeld_encoder(
+            circuit,
+            injected_state=injected_state,
+            measure_flags=False,
+            add_ticks=False,
+        )
+    elif patch_spec.name == "14-site" and encoder == "abstract":
+        append_14_site_patch_abstract_encoder(
+            circuit,
+            injected_state=injected_state,
+            add_ticks=False,
+        )
+    elif patch_spec.name == "14-site" and encoder == "abstract-routed":
+        append_14_site_patch_abstract_routed_encoder(
+            circuit,
+            injected_state=injected_state,
+            measure_flags=False,
+            add_ticks=False,
+        )
+    elif patch_spec.name == "14-site" and encoder == "hirano":
+        append_14_site_patch_hirano_encoder(
+            circuit,
+            injected_state=injected_state,
+            measure_flags=False,
+            add_ticks=False,
+        )
+    else:
+        raise ValueError(f"Unsupported {patch_spec.name} encoder: {encoder!r}")
+
+
+# --------------------------
+# Logical expectation values
+# --------------------------
+
+
+@pytest.mark.parametrize("basis", ["X", "Y", "Z"])
+@pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ENCODER_STATE_CASES)
+def test_patch_logical_expectation(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    state: StimInjectedStateName,
+    basis: str,
+) -> None:
+    """Verify every encoded patch state against every logical representative."""
+    circuit = stim.Circuit()
+    _apply_patch_encoder(circuit, patch_spec, encoder, state)
+    representatives = (
+        patch_spec.logical_z_representatives
+        if basis == "Z"
+        else patch_spec.logical_x_representatives
+    )
+    expected = LOGICAL_EXPECTATION_VALUES[state][LOGICAL_EXPECTATION_INDEX[basis]]
+    for support in representatives:
+        assert (
+            _peek(
+                circuit,
+                _logical_pauli_observable(support, basis, patch_spec.num_qubits),
+            )
+            == expected
+        )
+
+
+# -----------------------------------
+# Non-destructive logical measurement
+# -----------------------------------
+
+
+@pytest.mark.parametrize("basis", ["X", "Y", "Z"])
+@pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ENCODER_STATE_CASES)
+def test_patch_logical_via_measurement_circuit(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    state: StimInjectedStateName,
+    basis: str,
+) -> None:
+    """Verify ancilla readout against every patch logical representative."""
+    ancilla_qubit = patch_spec.num_qubits
+    representatives = (
+        patch_spec.logical_z_representatives
+        if basis == "Z"
+        else patch_spec.logical_x_representatives
+    )
+    expected = LOGICAL_EXPECTATION_VALUES[state][LOGICAL_EXPECTATION_INDEX[basis]]
+    for support in representatives:
+        circuit = stim.Circuit()
+        _apply_patch_encoder(circuit, patch_spec, encoder, state)
+        if patch_spec.name == "11-site":
+            append_11_site_patch_logical_measurement(
+                circuit,
+                basis,
+                support=support,
+                ancilla_qubit=ancilla_qubit,
+                destructive=False,
+            )
+        else:
+            append_14_site_patch_logical_measurement(
+                circuit,
+                basis,
+                support=support,
+                ancilla_qubit=ancilla_qubit,
+                destructive=False,
+            )
 
         assert circuit[-1].name == "M"
         measured = _peek(
             circuit[:-1],
-            _pauli_string(
-                "Z",
-                (ancilla_qubit,),
-                n_qubits=NUM_QUBITS_PATCH_11_SITES + 1,
-            ),
+            _pauli_string((ancilla_qubit,), "Z", patch_spec.num_qubits + 1),
         )
         if basis == "Y" and logical_y_parity_is_inverted(support):
             measured = -measured
-        assert measured == expected, (
-            f"State {state!r}, support {support}: " f"<Z_anc> expected {expected}, got {measured}"
+        assert measured == expected
+
+
+# ----------------------------------
+# Logical representative consistency
+# ----------------------------------
+
+
+@pytest.mark.parametrize(
+    (
+        "data_sites",
+        "x_stabilizers",
+        "z_stabilizers",
+        "x_representatives",
+        "z_representatives",
+    ),
+    [
+        pytest.param(
+            tuple(range(NUM_DATA_QUBITS)),
+            X_STABILIZERS,
+            Z_STABILIZERS,
+            LOGICAL_X_REPRESENTATIVES,
+            LOGICAL_Z_REPRESENTATIVES,
+            id="abstract",
+        ),
+        pytest.param(
+            PATCH_11_SITE_DATA_SITES,
+            PATCH_11_SITE_X_STABILIZERS,
+            PATCH_11_SITE_Z_STABILIZERS,
+            PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES,
+            PATCH_11_SITE_LOGICAL_Z_REPRESENTATIVES,
+            id="11-site",
+        ),
+        pytest.param(
+            PATCH_14_SITE_DATA_SITES,
+            PATCH_14_SITE_X_STABILIZERS,
+            PATCH_14_SITE_Z_STABILIZERS,
+            PATCH_14_SITE_LOGICAL_X_REPRESENTATIVES,
+            PATCH_14_SITE_LOGICAL_Z_REPRESENTATIVES,
+            id="14-site",
+        ),
+    ],
+)
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_logical_representatives_are_weight_seven_times_stabilizer(
+    data_sites: tuple[int, ...],
+    x_stabilizers: tuple[tuple[int, ...], ...],
+    z_stabilizers: tuple[tuple[int, ...], ...],
+    x_representatives: tuple[tuple[int, ...], ...],
+    z_representatives: tuple[tuple[int, ...], ...],
+    basis: str,
+) -> None:
+    """Verify every logical representative equals P^7 times a stabilizer."""
+    stabilizers = x_stabilizers if basis == "X" else z_stabilizers
+    representatives = x_representatives if basis == "X" else z_representatives
+    stabilizer_group: list[set[int]] = [set()]
+    for count in range(1, len(stabilizers) + 1):
+        for combination in combinations((set(support) for support in stabilizers), count):
+            element: set[int] = set()
+            for support in combination:
+                element = element.symmetric_difference(support)
+            stabilizer_group.append(element)
+
+    all_data = set(data_sites)
+    for representative in representatives:
+        assert any(
+            all_data.symmetric_difference(element) == set(representative)
+            for element in stabilizer_group
         )
 
 
 @pytest.mark.parametrize(
-    ("state", "basis", "expected_parity"),
+    ("x_stabilizers", "z_stabilizers", "x_representatives", "z_representatives"),
     [
-        pytest.param("0", "Z", 0, id="Z+"),
-        pytest.param("1", "Z", 1, id="Z-"),
-        pytest.param("+", "X", 0, id="X+"),
-        pytest.param("-", "X", 1, id="X-"),
-        pytest.param("S", "Y", 0, id="Y+"),
-        pytest.param("Sdg", "Y", 1, id="Y-"),
+        pytest.param(
+            X_STABILIZERS,
+            Z_STABILIZERS,
+            LOGICAL_X_REPRESENTATIVES,
+            LOGICAL_Z_REPRESENTATIVES,
+            id="abstract",
+        ),
+        pytest.param(
+            PATCH_11_SITE_X_STABILIZERS,
+            PATCH_11_SITE_Z_STABILIZERS,
+            PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES,
+            PATCH_11_SITE_LOGICAL_Z_REPRESENTATIVES,
+            id="11-site",
+        ),
+        pytest.param(
+            PATCH_14_SITE_X_STABILIZERS,
+            PATCH_14_SITE_Z_STABILIZERS,
+            PATCH_14_SITE_LOGICAL_X_REPRESENTATIVES,
+            PATCH_14_SITE_LOGICAL_Z_REPRESENTATIVES,
+            id="14-site",
+        ),
     ],
 )
-def test_destructive_patch_logical_measurement(
+def test_steane_code_is_css_self_dual(
+    x_stabilizers: tuple[tuple[int, ...], ...],
+    z_stabilizers: tuple[tuple[int, ...], ...],
+    x_representatives: tuple[tuple[int, ...], ...],
+    z_representatives: tuple[tuple[int, ...], ...],
+) -> None:
+    """Verify X and Z operators use the same supports."""
+    assert x_stabilizers == z_stabilizers
+    assert x_representatives == z_representatives
+
+
+# -------------------
+# Stabilizer syndrome
+# -------------------
+
+
+def _build_and_run_patch_syndrome(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    injected_state: StimInjectedStateName,
+    faults: list[tuple[str, int]],
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Encode, inject faults, and return the measured X/Z syndromes."""
+    circuit = stim.Circuit()
+    _apply_patch_encoder(circuit, patch_spec, encoder, injected_state)
+    append_pauli_faults(circuit, faults)
+    measurement_start = circuit.num_measurements
+    if patch_spec.name == "11-site":
+        append_11_site_patch_stabilizer_measurement(circuit, add_ticks=False)
+    else:
+        append_14_site_patch_superdense_stabilizer_measurement(circuit, add_ticks=False)
+
+    syndrome = _sample(circuit, shots=1)[0, measurement_start:]
+    if patch_spec.name == "11-site":
+        return (
+            tuple(int(bit) for bit in syndrome[:3]),
+            tuple(int(bit) for bit in syndrome[3:]),
+        )
+    return (
+        tuple(int(syndrome[index]) for index in (0, 2, 4)),
+        tuple(int(syndrome[index]) for index in (1, 3, 5)),
+    )
+
+
+@pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ENCODER_STATE_CASES)
+def test_patch_all_stabilizers_via_ancilla_measurement(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    state: StimInjectedStateName,
+) -> None:
+    """Verify all six measured stabilizer outcomes are trivial."""
+    assert _build_and_run_patch_syndrome(patch_spec, encoder, state, []) == (
+        (0, 0, 0),
+        (0, 0, 0),
+    )
+
+
+@pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ENCODER_STATE_CASES)
+def test_patch_stabilizer_expectation_values(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    state: StimInjectedStateName,
+) -> None:
+    """Verify all six stabilizer operators have expectation +1."""
+    circuit = stim.Circuit()
+    _apply_patch_encoder(circuit, patch_spec, encoder, state)
+    for basis, stabilizers in (
+        ("X", patch_spec.x_stabilizers),
+        ("Z", patch_spec.z_stabilizers),
+    ):
+        for support in stabilizers:
+            assert (
+                _peek(
+                    circuit,
+                    _pauli_string(support, basis, patch_spec.num_qubits),
+                )
+                == 1
+            )
+
+
+@pytest.mark.parametrize(("patch_spec", "encoder"), PATCH_ENCODERS)
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_patch_single_basis_stabilizer_measurement(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    basis: str,
+) -> None:
+    """Verify a complete one-basis stabilizer round on either patch."""
+    circuit = stim.Circuit()
+    _apply_patch_encoder(circuit, patch_spec, encoder, "S")
+    if patch_spec.name == "11-site":
+        append_11_site_patch_stabilizer_measurement(
+            circuit,
+            basis=basis,
+            add_ticks=False,
+        )
+    else:
+        append_14_site_patch_superdense_stabilizer_measurement(
+            circuit,
+            basis=basis,
+            add_ticks=False,
+        )
+    expected_measurement_count = 6 if patch_spec.name == "14-site" else 3
+    assert circuit.num_measurements == expected_measurement_count
+    assert circuit.num_detectors == expected_measurement_count
+    assert not _sample(circuit).any()
+
+
+@pytest.mark.parametrize(("patch_spec", "encoder"), PATCH_ENCODERS)
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_patch_selected_stabilizer_measurement(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    basis: str,
+) -> None:
+    """Verify either patch measures only the requested stabilizer subset."""
+    circuit = stim.Circuit()
+    _apply_patch_encoder(circuit, patch_spec, encoder, "S")
+    measurement_start = len(circuit)
+    if patch_spec.name == "11-site":
+        append_11_site_patch_stabilizer_measurement(
+            circuit,
+            basis=basis,
+            stabilizer_indices=(0, 2),
+            add_ticks=False,
+        )
+        unselected_ancilla_sites = {6}
+    else:
+        append_14_site_patch_superdense_stabilizer_measurement(
+            circuit,
+            basis=basis,
+            stabilizer_indices=(0, 2),
+            add_ticks=False,
+        )
+        unselected_ancilla_sites = {11, 12}
+
+    touched_qubits = {
+        target.value
+        for instruction in circuit[measurement_start:]
+        for target in instruction.targets_copy()
+        if target.is_qubit_target
+    }
+    assert not unselected_ancilla_sites.intersection(touched_qubits)
+    expected_measurement_count = 4 if patch_spec.name == "14-site" else 2
+    assert circuit.num_measurements == expected_measurement_count
+    assert circuit.num_detectors == expected_measurement_count
+    assert not _sample(circuit).any()
+
+
+# ---------------------------------------
+# Stabilizer syndrome with injected faults
+# ---------------------------------------
+
+
+def _expected_patch_syndrome(
+    patch_spec: PatchTestSpec,
+    faults: list[tuple[str, int]],
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Return the expected X/Z stabilizer outcomes for physical faults."""
+    x_syndrome = [0, 0, 0]
+    z_syndrome = [0, 0, 0]
+    for pauli, site in faults:
+        pauli = normalize_pauli_char(pauli)
+        for index, support in enumerate(patch_spec.x_stabilizers):
+            if site in support and pauli in ("Z", "Y"):
+                x_syndrome[index] ^= 1
+        for index, support in enumerate(patch_spec.z_stabilizers):
+            if site in support and pauli in ("X", "Y"):
+                z_syndrome[index] ^= 1
+    return tuple(x_syndrome), tuple(z_syndrome)
+
+
+_DATA_SITE_PAIRS = [(first, second) for first in range(7) for second in range(first + 1, 7)]
+
+
+class TestPatchSyndromeExtraction:
+    """Verify both patch measurements against expected fault syndromes."""
+
+    @pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_FAULT_ENCODER_STATE_CASES)
+    def test_no_fault_trivial(
+        self,
+        patch_spec: PatchTestSpec,
+        encoder: str,
+        state: StimInjectedStateName,
+    ) -> None:
+        """No faults produce a trivial syndrome."""
+        assert _build_and_run_patch_syndrome(patch_spec, encoder, state, []) == (
+            (0, 0, 0),
+            (0, 0, 0),
+        )
+
+    @pytest.mark.parametrize("pauli", ["X", "Y", "Z"])
+    @pytest.mark.parametrize("site_index", range(7))
+    @pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_FAULT_ENCODER_STATE_CASES)
+    def test_single_fault(
+        self,
+        patch_spec: PatchTestSpec,
+        encoder: str,
+        state: StimInjectedStateName,
+        site_index: int,
+        pauli: str,
+    ) -> None:
+        """Single-qubit faults produce the expected syndrome."""
+        faults = [(pauli, patch_spec.data_sites[site_index])]
+        assert _build_and_run_patch_syndrome(
+            patch_spec,
+            encoder,
+            state,
+            faults,
+        ) == _expected_patch_syndrome(patch_spec, faults)
+
+    @pytest.mark.parametrize("pauli", ["X", "Y", "Z"])
+    @pytest.mark.parametrize(("first", "second"), _DATA_SITE_PAIRS)
+    @pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_FAULT_ENCODER_STATE_CASES)
+    def test_two_qubit_same_pauli(
+        self,
+        patch_spec: PatchTestSpec,
+        encoder: str,
+        state: StimInjectedStateName,
+        first: int,
+        second: int,
+        pauli: str,
+    ) -> None:
+        """Two same-Pauli faults produce the XOR of their syndromes."""
+        faults = [
+            (pauli, patch_spec.data_sites[first]),
+            (pauli, patch_spec.data_sites[second]),
+        ]
+        assert _build_and_run_patch_syndrome(
+            patch_spec,
+            encoder,
+            state,
+            faults,
+        ) == _expected_patch_syndrome(patch_spec, faults)
+
+    @pytest.mark.parametrize("paulis", [("X", "Z"), ("X", "Y"), ("Z", "Y")])
+    @pytest.mark.parametrize(("first", "second"), _DATA_SITE_PAIRS)
+    @pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_FAULT_ENCODER_STATE_CASES)
+    def test_two_qubit_mixed_pauli(
+        self,
+        patch_spec: PatchTestSpec,
+        encoder: str,
+        state: StimInjectedStateName,
+        first: int,
+        second: int,
+        paulis: tuple[str, str],
+    ) -> None:
+        """Two mixed-Pauli faults are detected independently by both sectors."""
+        faults = [
+            (paulis[0], patch_spec.data_sites[first]),
+            (paulis[1], patch_spec.data_sites[second]),
+        ]
+        assert _build_and_run_patch_syndrome(
+            patch_spec,
+            encoder,
+            state,
+            faults,
+        ) == _expected_patch_syndrome(patch_spec, faults)
+
+
+# -------------------------
+# Routed encoder properties
+# -------------------------
+
+
+@pytest.mark.parametrize(
+    ("patch_spec", "encoder"),
+    [
+        pytest.param(PATCH_11_SITE_TEST_SPEC, "rosenfeld", id="11-site-rosenfeld"),
+        pytest.param(PATCH_14_SITE_TEST_SPEC, "hirano", id="14-site-hirano"),
+        pytest.param(
+            PATCH_14_SITE_TEST_SPEC,
+            "abstract-routed",
+            id="14-site-abstract-routed",
+        ),
+    ],
+)
+def test_patch_routed_encoder_two_qubit_gates_are_local(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+) -> None:
+    """Every two-qubit gate in each routed encoder follows its patch geometry."""
+    circuit = stim.Circuit()
+    _apply_patch_encoder(circuit, patch_spec, encoder, "S")
+    if patch_spec.name == "11-site":
+        coordinates = PATCH_11_SITE_COORDS
+    elif encoder == "hirano":
+        coordinates = PATCH_14_SITE_HIRANO_ENCODER_COORDS
+    else:
+        coordinates = PATCH_14_SITE_COORDS
+    for instruction in circuit:
+        if instruction.name != "CX":
+            continue
+        sites = [target.value for target in instruction.targets_copy()]
+        for site_a, site_b in zip(sites[::2], sites[1::2], strict=True):
+            ax, ay = coordinates[site_a]
+            bx, by = coordinates[site_b]
+            assert (abs(ax - bx), abs(ay - by)) == (1, 1)
+            if patch_spec.name == "11-site":
+                assert {site_a in patch_spec.data_sites, site_b in patch_spec.data_sites} == {
+                    True,
+                    False,
+                }
+            else:
+                assert (abs(ax - bx), abs(ay - by)) == (1, 1)
+
+
+@pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ROUTED_ENCODER_STATE_CASES)
+def test_patch_routed_encoder_helper_expectation_values(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    state: StimInjectedStateName,
+) -> None:
+    """Routed-encoder helpers return to their expected product state."""
+    circuit = stim.Circuit()
+    _apply_patch_encoder(circuit, patch_spec, encoder, state)
+    if patch_spec.name == "11-site":
+        helper_sites = PATCH_11_SITE_HELPER_SITES
+        helper_basis = "Z"
+    elif encoder == "hirano":
+        helper_sites = PATCH_14_SITE_HELPER_SITES
+        helper_basis = "X"
+    else:
+        helper_sites = tuple(
+            site for site in range(patch_spec.num_qubits) if site not in patch_spec.data_sites
+        )
+        helper_basis = "Z"
+    for site in helper_sites:
+        assert (
+            _peek(
+                circuit,
+                _pauli_string((site,), helper_basis, patch_spec.num_qubits),
+            )
+            == 1
+        )
+
+
+@pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ROUTED_ENCODER_STATE_CASES)
+def test_patch_routed_encoder_helper_flags_are_zero(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    state: StimInjectedStateName,
+) -> None:
+    """Measured routed-encoder helpers return all-zero detector outcomes."""
+    if patch_spec.name == "11-site":
+        helper_sites = PATCH_11_SITE_HELPER_SITES
+    elif encoder == "abstract-routed":
+        helper_sites = PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES
+    else:
+        helper_sites = PATCH_14_SITE_HELPER_SITES
+    circuit = stim.Circuit()
+    if patch_spec.name == "11-site":
+        append_11_site_patch_rosenfeld_encoder(
+            circuit,
+            injected_state=state,
+            measure_flags=True,
+            add_ticks=False,
+        )
+    elif encoder == "hirano":
+        append_14_site_patch_hirano_encoder(
+            circuit,
+            injected_state=state,
+            measure_flags=True,
+            add_ticks=False,
+        )
+    else:
+        append_14_site_patch_abstract_routed_encoder(
+            circuit,
+            injected_state=state,
+            measure_flags=True,
+            add_ticks=False,
+        )
+    shots = _sample(circuit, shots=1024)
+    detection_events = circuit.compile_detector_sampler(seed=1).sample(32)
+    assert shots.shape == (1024, len(helper_sites))
+    assert circuit.num_detectors == len(helper_sites)
+    assert not shots.any()
+    assert not detection_events.any()
+
+
+# ------------------------------
+# Specific to the 14-site patch
+# ------------------------------
+
+
+def test_14_site_abstract_encoder_uses_only_fixed_data_sites() -> None:
+    """The mapped abstract encoder keeps D1 at ``(1, 5)`` and ignores helpers."""
+    assert PATCH_14_SITE_COORDS[1] == (1, 5)
+    circuit = stim.Circuit()
+    append_14_site_patch_abstract_encoder(
+        circuit,
+        injected_state="S",
+        add_ticks=False,
+    )
+    used_two_qubit_sites = {
+        target.value
+        for instruction in circuit
+        if instruction.name == "CX"
+        for target in instruction.targets_copy()
+    }
+    assert used_two_qubit_sites <= set(PATCH_14_SITE_DATA_SITES)
+
+
+@pytest.mark.parametrize("state", HIRANO_STATES)
+def test_14_site_hirano_encoder_matches_abstract_y_state(
+    state: StimInjectedStateName,
+) -> None:
+    """Verify Hirano and abstract encoders prepare the same 14-qubit state."""
+    hirano = stim.Circuit()
+    append_14_site_patch_hirano_encoder(
+        hirano,
+        injected_state=state,
+        measure_flags=False,
+        add_ticks=False,
+    )
+    hirano.append("H", PATCH_14_SITE_HELPER_SITES)
+    abstract = stim.Circuit()
+    append_14_site_patch_abstract_encoder(
+        abstract,
+        injected_state=state,
+        add_ticks=False,
+    )
+
+    hirano_simulator = stim.TableauSimulator()
+    hirano_simulator.set_num_qubits(NUM_QUBITS_PATCH_14_SITES)
+    hirano_simulator.do_circuit(hirano)
+    abstract_simulator = stim.TableauSimulator()
+    abstract_simulator.set_num_qubits(NUM_QUBITS_PATCH_14_SITES)
+    abstract_simulator.do_circuit(abstract)
+    assert hirano_simulator.canonical_stabilizers() == abstract_simulator.canonical_stabilizers()
+
+
+@pytest.mark.parametrize("state", ["0", "1", "+", "-"])
+def test_14_site_hirano_encoder_rejects_non_y_states(
+    state: StimInjectedStateName,
+) -> None:
+    """Hirano's single phase injection cannot encode a non-Y input."""
+    with pytest.raises(ValueError, match="logical-Y eigenstate"):
+        append_14_site_patch_hirano_encoder(
+            stim.Circuit(),
+            injected_state=state,
+        )
+
+
+# ----------------
+# Specific to Stim
+# ----------------
+
+
+@pytest.mark.parametrize(
+    ("patch_spec", "encoder", "state", "basis", "expected_parity"),
+    [
+        pytest.param(spec, encoder, state, basis, expected, id=f"{spec.name}-{basis}{sign}")
+        for spec, encoder in ARBITRARY_STATE_PATCH_ENCODERS
+        for state, basis, expected, sign in (
+            ("0", "Z", 0, "+"),
+            ("1", "Z", 1, "-"),
+            ("+", "X", 0, "+"),
+            ("-", "X", 1, "-"),
+            ("S", "Y", 0, "+"),
+            ("Sdg", "Y", 1, "-"),
+        )
+    ]
+    + [
+        pytest.param(
+            PATCH_14_SITE_TEST_SPEC,
+            "hirano",
+            "S",
+            "Y",
+            0,
+            id="14-site-hirano-Y+",
+        ),
+        pytest.param(
+            PATCH_14_SITE_TEST_SPEC,
+            "hirano",
+            "Sdg",
+            "Y",
+            1,
+            id="14-site-hirano-Y-",
+        ),
+    ],
+)
+def test_patch_destructive_logical_measurement(
+    patch_spec: PatchTestSpec,
+    encoder: str,
     state: StimInjectedStateName,
     basis: str,
     expected_parity: int,
 ) -> None:
-    """Verify destructive logical readout, including logical-Y sign correction."""
+    """Verify destructive logical readout, including logical-Y correction."""
     representatives = (
-        PATCH_11_SITE_LOGICAL_Z_REPRESENTATIVES
+        patch_spec.logical_z_representatives
         if basis == "Z"
-        else PATCH_11_SITE_LOGICAL_X_REPRESENTATIVES
+        else patch_spec.logical_x_representatives
     )
     for support in representatives:
-        circuit = _encoded_circuit(state)
-        append_11_site_patch_logical_measurement(
-            circuit,
-            basis,
-            support=support,
-            destructive=True,
-        )
-
-        shots = _sample(circuit)
-        parities = shots[:, -len(support) :].sum(axis=1) % 2
+        circuit = stim.Circuit()
+        _apply_patch_encoder(circuit, patch_spec, encoder, state)
+        if patch_spec.name == "11-site":
+            append_11_site_patch_logical_measurement(
+                circuit,
+                basis,
+                support=support,
+                destructive=True,
+            )
+        else:
+            append_14_site_patch_logical_measurement(
+                circuit,
+                basis,
+                support=support,
+                destructive=True,
+            )
+        parities = _sample(circuit)[:, -len(support) :].sum(axis=1) % 2
         assert (parities == expected_parity).all()
 
 
-def test_patch_logical_measurement_can_include_stim_observable() -> None:
+@pytest.mark.parametrize(
+    ("patch_spec", "encoder", "state", "basis"),
+    [
+        pytest.param(spec, encoder, "+", "X", id=f"{spec.name}-{encoder}")
+        for spec, encoder in ARBITRARY_STATE_PATCH_ENCODERS
+    ]
+    + [
+        pytest.param(
+            PATCH_14_SITE_TEST_SPEC,
+            "hirano",
+            "S",
+            "Y",
+            id="14-site-hirano",
+        )
+    ],
+)
+def test_patch_logical_measurement_can_include_stim_observable(
+    patch_spec: PatchTestSpec,
+    encoder: str,
+    state: StimInjectedStateName,
+    basis: str,
+) -> None:
     """Verify a terminal logical measurement can define ``L0`` directly."""
-    circuit = _encoded_circuit("+")
-    append_11_site_patch_logical_measurement(
-        circuit,
-        "X",
-        observable_index=0,
-    )
+    circuit = stim.Circuit()
+    _apply_patch_encoder(circuit, patch_spec, encoder, state)
+    if patch_spec.name == "11-site":
+        append_11_site_patch_logical_measurement(
+            circuit,
+            basis,
+            observable_index=0,
+        )
+    else:
+        append_14_site_patch_logical_measurement(
+            circuit,
+            basis,
+            observable_index=0,
+        )
     _, observable_flips = circuit.compile_detector_sampler(seed=1).sample(
         32,
         separate_observables=True,
     )
-
     assert circuit.num_observables == 1
     assert not observable_flips.any()
 
 
-# ---------------------------------------------------------------------------
-# Stabilizer observables and measurement circuits
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("state", CLIFFORD_STATES)
-def test_patch_stabilizer_expectation_values(state: StimInjectedStateName) -> None:
-    """Verify all six stabilizer operators have expectation +1."""
-    circuit = _encoded_circuit(state)
-
-    for basis, stabilizers in (
-        ("X", PATCH_11_SITE_X_STABILIZERS),
-        ("Z", PATCH_11_SITE_Z_STABILIZERS),
-    ):
-        for index, support in enumerate(stabilizers):
-            measured = _peek(circuit, _pauli_string(basis, support))
-            assert measured == 1, (
-                f"State {state!r}: {basis}-stabilizer {index} "
-                f"on {support} expected +1, got {measured}"
-            )
-
-
-@pytest.mark.parametrize("state", CLIFFORD_STATES)
-def test_patch_all_stabilizers_via_ancilla_measurement(
-    state: StimInjectedStateName,
-) -> None:
-    """Verify the full six-bit syndrome is zero."""
-    circuit = _encoded_circuit(state)
-    append_11_site_patch_stabilizer_measurement(circuit, add_ticks=False)
-
-    assert circuit.num_measurements == N_PATCH_SYNDROME_BITS
-    assert circuit.num_detectors == N_PATCH_SYNDROME_BITS
-    assert not _sample(circuit).any()
-
-
-@pytest.mark.parametrize("basis", ["X", "Z"])
-def test_patch_single_basis_stabilizer_measurement(basis: str) -> None:
-    """Verify a complete one-basis stabilizer round."""
-    circuit = _encoded_circuit("S")
-    append_11_site_patch_stabilizer_measurement(
-        circuit,
-        basis=basis,
-        add_ticks=False,
-    )
-
-    assert circuit.num_measurements == N_PATCH_STABILIZERS
-    assert not _sample(circuit).any()
-
-
-@pytest.mark.parametrize("basis", ["X", "Z"])
-def test_patch_selected_stabilizer_measurement(basis: str) -> None:
-    """Verify ordered stabilizer subsets use only their assigned ancillas."""
-    selected_indices = (0, 2)
-    circuit = _encoded_circuit("S")
-    measurement_start = len(circuit)
-    append_11_site_patch_stabilizer_measurement(
-        circuit,
-        basis=basis,
-        stabilizer_indices=selected_indices,
-        add_ticks=False,
-    )
-
-    unselected_ancilla = PATCH_11_SITE_STABILIZER_ANCILLA_SITES[1]
-    appended_instructions = circuit[measurement_start:]
-    touched_qubits = {
-        target.value
-        for instruction in appended_instructions
-        for target in instruction.targets_copy()
-        if target.is_qubit_target
-    }
-    assert unselected_ancilla not in touched_qubits
-    assert circuit.num_measurements == len(selected_indices)
-    assert not _sample(circuit).any()
-
-
-# ---------------------------------------------------------------------------
-# Stabilizer syndromes with injected faults
-# ---------------------------------------------------------------------------
-
-
-def _expected_patch_syndrome(
-    faults: list[tuple[str, int]],
-) -> tuple[tuple[int, ...], tuple[int, ...]]:
-    """Return the expected X- and Z-stabilizer syndromes."""
-    x_syndrome = [0] * N_PATCH_STABILIZERS
-    z_syndrome = [0] * N_PATCH_STABILIZERS
-
-    for pauli, site in faults:
-        for index, support in enumerate(PATCH_11_SITE_X_STABILIZERS):
-            if site in support and pauli in {"Z", "Y"}:
-                x_syndrome[index] ^= 1
-        for index, support in enumerate(PATCH_11_SITE_Z_STABILIZERS):
-            if site in support and pauli in {"X", "Y"}:
-                z_syndrome[index] ^= 1
-
-    return tuple(x_syndrome), tuple(z_syndrome)
-
-
-def _build_and_run_patch_syndrome(
-    faults: list[tuple[str, int]],
-    *,
-    injected_state: StimInjectedStateName,
-) -> tuple[tuple[int, ...], tuple[int, ...]]:
-    """Inject faults, measure all stabilizers, and return both syndromes."""
-    circuit = _encoded_circuit(injected_state)
-    append_pauli_faults(circuit, faults)
-    append_11_site_patch_stabilizer_measurement(circuit, add_ticks=False)
-
-    syndrome = _sample(circuit, shots=1)[0, -N_PATCH_SYNDROME_BITS:]
-    return (
-        tuple(int(bit) for bit in syndrome[:N_PATCH_STABILIZERS]),
-        tuple(int(bit) for bit in syndrome[N_PATCH_STABILIZERS:]),
-    )
-
-
-_SINGLE_FAULTS = [[(pauli, site)] for pauli in ("X", "Y", "Z") for site in PATCH_11_SITE_DATA_SITES]
-_SINGLE_IDS = [f"{pauli}_{site}" for pauli in ("X", "Y", "Z") for site in PATCH_11_SITE_DATA_SITES]
-
-_TWO_SAME_FAULTS: list[list[tuple[str, int]]] = []
-_TWO_SAME_IDS: list[str] = []
-for _pauli in ("X", "Y", "Z"):
-    for _index, _site_1 in enumerate(PATCH_11_SITE_DATA_SITES):
-        for _site_2 in PATCH_11_SITE_DATA_SITES[_index + 1 :]:
-            _TWO_SAME_FAULTS.append([(_pauli, _site_1), (_pauli, _site_2)])
-            _TWO_SAME_IDS.append(f"{_pauli}{_pauli}_{_site_1}_{_site_2}")
-
-_TWO_MIXED_FAULTS: list[list[tuple[str, int]]] = []
-_TWO_MIXED_IDS: list[str] = []
-for _pauli_1, _pauli_2 in (("X", "Z"), ("X", "Y"), ("Z", "Y")):
-    for _index, _site_1 in enumerate(PATCH_11_SITE_DATA_SITES):
-        for _site_2 in PATCH_11_SITE_DATA_SITES[_index + 1 :]:
-            _TWO_MIXED_FAULTS.append([(_pauli_1, _site_1), (_pauli_2, _site_2)])
-            _TWO_MIXED_IDS.append(f"{_pauli_1}{_pauli_2}_{_site_1}_{_site_2}")
-
-
-class TestPatchSyndromeExtraction:
-    """Verify measured syndromes after injected Pauli faults."""
-
-    @pytest.mark.parametrize("state", CLIFFORD_STATES)
-    def test_no_fault_trivial(self, state: StimInjectedStateName) -> None:
-        measured = _build_and_run_patch_syndrome([], injected_state=state)
-        assert measured == ((0, 0, 0), (0, 0, 0))
-
-    @pytest.mark.parametrize("state", ["0", "S"])
-    @pytest.mark.parametrize("faults", _SINGLE_FAULTS, ids=_SINGLE_IDS)
-    def test_single_fault(
-        self,
-        state: StimInjectedStateName,
-        faults: list[tuple[str, int]],
-    ) -> None:
-        assert _build_and_run_patch_syndrome(
-            faults,
-            injected_state=state,
-        ) == _expected_patch_syndrome(faults)
-
-    @pytest.mark.parametrize("state", ["0", "S"])
-    @pytest.mark.parametrize("faults", _TWO_SAME_FAULTS, ids=_TWO_SAME_IDS)
-    def test_two_qubit_same_pauli(
-        self,
-        state: StimInjectedStateName,
-        faults: list[tuple[str, int]],
-    ) -> None:
-        assert _build_and_run_patch_syndrome(
-            faults,
-            injected_state=state,
-        ) == _expected_patch_syndrome(faults)
-
-    @pytest.mark.parametrize("state", ["0", "S"])
-    @pytest.mark.parametrize("faults", _TWO_MIXED_FAULTS, ids=_TWO_MIXED_IDS)
-    def test_two_qubit_mixed_pauli(
-        self,
-        state: StimInjectedStateName,
-        faults: list[tuple[str, int]],
-    ) -> None:
-        assert _build_and_run_patch_syndrome(
-            faults,
-            injected_state=state,
-        ) == _expected_patch_syndrome(faults)
-
-
-# ---------------------------------------------------------------------------
-# Rosenfeld-encoder helper sites
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("state", CLIFFORD_STATES)
-def test_patch_rosenfeld_helper_sites_expectation_value(
-    state: StimInjectedStateName,
-) -> None:
-    """Verify every helper finishes in |0>."""
-    circuit = _encoded_circuit(state)
-    for site in PATCH_11_SITE_HELPER_SITES:
-        assert _peek(circuit, _pauli_string("Z", (site,))) == 1
-
-
-@pytest.mark.parametrize("state", CLIFFORD_STATES)
-def test_patch_rosenfeld_flag_qubits_bit_value(
-    state: StimInjectedStateName,
-) -> None:
-    """Verify measured flag qubits always return the all-zero outcome."""
-    circuit = _encoded_circuit(state, measure_flags=True)
-    shots = _sample(circuit, shots=1024)
-
-    assert shots.shape == (1024, len(PATCH_11_SITE_HELPER_SITES))
-    assert not shots.any()
-
-
-# ===========================================================================
-# 14-site patch (Hirano injection encoder)
-# ===========================================================================
-
-
-# States injectable by the 14-site Hirano encoder: the logical-Y eigenstate
-# family only (S/i/Y+ -> logical Y=+1, Sdg/-i/Y- -> logical Y=-1); every other
-# Clifford state raises. This is the 14-site analogue of the 11-site
-# CLIFFORD_STATES sweep and reuses the shared LOGICAL_EXPECTATIONS values, so the
-# sweep also checks that the equivalent injection names agree.
-PATCH_14_SITE_INJECTION_STATES: tuple[StimInjectedStateName, ...] = (
-    "i",
-    "-i",
-    "Y+",
-    "Y-",
-    "S",
-    "Sdg",
-)
-
-# Superdense ancilla measurement-bit layout: [X0145, Z0145, X0235, Z0235, X0246,
-# Z0246] — one X- and one Z-ancilla bit per weight-4 Steane face.
-SUPERDENSE_NUM_DETECTORS = 6
-SUPERDENSE_X_STAB_BIT = {0: 0, 1: 2, 2: 4}
-SUPERDENSE_Z_STAB_BIT = {0: 1, 1: 3, 2: 5}
-
-
-def _encoded_14_site_circuit(
-    state: StimInjectedStateName,
-    *,
-    measure_flags: bool = False,
+def _build_14_site_superdense_circuit(
+    encoder: str,
+    state: StimInjectedStateName = "S",
 ) -> stim.Circuit:
-    """Return a standalone Hirano 14-site injection encoder circuit."""
+    """Append a 14-site encoder followed by a complete superdense round."""
     circuit = stim.Circuit()
-    append_14_site_patch_hirano_encoder(
+    _apply_patch_encoder(circuit, PATCH_14_SITE_TEST_SPEC, encoder, state)
+    append_14_site_patch_superdense_stabilizer_measurement(
         circuit,
-        injected_state=state,
-        measure_flags=measure_flags,
         add_ticks=False,
     )
     return circuit
 
 
-def _logical_observable_14_site(pauli: str, support: tuple[int, ...]) -> stim.PauliString:
-    """Return the correctly signed 14-site logical observable on ``support``."""
-    if pauli == "Y":
-        return (
-            1j
-            * _pauli_string("X", support, n_qubits=NUM_QUBITS_PATCH_14_SITES)
-            * _pauli_string("Z", support, n_qubits=NUM_QUBITS_PATCH_14_SITES)
-        )
-    return _pauli_string(pauli, support, n_qubits=NUM_QUBITS_PATCH_14_SITES)
-
-
-def _superdense_circuit(
-    *,
-    injected_state: StimInjectedStateName = "S",
-    faults: list[tuple[str, int]] | None = None,
-) -> tuple[stim.Circuit, int]:
-    """Return an injection + superdense-round circuit and its measurement start.
-
-    The encoder is built without flag measurements, so the superdense round's six
-    detectors and measurements are isolated at the end of the record.
-    """
-    circuit = _encoded_14_site_circuit(injected_state)
-    if faults:
-        append_pauli_faults(circuit, faults)
-    measurement_start = circuit.num_measurements
-    append_14_site_patch_superdense_stabilizer_measurement(circuit, add_ticks=False)
-    return circuit, measurement_start
-
-
-# ---------------------------------------------------------------------------
-# Flag measurements
-# ---------------------------------------------------------------------------
-
-
-def test_14_site_encoder_flags_are_stim_detectors() -> None:
-    """Verify measured Hirano-encoder helper flags carry detector annotations."""
-    circuit = stim.Circuit()
-    append_14_site_patch_hirano_encoder(circuit, measure_flags=True, add_ticks=False)
-    detection_events = circuit.compile_detector_sampler(seed=1).sample(32)
-
-    assert circuit.num_measurements == len(PATCH_14_SITE_HELPER_SITES)
-    assert circuit.num_detectors == len(PATCH_14_SITE_HELPER_SITES)
-    assert not detection_events.any()
-
-
-# ---------------------------------------------------------------------------
-# Logical observables and measurement circuits
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("basis", ["Z", "X", "Y"])
-@pytest.mark.parametrize("state", PATCH_14_SITE_INJECTION_STATES)
-def test_14_site_encoder_logical_expectation(
-    state: StimInjectedStateName,
-    basis: str,
-) -> None:
-    """Verify every logical representative carries the injected logical-Y state."""
-    circuit = _encoded_14_site_circuit(state)
-    expected = LOGICAL_EXPECTATIONS[state][LOGICAL_EXPECTATION_INDEX[basis]]
-
-    for support in PATCH_14_SITE_LOGICAL_X_REPRESENTATIVES:
-        measured = _peek(circuit, _logical_observable_14_site(basis, support))
-        assert measured == expected, (
-            f"State {state!r}, support {support}: "
-            f"<{basis}_L> expected {expected}, got {measured}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Stabilizer observables and measurement circuits
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("state", PATCH_14_SITE_INJECTION_STATES)
-def test_14_site_encoder_stabilizers_are_plus_one(
-    state: StimInjectedStateName,
-) -> None:
-    """Verify all six Steane stabilizers project to +1 after injection."""
-    circuit = _encoded_14_site_circuit(state)
-
-    for basis, stabilizers in (
-        ("X", PATCH_14_SITE_X_STABILIZERS),
-        ("Z", PATCH_14_SITE_Z_STABILIZERS),
-    ):
-        for index, support in enumerate(stabilizers):
-            measured = _peek(
-                circuit,
-                _pauli_string(basis, support, n_qubits=NUM_QUBITS_PATCH_14_SITES),
-            )
-            assert measured == 1, (
-                f"State {state!r}: {basis}-stabilizer {index} on {support} "
-                f"expected +1, got {measured}"
-            )
-
-
-def test_superdense_detectors_are_deterministic() -> None:
-    """Verify the superdense ancilla detectors never fire on a clean codeword."""
-    circuit, _ = _superdense_circuit()
+@pytest.mark.parametrize("encoder", PATCH_14_SITE_ENCODERS)
+def test_14_site_superdense_detectors_are_deterministic(encoder: str) -> None:
+    """Verify superdense ancilla detectors never fire on a clean codeword."""
+    circuit = _build_14_site_superdense_circuit(encoder)
     detection_events = circuit.compile_detector_sampler(seed=2).sample(64)
-
-    assert circuit.num_detectors == SUPERDENSE_NUM_DETECTORS
-    assert circuit.num_measurements == SUPERDENSE_NUM_DETECTORS
+    assert circuit.num_detectors == 6
+    assert circuit.num_measurements == 6
     assert not detection_events.any()
 
 
-@pytest.mark.parametrize("state", PATCH_14_SITE_INJECTION_STATES)
-def test_superdense_round_preserves_code(
+@pytest.mark.parametrize("state", HIRANO_STATES)
+@pytest.mark.parametrize("encoder", PATCH_14_SITE_ENCODERS)
+def test_14_site_superdense_round_preserves_code(
+    encoder: str,
     state: StimInjectedStateName,
 ) -> None:
-    """Verify all six stabilizers stay +1 and the logical survives the round."""
-    circuit, _ = _superdense_circuit(injected_state=state)
+    """Verify all stabilizers and the logical state survive a superdense round."""
+    circuit = _build_14_site_superdense_circuit(encoder, state)
     simulator = stim.TableauSimulator()
     simulator.do_circuit(circuit)
-
     for basis, stabilizers in (
         ("X", PATCH_14_SITE_X_STABILIZERS),
         ("Z", PATCH_14_SITE_Z_STABILIZERS),
@@ -630,203 +1091,66 @@ def test_superdense_round_preserves_code(
         for support in stabilizers:
             assert (
                 simulator.peek_observable_expectation(
-                    _pauli_string(basis, support, n_qubits=NUM_QUBITS_PATCH_14_SITES)
+                    _pauli_string(support, basis, NUM_QUBITS_PATCH_14_SITES)
                 )
                 == 1
             )
 
-    expected_y = LOGICAL_EXPECTATIONS[state][LOGICAL_EXPECTATION_INDEX["Y"]]
+    expected_y = LOGICAL_EXPECTATION_VALUES[state][LOGICAL_EXPECTATION_INDEX["Y"]]
     for support in PATCH_14_SITE_LOGICAL_X_REPRESENTATIVES:
         assert (
-            simulator.peek_observable_expectation(_logical_observable_14_site("Y", support))
+            simulator.peek_observable_expectation(
+                _logical_pauli_observable(support, "Y", NUM_QUBITS_PATCH_14_SITES)
+            )
             == expected_y
         )
 
 
-# ---------------------------------------------------------------------------
-# Stabilizer syndromes with injected faults
-# ---------------------------------------------------------------------------
-
-
-def _expected_superdense_syndrome(faults: list[tuple[str, int]]) -> tuple[int, ...]:
-    """Return the expected ancilla-bit vector for the given data faults."""
-    bits = [0] * SUPERDENSE_NUM_DETECTORS
-    for pauli, site in faults:
-        for index, support in enumerate(PATCH_14_SITE_X_STABILIZERS):
-            if site in support and pauli in {"Z", "Y"}:
-                bits[SUPERDENSE_X_STAB_BIT[index]] ^= 1
-        for index, support in enumerate(PATCH_14_SITE_Z_STABILIZERS):
-            if site in support and pauli in {"X", "Y"}:
-                bits[SUPERDENSE_Z_STAB_BIT[index]] ^= 1
-    return tuple(bits)
-
-
-def _build_and_run_superdense_syndrome(
-    faults: list[tuple[str, int]],
-    *,
-    injected_state: StimInjectedStateName,
-) -> tuple[int, ...]:
-    """Inject faults, run the superdense round, and return the ancilla syndrome."""
-    circuit, measurement_start = _superdense_circuit(
-        injected_state=injected_state,
-        faults=faults,
-    )
-    syndrome = _sample(circuit, shots=1)[0, measurement_start:]
-    return tuple(int(bit) for bit in syndrome)
-
-
-_SUPERDENSE_SINGLE_FAULTS = [
-    [(pauli, site)] for pauli in ("X", "Y", "Z") for site in PATCH_14_SITE_DATA_SITES
-]
-_SUPERDENSE_SINGLE_IDS = [
-    f"{pauli}_{site}" for pauli in ("X", "Y", "Z") for site in PATCH_14_SITE_DATA_SITES
-]
-
-_SUPERDENSE_TWO_SAME_FAULTS: list[list[tuple[str, int]]] = []
-_SUPERDENSE_TWO_SAME_IDS: list[str] = []
-for _pauli in ("X", "Y", "Z"):
-    for _index, _site_1 in enumerate(PATCH_14_SITE_DATA_SITES):
-        for _site_2 in PATCH_14_SITE_DATA_SITES[_index + 1 :]:
-            _SUPERDENSE_TWO_SAME_FAULTS.append([(_pauli, _site_1), (_pauli, _site_2)])
-            _SUPERDENSE_TWO_SAME_IDS.append(f"{_pauli}{_pauli}_{_site_1}_{_site_2}")
-
-_SUPERDENSE_TWO_MIXED_FAULTS: list[list[tuple[str, int]]] = []
-_SUPERDENSE_TWO_MIXED_IDS: list[str] = []
-for _pauli_1, _pauli_2 in (("X", "Z"), ("X", "Y"), ("Z", "Y")):
-    for _index, _site_1 in enumerate(PATCH_14_SITE_DATA_SITES):
-        for _site_2 in PATCH_14_SITE_DATA_SITES[_index + 1 :]:
-            _SUPERDENSE_TWO_MIXED_FAULTS.append([(_pauli_1, _site_1), (_pauli_2, _site_2)])
-            _SUPERDENSE_TWO_MIXED_IDS.append(f"{_pauli_1}{_pauli_2}_{_site_1}_{_site_2}")
-
-
-class TestSuperdenseSyndromeExtraction:
-    """Verify superdense ancilla syndromes after injected Pauli faults."""
-
-    @pytest.mark.parametrize("state", PATCH_14_SITE_INJECTION_STATES)
-    def test_no_fault_trivial(self, state: StimInjectedStateName) -> None:
-        measured = _build_and_run_superdense_syndrome([], injected_state=state)
-        assert measured == (0,) * SUPERDENSE_NUM_DETECTORS
-
-    @pytest.mark.parametrize("state", ["S", "Sdg"])
-    @pytest.mark.parametrize("faults", _SUPERDENSE_SINGLE_FAULTS, ids=_SUPERDENSE_SINGLE_IDS)
-    def test_single_fault(
-        self,
-        state: StimInjectedStateName,
-        faults: list[tuple[str, int]],
-    ) -> None:
-        assert _build_and_run_superdense_syndrome(
-            faults,
-            injected_state=state,
-        ) == _expected_superdense_syndrome(faults)
-
-    @pytest.mark.parametrize("state", ["S", "Sdg"])
-    @pytest.mark.parametrize("faults", _SUPERDENSE_TWO_SAME_FAULTS, ids=_SUPERDENSE_TWO_SAME_IDS)
-    def test_two_qubit_same_pauli(
-        self,
-        state: StimInjectedStateName,
-        faults: list[tuple[str, int]],
-    ) -> None:
-        assert _build_and_run_superdense_syndrome(
-            faults,
-            injected_state=state,
-        ) == _expected_superdense_syndrome(faults)
-
-    @pytest.mark.parametrize("state", ["S", "Sdg"])
-    @pytest.mark.parametrize("faults", _SUPERDENSE_TWO_MIXED_FAULTS, ids=_SUPERDENSE_TWO_MIXED_IDS)
-    def test_two_qubit_mixed_pauli(
-        self,
-        state: StimInjectedStateName,
-        faults: list[tuple[str, int]],
-    ) -> None:
-        assert _build_and_run_superdense_syndrome(
-            faults,
-            injected_state=state,
-        ) == _expected_superdense_syndrome(faults)
-
-
-# ---------------------------------------------------------------------------
-# Hirano-encoder helper sites
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("state", PATCH_14_SITE_INJECTION_STATES)
-def test_14_site_encoder_helpers_return_disentangled(
-    state: StimInjectedStateName,
-) -> None:
-    """Verify every helper site finishes disentangled in |+>."""
-    circuit = _encoded_14_site_circuit(state)
-    for site in PATCH_14_SITE_HELPER_SITES:
-        assert (
-            _peek(
-                circuit,
-                _pauli_string("X", (site,), n_qubits=NUM_QUBITS_PATCH_14_SITES),
-            )
-            == 1
-        )
-
-
-@pytest.mark.parametrize("state", PATCH_14_SITE_INJECTION_STATES)
-def test_14_site_encoder_flag_qubits_bit_value(
-    state: StimInjectedStateName,
-) -> None:
-    """Verify measured helper flags always return the all-zero X-basis outcome."""
-    circuit = stim.Circuit()
-    append_14_site_patch_hirano_encoder(
-        circuit,
-        injected_state=state,
-        measure_flags=True,
-        add_ticks=False,
-    )
-    shots = _sample(circuit, shots=1024)
-
-    assert shots.shape == (1024, len(PATCH_14_SITE_HELPER_SITES))
-    assert not shots.any()
-
-
-# ---------------------------------------------------------------------------
-# 14-site–specific structure
-# ---------------------------------------------------------------------------
-
-
-def test_14_site_encoder_cnots_are_local() -> None:
-    """Verify every encoder CX acts on diagonally adjacent ``(±1, ±1)`` sites."""
-    circuit = _encoded_14_site_circuit("S")
-
-    for instruction in circuit:
-        if instruction.name != "CX":
+def test_14_site_superdense_layers_are_local_collision_free_and_keep_cx_depth() -> None:
+    """D1/H8 routing preserves all twelve collision-free superdense CX layers."""
+    cx_layers = 0
+    all_cnots: list[tuple[int, int]] = []
+    for tick_layer in PATCH_14_SITE_SUPERDENSE_STABILIZER_MEASUREMENT_LAYERS:
+        layer_cnots = [
+            pair for gate_name, operands in tick_layer if gate_name == "CX" for pair in operands
+        ]
+        if not layer_cnots:
             continue
-        qubit_targets = [target.value for target in instruction.targets_copy()]
-        for control, target in zip(qubit_targets[::2], qubit_targets[1::2], strict=True):
-            (cx, cy), (tx, ty) = PATCH_14_SITE_COORDS[control], PATCH_14_SITE_COORDS[target]
-            assert (abs(cx - tx), abs(cy - ty)) == (
-                1,
-                1,
-            ), f"CX {control}->{target} is not a diagonal neighbour"
+        cx_layers += 1
+        used_sites = [site for pair in layer_cnots for site in pair]
+        assert len(used_sites) == len(set(used_sites))
+        for control, target in layer_cnots:
+            cx, cy = PATCH_14_SITE_COORDS[control]
+            tx, ty = PATCH_14_SITE_COORDS[target]
+            assert (abs(cx - tx), abs(cy - ty)) == (1, 1)
+        all_cnots.extend(layer_cnots)
+
+    assert cx_layers == 12
+    assert (1, 8) in all_cnots
+    assert (8, 1) in all_cnots
+    assert (1, 7) not in all_cnots
+    assert (7, 1) not in all_cnots
 
 
-def test_14_site_encoder_accepts_y_eigenstate_family_and_rejects_others() -> None:
-    """Verify equivalent S/S_DAG names are accepted and other states raise."""
-    for state in ("S", "i", "Y+", "Sdg", "-i", "Y-"):
-        append_14_site_patch_hirano_encoder(stim.Circuit(), injected_state=state)
-    for state in ("0", "1", "+", "-"):
-        with pytest.raises(ValueError, match="can inject only the logical-Y eigenstate family"):
-            append_14_site_patch_hirano_encoder(stim.Circuit(), injected_state=state)
-
-
-def test_superdense_round_leaves_data_qubit_2_restored() -> None:
-    """Verify the D2/D2' repetition-code detour restores qubit 2 and clears D2'."""
-    circuit, _ = _superdense_circuit()
+@pytest.mark.parametrize("encoder", PATCH_14_SITE_ENCODERS)
+def test_14_site_superdense_round_leaves_data_qubit_2_restored(
+    encoder: str,
+) -> None:
+    """Verify the D2/D2' detour restores D2 and disentangles D2'."""
+    circuit = _build_14_site_superdense_circuit(encoder)
     simulator = stim.TableauSimulator()
     simulator.do_circuit(circuit)
-
-    # Face {0,2,3,5} X-stabilizer support includes data qubit 2 at its home site;
-    # it stays +1 (qubit 2 is not relocated onto D2').
-    home_face = _pauli_string(
-        "X", PATCH_14_SITE_X_STABILIZERS[1], n_qubits=NUM_QUBITS_PATCH_14_SITES
+    assert (
+        simulator.peek_observable_expectation(
+            _pauli_string(
+                PATCH_14_SITE_X_STABILIZERS[1],
+                "X",
+                NUM_QUBITS_PATCH_14_SITES,
+            )
+        )
+        == 1
     )
-    assert simulator.peek_observable_expectation(home_face) == 1
-    # D2' returns disentangled to |+> after the X-rep code is undone.
-    d2_prime = _pauli_string(
-        "X", (PATCH_14_SITE_D2_PRIME_SITE,), n_qubits=NUM_QUBITS_PATCH_14_SITES
+    assert (
+        simulator.peek_observable_expectation(_pauli_string((13,), "X", NUM_QUBITS_PATCH_14_SITES))
+        == 1
     )
-    assert simulator.peek_observable_expectation(d2_prime) == 1

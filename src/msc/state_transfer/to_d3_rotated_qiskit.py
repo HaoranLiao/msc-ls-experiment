@@ -32,6 +32,7 @@ MERGED_BOUNDARY_CHECKS = TRANSFER_SPEC.merged_boundary_checks
 
 def build_steane_to_rotated_d3_lattice_surgery_circuit(
     *,
+    patch_sites: common.SteanePatchSites = 14,
     injected_state: InjectedStateName = "T",
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
@@ -45,18 +46,19 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     Anticommuting ``X_ab`` is withheld until destructive Steane-X demolition
     and then recovered unconditionally.
 
-    The circuit includes Rosenfeld et al. injection, post-injection Steane QED,
-    optional logical-H_XY cultivation, both Steane verification groups, and
-    every raw measurement needed for classical spacetime decoding. Setting
-    ``include_post_transfer_stabilizer_rounds`` appends three full d3 rounds.
-    ``surface_readout_basis`` optionally appends destructive X/Y/Z analysis;
-    ``None`` ends at the transfer boundary.
+    The circuit includes injection on the selected Steane patch,
+    post-injection QED, optional logical-H_XY cultivation, both Steane
+    verification groups, and every raw measurement needed for classical
+    spacetime decoding. Setting ``include_post_transfer_stabilizer_rounds``
+    appends three full d3 rounds. ``surface_readout_basis`` optionally appends
+    destructive X/Y/Z analysis; ``None`` ends at the transfer boundary.
 
     This d3 geometry is a compact simulation adaptation, not the paper's
     depicted target. The shared helper owns the full protocol-stage semantics.
     """
     return helper.build_lattice_surgery_circuit(
         TRANSFER_SPEC,
+        patch_sites=patch_sites,
         injected_state=injected_state,
         include_cultivation=include_cultivation,
         include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
@@ -68,6 +70,7 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
 def parse_transfer_measurements(
     bitstring: str,
     *,
+    patch_sites: common.SteanePatchSites = 14,
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
@@ -75,6 +78,7 @@ def parse_transfer_measurements(
     return analysis.parse_transfer_measurements(
         bitstring,
         spec=TRANSFER_SPEC,
+        patch_sites=patch_sites,
         include_cultivation=include_cultivation,
         include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,

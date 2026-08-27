@@ -72,6 +72,7 @@ def build_lattice_surgery_only_circuit(
     physical_error_probability: float,
     *,
     experiment: LogicalErrorExperiment,
+    patch_sites: common.SteanePatchSites = 14,
 ) -> tuple[stim.Circuit, transfer_helper.TransferMeasurementLayout]:
     """Build the detector-annotated lattice-surgery-only experiment.
 
@@ -87,10 +88,12 @@ def build_lattice_surgery_only_circuit(
        noisy. The noisy Steane checks are
        ``Z0145``, ``Z0235``, ``X0235``, ``Z0246``, and ``X0246`` in round 1;
        ``Z0145``, ``Z0235``, and ``Z0246`` in round 2; and none in round 3.
+       On the 14-site patch, each selective check also measures and postselects
+       the other Bell ancilla as a known-zero Bell-partner flag.
     3. Transfer completion: Steane-X demolition and recovery of ``X_ab`` and
        ``X_cd`` are noisy.
 
-    The Rosenfeld et al. encoder and post-injection Steane QED before these phases are
+    The selected Steane encoder and post-injection QED before these phases are
     ideal. One ideal full surface round and an ideal destructive readout close
     the circuit afterward. The closing round supplies the final detectors; the
     ideal logical-support readout supplies only the logical observable.
@@ -115,6 +118,7 @@ def build_lattice_surgery_only_circuit(
 
     # Build the ideal input and transfer, then verify its measurement layout.
     circuit = transfer.build_steane_to_rotated_d5_lattice_surgery_circuit(
+        patch_sites=patch_sites,
         injected_state=experiment.injected_state,
         include_cultivation=False,
         include_post_transfer_stabilizer_rounds=False,
@@ -123,6 +127,7 @@ def build_lattice_surgery_only_circuit(
     )
     transfer_layout = transfer_helper.transfer_measurement_layout(
         transfer.TRANSFER_SPEC,
+        patch_sites=patch_sites,
         include_cultivation=False,
         include_post_transfer_stabilizer_rounds=False,
         surface_readout_basis=None,
@@ -131,12 +136,27 @@ def build_lattice_surgery_only_circuit(
         raise RuntimeError("transfer measurement layout does not match the circuit.")
 
     # Keep injection and QED ideal; noise starts at surface initialization.
+    # `add_circuit_depolarizing_noise` noises every operation in whatever
+    # circuit it is given, so to leave injection and QED ideal we must first
+    # cut `circuit` into two pieces and noise only the second one: everything
+    # up to (and including) the TICK that follows the last QED measurement
+    # becomes `ideal_input`, and everything after that TICK becomes
+    # `noisy_transfer` (surface init through lattice-surgery completion).
+    #
+    # `stim.Circuit` supports slicing (``circuit[:k]``), so cutting it is just
+    # finding the right instruction index `split_index`. That index is not
+    # known in advance because the cut is specified by a measurement-record
+    # position (the last QED measurement), not an instruction index, and a
+    # single instruction can add more than one measurement result at once. So
+    # we scan the instructions in order, tallying how many measurement
+    # results each one contributes, until the running total reaches the QED
+    # measurement count, and record the index of the next TICK after that.
     ideal_input_measurement_count = transfer_layout.positions["steane_qed"][-1] + 1
-    ideal_input = stim.Circuit()
-    noisy_transfer = stim.Circuit()
+    split_index: int | None = None
     observed_measurements = 0
-    phase = "ideal_input"
+    index = -1
     for instruction in circuit:
+        index += 1
         if isinstance(instruction, stim.CircuitRepeatBlock):
             raise ValueError("the lattice-surgery noise boundary requires no repeat blocks.")
         instruction_circuit = stim.Circuit()
@@ -144,17 +164,21 @@ def build_lattice_surgery_only_circuit(
         next_measurement_count = observed_measurements + instruction_circuit.num_measurements
         if observed_measurements < ideal_input_measurement_count < next_measurement_count:
             raise ValueError("the QED boundary splits a multi-result instruction.")
-        target = {
-            "ideal_input": ideal_input,
-            "noisy_transfer": noisy_transfer,
-        }[phase]
-        target.append(instruction)
         observed_measurements = next_measurement_count
-        if instruction.name == "TICK":
-            if phase == "ideal_input" and observed_measurements >= ideal_input_measurement_count:
-                phase = "noisy_transfer"
+        # The first TICK once all QED measurements have been emitted is the
+        # cut point: `ideal_input` ends here, `noisy_transfer` starts next.
+        if (
+            split_index is None
+            and instruction.name == "TICK"
+            and observed_measurements >= ideal_input_measurement_count
+        ):
+            split_index = index + 1
+    if split_index is None:
+        raise RuntimeError("failed to find the lattice-surgery noise boundary.")
     if observed_measurements != circuit.num_measurements:
         raise RuntimeError("failed to traverse the complete circuit record.")
+    ideal_input = circuit[:split_index]
+    noisy_transfer = circuit[split_index:]
 
     # Noise the transfer, then append the noise-free closing round and readout.
     circuit = ideal_input + add_circuit_depolarizing_noise(

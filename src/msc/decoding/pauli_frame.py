@@ -41,12 +41,6 @@ class PauliFrame:
     _x_flips: dict[str, bool] = field(default_factory=dict)
     _z_flips: dict[str, bool] = field(default_factory=dict)
 
-    def _check_label(self, label: str) -> None:
-        if label not in self._x_flips:
-            raise KeyError(
-                f"Logical qubit {label!r} not registered. Call frame.register({label!r}) first."
-            )
-
     def register(self, label: str) -> None:
         """Register a new logical qubit with identity (no byproduct)."""
         self._x_flips[label] = False
@@ -54,13 +48,19 @@ class PauliFrame:
 
     def update_x(self, label: str, flip: bool) -> None:
         """Toggle the X byproduct on ``label`` if ``flip`` is True."""
-        self._check_label(label)
+        if label not in self._x_flips:
+            raise KeyError(
+                f"Logical qubit {label!r} not registered. Call frame.register({label!r}) first."
+            )
         if flip:
             self._x_flips[label] = not self._x_flips[label]
 
     def update_z(self, label: str, flip: bool) -> None:
         """Toggle the Z byproduct on ``label`` if ``flip`` is True."""
-        self._check_label(label)
+        if label not in self._x_flips:
+            raise KeyError(
+                f"Logical qubit {label!r} not registered. Call frame.register({label!r}) first."
+            )
         if flip:
             self._z_flips[label] = not self._z_flips[label]
 

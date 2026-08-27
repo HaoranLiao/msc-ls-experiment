@@ -9,7 +9,6 @@ from qiskit_aer import AerSimulator
 from msc.state_transfer import common
 from msc.state_transfer import to_d3_rotated_qiskit as d3
 from msc.state_transfer import to_d5_rotated_qiskit as d5
-from msc.steane_code.state_injection_qiskit import PATCH_11_SITE_STABILIZER_ANCILLA_SITES
 
 TARGETS = (
     pytest.param(d3, d3.build_steane_to_rotated_d3_lattice_surgery_circuit, id="d3"),
@@ -27,6 +26,29 @@ EXPECTED_INTERFACE_CHECKS = {
     ),
 }
 EXPECTED_TOP_X_CHECKS = {3: ("X_ab",), 5: ("X_ab", "X_cd")}
+EXPECTED_STEANE_VERIFICATION_READOUT_SITES = {
+    11: {
+        "Z0145": 6,
+        "Z0235": 7,
+        "X0235": 7,
+        "Z0246": 2,
+        "X0246": 2,
+    },
+    14: {
+        "Z0145": 8,
+        "Z0235": 12,
+        "X0235": 11,
+        "Z0246": 10,
+        "X0246": 9,
+    },
+}
+EXPECTED_STEANE_BELL_PARTNER_FLAG_SITES = {
+    "Z0145": 7,
+    "Z0235": 11,
+    "X0235": 12,
+    "Z0246": 9,
+    "X0246": 10,
+}
 
 LOGICAL_EXPECTATIONS = {
     "0": {"X": 0.0, "Y": 0.0, "Z": 1.0},
@@ -44,7 +66,8 @@ LOGICAL_EXPECTATIONS = {
 
 
 @pytest.mark.parametrize(("module", "build"), TARGETS)
-def test_measurements_follow_hirano_merge_table(module, build) -> None:
+@pytest.mark.parametrize("patch_sites", [11, 14])
+def test_measurements_follow_hirano_merge_table(module, build, patch_sites: int) -> None:
     """Verify the built circuit against every row of the merge table.
 
     Each of the three merge rounds must measure interface checks first, all
@@ -58,6 +81,7 @@ def test_measurements_follow_hirano_merge_table(module, build) -> None:
     the hook-safe ``3 -> b -> 5 -> c`` CNOT order at either distance.
     """
     spec = module.TRANSFER_SPEC
+    patch_spec = common.resolve_steane_transfer_patch_spec(patch_sites)
     expected_interface_checks = EXPECTED_INTERFACE_CHECKS[spec.distance]
     expected_top_x_checks = EXPECTED_TOP_X_CHECKS[spec.distance]
     expected_color_checks = (
@@ -81,9 +105,15 @@ def test_measurements_follow_hirano_merge_table(module, build) -> None:
     assert common.FINAL_X_VERIFICATION_CHECKS == expected_final_x_checks
 
     # Index every physical measurement by semantic family and label.
-    circuit = build(injected_state="0", include_cultivation=False, add_barriers=False)
+    circuit = build(
+        patch_sites=patch_sites,
+        injected_state="0",
+        include_cultivation=False,
+        add_barriers=False,
+    )
     labels = common.transfer_measurement_labels(
         spec,
+        patch_sites=patch_sites,
         include_cultivation=False,
         surface_readout_basis=None,
     )
@@ -124,11 +154,20 @@ def test_measurements_follow_hirano_merge_table(module, build) -> None:
         color_positions = tuple(
             positions["steane_verify"][prefix + check_name] for check_name in color_checks
         )
+        bell_partner_flag_positions = (
+            tuple(
+                positions["steane_bell_partner_flags"][prefix + check_name + "_bell_partner_flag"]
+                for check_name in color_checks
+            )
+            if patch_sites == 14
+            else ()
+        )
+        all_color_positions = (*color_positions, *bell_partner_flag_positions)
 
         assert previous_round_end < min(interface_positions)
         assert max(interface_positions) < min(surface_positions)
-        if color_positions:
-            assert max(surface_positions) < min(color_positions)
+        if all_color_positions:
+            assert max(surface_positions) < min(all_color_positions)
         assert tuple(
             qubit_names[circuit.data[position].qubits[0]] for position in interface_positions
         ) == tuple(f"zz_{check_name[1:].lower()}" for check_name, _, _ in expected_interface_checks)
@@ -146,14 +185,34 @@ def test_measurements_follow_hirano_merge_table(module, build) -> None:
         assert tuple(
             qubit_names[circuit.data[position].qubits[0]] for position in color_positions
         ) == tuple(
-            common.HIRANO_PATCH_LABEL_BY_GOOGLE_SITE[
-                PATCH_11_SITE_STABILIZER_ANCILLA_SITES[
-                    common.STEANE_MERGE_VERIFICATION_STABILIZER_INDICES[check_name]
-                ]
+            patch_spec.site_labels[
+                EXPECTED_STEANE_VERIFICATION_READOUT_SITES[patch_sites][check_name]
             ]
             for check_name in color_checks
         )
-        previous_round_end = max((*surface_positions, *color_positions))
+        if patch_sites == 14:
+            assert tuple(
+                qubit_names[circuit.data[position].qubits[0]]
+                for position in bell_partner_flag_positions
+            ) == tuple(
+                patch_spec.site_labels[EXPECTED_STEANE_BELL_PARTNER_FLAG_SITES[check_name]]
+                for check_name in color_checks
+            )
+            for check_name, verification_position, flag_position in zip(
+                color_checks,
+                color_positions,
+                bell_partner_flag_positions,
+                strict=True,
+            ):
+                if check_name.startswith("X"):
+                    assert verification_position < flag_position
+                elif check_name.startswith("Z"):
+                    assert flag_position < verification_position
+                else:
+                    raise AssertionError(f"unsupported Steane check {check_name!r}")
+        else:
+            assert "steane_bell_partner_flags" not in positions
+        previous_round_end = max((*surface_positions, *all_color_positions))
 
     # Verify the alternating mixed-code path used to suppress Z35bc hooks.
     z35bc_ancilla = next(register[0] for register in circuit.qregs if register.name == "zz_35bc")
@@ -194,7 +253,12 @@ def test_measurements_follow_hirano_merge_table(module, build) -> None:
 
 
 @pytest.mark.parametrize(("module", "build"), TARGETS)
-def test_transferred_pauli_expectation_values_without_cultivation(module, build) -> None:
+@pytest.mark.parametrize("patch_sites", [11, 14])
+def test_transferred_pauli_expectation_values_without_cultivation(
+    module,
+    build,
+    patch_sites: int,
+) -> None:
     """Check all X/Y/Z expectations of all six Pauli eigenstates.
 
     Raw surface readout is interpreted only after the teleportation and
@@ -209,6 +273,7 @@ def test_transferred_pauli_expectation_values_without_cultivation(module, build)
     )
     circuits = [
         build(
+            patch_sites=patch_sites,
             injected_state=state,
             include_cultivation=False,
             surface_readout_basis=basis,
@@ -231,6 +296,7 @@ def test_transferred_pauli_expectation_values_without_cultivation(module, build)
         for bitstring, count in counts.items():
             measurements = module.parse_transfer_measurements(
                 bitstring,
+                patch_sites=patch_sites,
                 include_cultivation=False,
                 surface_readout_basis=basis,
             )
@@ -244,7 +310,8 @@ def test_transferred_pauli_expectation_values_without_cultivation(module, build)
         assert expectation == pytest.approx(expected, abs=0.2)
 
 
-def test_cultivated_t_state_pauli_expectation_values() -> None:
+@pytest.mark.parametrize("patch_sites", [11, 14])
+def test_cultivated_t_state_pauli_expectation_values(patch_sites: int) -> None:
     """Check the non-Clifford T-state Bloch vector after cultivation and transfer.
 
     This keeps the default Qiskit path covered in addition to the six exact
@@ -254,6 +321,7 @@ def test_cultivated_t_state_pauli_expectation_values() -> None:
     expected_by_basis = {"X": 1 / math.sqrt(2), "Y": 1 / math.sqrt(2), "Z": 0.0}
     circuits = [
         d3.build_steane_to_rotated_d3_lattice_surgery_circuit(
+            patch_sites=patch_sites,
             injected_state="T",
             include_cultivation=True,
             surface_readout_basis=basis,
@@ -276,6 +344,7 @@ def test_cultivated_t_state_pauli_expectation_values() -> None:
         for bitstring, count in counts.items():
             measurements = d3.parse_transfer_measurements(
                 bitstring,
+                patch_sites=patch_sites,
                 include_cultivation=True,
                 surface_readout_basis=basis,
             )

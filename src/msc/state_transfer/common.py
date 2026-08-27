@@ -17,11 +17,18 @@ from msc.decoding.pauli_frame import PauliFrame
 from msc.decoding.stabilizer_frame import StabilizerFrame
 from msc.rotated_surface_code import common as surface_common
 from msc.rotated_surface_code.decoding.decoder import SpaceTimeRotatedDecoder
-from msc.steane_code.decoding.decoder import X_STABILIZER_LABELS, Z_STABILIZER_LABELS
+from msc.steane_code.state_injection_common import (
+    NUM_QUBITS_PATCH_11_SITES,
+    NUM_QUBITS_PATCH_14_SITES,
+    PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES,
+    PATCH_14_SITE_HELPER_SITES,
+    post_injection_qed_stabilizer_labels,
+)
 from msc.utils.circuit_common import resolve_logical_measurement_terms
 from msc.utils.normalize import normalize_pauli_char
 
 SurfaceReadoutBasis = Literal["X", "Y", "Z"]
+SteanePatchSites = Literal[11, 14]
 LATTICE_SURGERY_ROUNDS = 3
 MergedBoundaryCheck = tuple[str, tuple[str, ...], tuple[str, ...]]
 CircuitAppender = Callable[..., None]
@@ -35,14 +42,20 @@ HIRANO_STEANE_DATA_ORDER: tuple[str, ...] = ("0", "1", "2", "3", "4", "5", "6")
 HIRANO_STEANE_GEOMETRIC_ORDER: tuple[str, ...] = ("6", "4", "0", "2", "1", "5", "3")
 HIRANO_STEANE_LOGICAL_X: tuple[str, ...] = ("1", "4", "6")
 HIRANO_STEANE_LOGICAL_Z: tuple[str, ...] = ("1", "5", "3")
-POST_INJECTION_QED_STABILIZER_LABELS: tuple[str, ...] = X_STABILIZER_LABELS + Z_STABILIZER_LABELS
 
-STEANE_MERGE_VERIFICATION_STABILIZER_INDICES: dict[str, int] = {
+STEANE_11_SITE_MERGE_VERIFICATION_STABILIZER_INDICES: dict[str, int] = {
     "Z0145": 1,
     "Z0235": 2,
     "X0235": 2,
     "Z0246": 0,
     "X0246": 0,
+}
+STEANE_14_SITE_MERGE_VERIFICATION_STABILIZER_INDICES: dict[str, int] = {
+    "Z0145": 0,
+    "Z0235": 1,
+    "X0235": 1,
+    "Z0246": 2,
+    "X0246": 2,
 }
 STEANE_MERGE_VERIFICATION_ROUNDS: tuple[tuple[str, ...], ...] = (
     ("Z0145", "Z0235", "X0235", "Z0246", "X0246"),
@@ -81,6 +94,74 @@ HIRANO_PATCH_LABEL_BY_GOOGLE_SITE: dict[int, str] = {
     **GOOGLE_SITE_TO_HIRANO_LABEL,
     **{site: label for label, site in STEANE_HELPER_LABEL_TO_GOOGLE_SITE.items()},
 }
+
+
+@dataclass(frozen=True)
+class SteaneTransferPatchSpec:
+    """Patch-dependent Steane geometry and measurement layout for transfer."""
+
+    site_labels: tuple[str, ...]
+    data_sites_in_hirano_order: tuple[int, ...]
+    encoder_flag_labels: tuple[str, ...]
+    qed_labels: tuple[str, ...]
+    cultivation_labels: tuple[str, ...]
+    merge_verification_stabilizer_indices: Mapping[str, int]
+    merge_bell_partner_flag_labels: tuple[str, ...]
+
+
+def resolve_steane_transfer_patch_spec(
+    patch_sites: SteanePatchSites,
+) -> SteaneTransferPatchSpec:
+    """Resolve every transfer contract that differs between Steane patches."""
+    if patch_sites == NUM_QUBITS_PATCH_11_SITES:
+        return SteaneTransferPatchSpec(
+            site_labels=tuple(
+                HIRANO_PATCH_LABEL_BY_GOOGLE_SITE[site] for site in range(NUM_QUBITS_PATCH_11_SITES)
+            ),
+            data_sites_in_hirano_order=tuple(
+                HIRANO_LABEL_TO_GOOGLE_SITE[label] for label in HIRANO_STEANE_DATA_ORDER
+            ),
+            encoder_flag_labels=("enc_f1", "enc_f2", "enc_f6", "enc_f7"),
+            qed_labels=post_injection_qed_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES),
+            cultivation_labels=(
+                "root_x",
+                "cult_f1",
+                "cult_f2",
+                "cult_f6",
+                "cult_f7",
+            ),
+            merge_verification_stabilizer_indices=(
+                STEANE_11_SITE_MERGE_VERIFICATION_STABILIZER_INDICES
+            ),
+            merge_bell_partner_flag_labels=(),
+        )
+    elif patch_sites == NUM_QUBITS_PATCH_14_SITES:
+        return SteaneTransferPatchSpec(
+            site_labels=(
+                *(str(site) for site in range(7)),
+                *(f"h{site}" for site in PATCH_14_SITE_HELPER_SITES),
+                "d2_prime",
+            ),
+            data_sites_in_hirano_order=tuple(range(7)),
+            encoder_flag_labels=tuple(
+                f"enc_h{site}" for site in PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES
+            ),
+            qed_labels=post_injection_qed_stabilizer_labels(NUM_QUBITS_PATCH_14_SITES),
+            cultivation_labels=(
+                "root_x",
+                *(f"cult_f{site}" for site in PATCH_14_SITE_HELPER_SITES),
+            ),
+            merge_verification_stabilizer_indices=(
+                STEANE_14_SITE_MERGE_VERIFICATION_STABILIZER_INDICES
+            ),
+            merge_bell_partner_flag_labels=tuple(
+                f"round{round_index + 1}_{check_name}_bell_partner_flag"
+                for round_index, round_checks in enumerate(STEANE_MERGE_VERIFICATION_ROUNDS)
+                for check_name in round_checks
+            ),
+        )
+    else:
+        raise ValueError("patch_sites must be 11 or 14.")
 
 
 @dataclass(frozen=True)
@@ -152,6 +233,7 @@ def parity(bits: Mapping[str, int], labels: Sequence[str]) -> int:
 def transfer_measurement_labels(
     spec: SurfaceCodeTransferSpec,
     *,
+    patch_sites: SteanePatchSites = 14,
     include_cultivation: bool,
     surface_readout_basis: SurfaceReadoutBasis | None,
     include_post_transfer_stabilizer_rounds: bool = False,
@@ -163,18 +245,13 @@ def transfer_measurement_labels(
     positions because physical append order interleaves families within every
     merged round.
     """
+    patch_spec = resolve_steane_transfer_patch_spec(patch_sites)
     labels = {
-        "enc_flags": ("enc_f1", "enc_f2", "enc_f6", "enc_f7"),
-        "steane_qed": POST_INJECTION_QED_STABILIZER_LABELS,
+        "enc_flags": patch_spec.encoder_flag_labels,
+        "steane_qed": patch_spec.qed_labels,
     }
     if include_cultivation:
-        labels["cult"] = (
-            "root_x",
-            "helper_h1",
-            "helper_h2",
-            "helper_h6",
-            "helper_h7",
-        )
+        labels["cult"] = patch_spec.cultivation_labels
     labels.update(
         surface_init_z=spec.z_labels,
         interface_z=surface_common.repeated_round_labels(
@@ -191,6 +268,8 @@ def transfer_measurement_labels(
         steane_x=HIRANO_STEANE_DATA_ORDER,
         surface_x_recovery=spec.top_x_recovery_labels,
     )
+    if patch_spec.merge_bell_partner_flag_labels:
+        labels["steane_bell_partner_flags"] = patch_spec.merge_bell_partner_flag_labels
     if include_post_transfer_stabilizer_rounds:
         labels.update(
             post_transfer_surface_z=surface_common.repeated_round_labels(
@@ -250,17 +329,17 @@ def interpret_transfer_measurements(
         "merged_surface_z_rounds": merged_surface_z_rounds,
         "merged_surface_x_rounds": merged_surface_x_rounds,
     }
+    if "steane_bell_partner_flags" in bits:
+        parsed["steane_bell_partner_flags"] = bits["steane_bell_partner_flags"]
     if include_cultivation:
         parsed["cultivation"] = bits["cult"]
     if include_post_transfer_stabilizer_rounds:
-        post_transfer_z_rounds = _round_bits(
+        parsed["post_transfer_surface_z_rounds"] = _round_bits(
             bits["post_transfer_surface_z"], spec.z_labels, rounds=spec.distance
         )
-        post_transfer_x_rounds = _round_bits(
+        parsed["post_transfer_surface_x_rounds"] = _round_bits(
             bits["post_transfer_surface_x"], spec.x_labels, rounds=spec.distance
         )
-        parsed["post_transfer_surface_z_rounds"] = post_transfer_z_rounds
-        parsed["post_transfer_surface_x_rounds"] = post_transfer_x_rounds
     if surface_readout_basis is not None:
         parsed["surface_logical_readout"] = bits[f"surface_logical_{surface_readout_basis.lower()}"]
 
@@ -305,8 +384,8 @@ def interpret_transfer_measurements(
                 "x": post_transfer_frame.advance(x_round),
             }
             for z_round, x_round in zip(
-                post_transfer_z_rounds,
-                post_transfer_x_rounds,
+                parsed["post_transfer_surface_z_rounds"],
+                parsed["post_transfer_surface_x_rounds"],
                 strict=True,
             )
         ]
@@ -393,9 +472,9 @@ def transfer_acceptance_succeeds(measurements: dict[str, object]) -> bool:
     """Apply protocol postselection before surface-code correction.
 
     Encoder flags, post-injection QED, optional cultivation, color-code
-    verification, final demolition checks, and interface changes all cause
-    rejection. Surface detector events do not: their spacetime history is
-    decoded into the Pauli frame.
+    verification and its 14-site Bell-partner flags, final demolition checks,
+    and interface changes all cause rejection. Surface detector events do not:
+    their spacetime history is decoded into the Pauli frame.
     """
     return not any(
         (
@@ -403,6 +482,7 @@ def transfer_acceptance_succeeds(measurements: dict[str, object]) -> bool:
             *measurements["post_injection_qed"].values(),
             *measurements.get("cultivation", {}).values(),
             *measurements["steane_verification"].values(),
+            *measurements.get("steane_bell_partner_flags", {}).values(),
             *measurements["final_x_verification_checks"].values(),
         )
     ) and merged_boundary_checks_stable(measurements)

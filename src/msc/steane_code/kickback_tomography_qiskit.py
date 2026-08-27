@@ -1,7 +1,7 @@
 """Kickback tomography helpers for the Steane-code cultivation patch.
 
-This module builds the Fig. 3-style kickback tomography (KT) circuit from
-Rosenfeld et al. using the repo's existing 11-site Steane patch primitives.
+This module builds Fig. 3-style kickback tomography (KT) circuits from
+Rosenfeld et al. using the repo's 11-site and 14-site Steane patch primitives.
 The KT measurement reuses cultivation rounds as repeated logical H_XY-axis
 measurements: one optional preparation round, one tomography measurement round,
 and one consistency-check round.
@@ -9,102 +9,44 @@ and one consistency-check round.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Literal
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit.transpiler import PassManager
 
 from msc.decoding.measurement_frame import MeasurementFrame
+from msc.steane_code.kickback_tomography_common import (
+    KT_DEFAULT_QED_CYCLE_INDICES,
+    KT_STABILIZER_BITS_PER_CYCLE,
+    FinalStabilizerMode,
+    KickbackCultivationRoundBits,
+    KickbackTomographyBitLayout,
+    KickbackTomographyPatchSites,
+    KickbackTomographyPatchSpec,
+    KickbackTomographySummary,
+    cultivation_round_bits_from_positions,
+    final_stabilizer_bit_count,
+    normalize_qed_cycle_indices,
+    resolve_kickback_tomography_patch_spec,
+)
 from msc.steane_code.magic_state_cultivation_qiskit import (
-    CULTIVATION_MEASUREMENTS_PER_ROUND,
-    append_h_xy_projection_round,
+    append_11_site_patch_h_xy_projection_round,
+    append_14_site_patch_h_xy_projection_round,
 )
 from msc.steane_code.state_injection_qiskit import (
-    PATCH_11_SITE_HELPER_SITES,
     InjectedStateName,
     append_11_site_patch_rosenfeld_encoder,
     append_11_site_patch_stabilizer_measurement,
+    append_14_site_patch_abstract_routed_encoder,
+    append_14_site_patch_superdense_stabilizer_measurement,
 )
 from msc.utils.circuit_qiskit import RemoveResetOperations
 from msc.utils.normalize import qiskit_bit_value
 
-FinalStabilizerMode = Literal["X", "Z", "BOTH", "NONE"]
-
-KT_STABILIZER_BITS_PER_CYCLE = 6
-KT_DEFAULT_QED_CYCLE_INDICES: tuple[int, ...] = (1, 3)
-KT_FULL_QED_CYCLE_INDICES: tuple[int, ...] = (1, 2, 3, 4)
-_VALID_QED_CYCLE_INDICES = frozenset(KT_FULL_QED_CYCLE_INDICES)
-
-
 # =============================================================================
 # Classical-bit layout and result summaries
 # =============================================================================
-
-
-@dataclass(frozen=True)
-class KickbackCultivationRoundBits:
-    """Classical bit positions for one cultivation round.
-
-    Positions follow Qiskit's counts convention: bit position 0 is the
-    rightmost bit in a flattened counts key.
-    """
-
-    folded_root: int
-    flag_checks: tuple[int, int, int, int]
-
-    @property
-    def all_positions(self) -> tuple[int, ...]:
-        """Return the folded root and all helper-measurement positions."""
-
-        return (self.folded_root, *self.flag_checks)
-
-    @property
-    def flag_positions(self) -> tuple[int, int, int]:
-        """Cultivation-flag bits that must be zero in a retained shot."""
-
-        return self.flag_checks[:3]
-
-    @property
-    def folded_root_double_check(self) -> int:
-        """Helper-site-7 bit that double-checks the folded root."""
-
-        return self.flag_checks[3]
-
-
-@dataclass(frozen=True)
-class KickbackTomographyBitLayout:
-    """Classical-bit positions used by a KT experiment."""
-
-    preparation_round: KickbackCultivationRoundBits | None
-    tomography_measure_round: KickbackCultivationRoundBits
-    tomography_check_round: KickbackCultivationRoundBits
-    qed_cycles: tuple[tuple[int, ...], ...]
-    qed_cycle_indices: tuple[int, ...]
-    final_stabilizers: tuple[int, ...]
-    encoder_flags: tuple[int, ...] = ()
-    no_reset: bool = False
-
-    @property
-    def detector_positions(self) -> tuple[int, ...]:
-        """Bits that must be zero for KT postselection.
-
-        The tomography measurement root is the logical outcome, so it is not a
-        detector. In KT rounds, the helper-site-7 bit tracks the folded root
-        and is handled separately.
-        """
-
-        positions: list[int] = []
-        positions.extend(self.encoder_flags)
-        if self.preparation_round is not None:
-            positions.extend(self.preparation_round.all_positions)
-        positions.extend(self.tomography_measure_round.flag_positions)
-        positions.extend(self.tomography_check_round.flag_positions)
-        for cycle in self.qed_cycles:
-            positions.extend(cycle)
-        positions.extend(self.final_stabilizers)
-        return tuple(positions)
 
 
 @dataclass(frozen=True)
@@ -115,80 +57,10 @@ class KickbackTomographyExperiment:
     layout: KickbackTomographyBitLayout
 
 
-@dataclass(frozen=True)
-class KickbackTomographySummary:
-    """Shot counts after KT postselection and logical readout."""
-
-    total_shots: int
-    retained_shots: int
-    rejected_shots: int
-    logical_success_shots: int
-    logical_error_shots: int
-    measure_check_disagreement_shots: int
-
-    @property
-    def retainment_rate(self) -> float:
-        """Fraction of all shots retained by KT postselection."""
-
-        if self.total_shots == 0:
-            return float("nan")
-        return self.retained_shots / self.total_shots
-
-    @property
-    def logical_error_probability(self) -> float:
-        """Conditional KT logical error probability among retained shots."""
-
-        if self.retained_shots == 0:
-            return float("nan")
-        return self.logical_error_shots / self.retained_shots
-
-    @property
-    def fidelity_lower_bound(self) -> float:
-        """Lower bound on prepared-state fidelity inferred from KT."""
-
-        if self.retained_shots == 0:
-            return float("nan")
-        return 1.0 - self.logical_error_probability
-
-
-# =============================================================================
-# KT circuit builder
-# =============================================================================
-
-
-def cultivation_round_bits_from_positions(
-    positions: Sequence[int],
-) -> KickbackCultivationRoundBits:
-    if len(positions) < CULTIVATION_MEASUREMENTS_PER_ROUND:
-        raise ValueError("cultivation register must contain at least 5 bit positions.")
-    return KickbackCultivationRoundBits(
-        folded_root=positions[0],
-        flag_checks=(positions[1], positions[2], positions[3], positions[4]),
-    )
-
-
-def normalize_qed_cycle_indices(qed_cycle_indices: Iterable[int]) -> tuple[int, ...]:
-    indices = tuple(qed_cycle_indices)
-    if any(index not in _VALID_QED_CYCLE_INDICES for index in indices):
-        raise ValueError("qed_cycle_indices may only contain 1, 2, 3, and 4.")
-    if len(set(indices)) != len(indices):
-        raise ValueError("qed_cycle_indices must not contain duplicates.")
-    return tuple(sorted(indices))
-
-
-def final_stabilizer_bit_count(mode: FinalStabilizerMode) -> int:
-    if mode == "BOTH":
-        return KT_STABILIZER_BITS_PER_CYCLE
-    if mode in {"X", "Z"}:
-        return KT_STABILIZER_BITS_PER_CYCLE // 2
-    if mode == "NONE":
-        return 0
-    raise ValueError("final_stabilizer_basis must be 'X', 'Z', 'BOTH', or 'NONE'.")
-
-
 def build_kickback_tomography_experiment(
     injected_state: InjectedStateName | None = None,
     *,
+    patch_sites: KickbackTomographyPatchSites = 14,
     injection_azimuth_angle: float | None = None,
     include_prep_cultivation: bool = True,
     measure_encoder_flags: bool = False,
@@ -197,9 +69,9 @@ def build_kickback_tomography_experiment(
     no_reset: bool = False,
     add_barriers: bool = True,
 ) -> KickbackTomographyExperiment:
-    """Build a Steane-patch ``H_XY`` kickback-tomography experiment.
+    """Build an H_XY kickback-tomography experiment, defaulting to 14 sites.
 
-    The protocol order is
+    The shared protocol order is
 
     ``encode -> QED1 -> [prepare cultivation] -> QED2 -> KT measure
     -> QED3 -> KT check -> QED4 -> final stabilizer check``.
@@ -210,10 +82,9 @@ def build_kickback_tomography_experiment(
     injected. Every cultivation and KT round measures
     ``H_XY = (X + Y) / sqrt(2)``.
 
-    When ``measure_encoder_flags`` is true, the four Rosenfeld-encoder flag
-    qubits are measured into a dedicated ``encoder_flags`` register
-    immediately after encoding. KT postselection then requires each flag to be
-    zero, flagging encoding faults.
+    The 11-site path uses the Rosenfeld encoder, and the 14-site path uses the
+    abstract-routed encoder. When ``measure_encoder_flags`` is true, their
+    available flag qubits are measured after encoding and postselected to zero.
 
     ``qed_cycle_indices`` uses the paper's one-based numbering. The default
     schedule is ``KT_DEFAULT_QED_CYCLE_INDICES = (1, 3)``; pass
@@ -225,29 +96,34 @@ def build_kickback_tomography_experiment(
 
     ``final_stabilizer_basis="X"`` matches the final detector block drawn in
     Fig. 3. ``"Z"`` selects the equivalent CSS basis, ``"BOTH"`` measures all
-    six stabilizers, and ``"NONE"`` omits the final check.
+    six stabilizers, and ``"NONE"`` omits the final check. A 14-site X- or
+    Z-only final block also records and postselects the three default
+    Bell-partner flags.
 
-    When ``no_reset`` is true, a final transpiler pass removes every reset
-    operation for hardware without reset support. The returned bit layout
-    records this policy so KT postprocessing expects each folded-root
-    double-check to be zero rather than to repeat its folded-root outcome.
+    When ``no_reset`` is true, a final transpiler pass removes every reset for
+    hardware without reset support. For the 11-site patch, postprocessing uses
+    a measurement frame to compare the repeated site-7 check with its root.
+    This capability switch does not control the 14-site KT root: that root is
+    always preserved, even when ``no_reset`` is false, because both outcomes
+    are tomography data. Setting false merely leaves other protocol resets in
+    place.
     """
+    spec = resolve_kickback_tomography_patch_spec(patch_sites)
 
     if injected_state is not None and injection_azimuth_angle is not None:
         raise ValueError(
             "injected_state and injection_azimuth_angle are mutually exclusive; supply at most one."
         )
-
     qed_indices = normalize_qed_cycle_indices(qed_cycle_indices)
 
-    patch = QuantumRegister(11, "patch")
+    patch = QuantumRegister(spec.patch_sites, "patch")
     encoder_flags_creg = (
-        ClassicalRegister(len(PATCH_11_SITE_HELPER_SITES), "enc_flags")
-        if measure_encoder_flags
+        ClassicalRegister(spec.encoder_flag_count, "enc_flags")
+        if measure_encoder_flags and spec.encoder_flag_count
         else None
     )
     prep_creg = (
-        ClassicalRegister(CULTIVATION_MEASUREMENTS_PER_ROUND, "prep_cult")
+        ClassicalRegister(spec.cultivation_measurement_count, "prep_cult")
         if include_prep_cultivation
         else None
     )
@@ -255,10 +131,21 @@ def build_kickback_tomography_experiment(
         index: ClassicalRegister(KT_STABILIZER_BITS_PER_CYCLE, f"qed_{index}")
         for index in qed_indices
     }
-    kt_measure_creg = ClassicalRegister(CULTIVATION_MEASUREMENTS_PER_ROUND, "kt_measure")
-    kt_check_creg = ClassicalRegister(CULTIVATION_MEASUREMENTS_PER_ROUND, "kt_check")
+    kt_measure_creg = ClassicalRegister(
+        spec.cultivation_measurement_count,
+        "kt_measure",
+    )
+    kt_check_creg = ClassicalRegister(
+        spec.cultivation_measurement_count,
+        "kt_check",
+    )
     final_bit_count = final_stabilizer_bit_count(final_stabilizer_basis)
     final_creg = ClassicalRegister(final_bit_count, "final_stab") if final_bit_count else None
+    final_bell_partner_creg = (
+        ClassicalRegister(KT_STABILIZER_BITS_PER_CYCLE // 2, "final_bell_partner_flags")
+        if spec.patch_sites == 14 and final_stabilizer_basis in ("X", "Z")
+        else None
+    )
 
     classical_registers: list[ClassicalRegister] = []
     if encoder_flags_creg is not None:
@@ -269,12 +156,15 @@ def build_kickback_tomography_experiment(
     classical_registers.extend((kt_measure_creg, kt_check_creg))
     if final_creg is not None:
         classical_registers.append(final_creg)
+    if final_bell_partner_creg is not None:
+        classical_registers.append(final_bell_partner_creg)
 
     circuit = QuantumCircuit(patch, *classical_registers)
     patch_qubits = list(patch)
 
-    append_11_site_patch_rosenfeld_encoder(
+    _append_patch_encoder(
         circuit,
+        spec,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
         injection_azimuth_angle=injection_azimuth_angle,
@@ -282,66 +172,68 @@ def build_kickback_tomography_experiment(
         add_barriers=add_barriers,
     )
 
-    if 1 in qed_cregs:
-        append_11_site_patch_stabilizer_measurement(
+    def append_qed_cycle(index: int) -> None:
+        _append_patch_stabilizer_measurement(
             circuit,
+            spec,
             patch_qubits=patch_qubits,
-            classical_bits=list(qed_cregs[1]),
+            classical_bits=list(qed_cregs[index]),
+            basis="BOTH",
             add_barriers=add_barriers,
         )
+
+    if 1 in qed_cregs:
+        append_qed_cycle(1)
 
     if include_prep_cultivation:
         assert prep_creg is not None
-        append_h_xy_projection_round(
+        # running_kt=False: its folded-root result must be postselected to 0
+        # for preparation projection.
+        _append_patch_projection_round(
             circuit,
+            spec,
             patch_qubits=patch_qubits,
             classical_bits=list(prep_creg),
             add_barriers=add_barriers,
+            running_kt=False,
         )
 
     if 2 in qed_cregs:
-        append_11_site_patch_stabilizer_measurement(
-            circuit,
-            patch_qubits=patch_qubits,
-            classical_bits=list(qed_cregs[2]),
-            add_barriers=add_barriers,
-        )
+        append_qed_cycle(2)
 
-    append_h_xy_projection_round(
+    _append_patch_projection_round(
         circuit,
+        spec,
         patch_qubits=patch_qubits,
         classical_bits=list(kt_measure_creg),
         add_barriers=add_barriers,
+        running_kt=True,
     )
 
     if 3 in qed_cregs:
-        append_11_site_patch_stabilizer_measurement(
-            circuit,
-            patch_qubits=patch_qubits,
-            classical_bits=list(qed_cregs[3]),
-            add_barriers=add_barriers,
-        )
+        append_qed_cycle(3)
 
-    append_h_xy_projection_round(
+    _append_patch_projection_round(
         circuit,
+        spec,
         patch_qubits=patch_qubits,
         classical_bits=list(kt_check_creg),
         add_barriers=add_barriers,
+        running_kt=True,
     )
 
     if 4 in qed_cregs:
-        append_11_site_patch_stabilizer_measurement(
-            circuit,
-            patch_qubits=patch_qubits,
-            classical_bits=list(qed_cregs[4]),
-            add_barriers=add_barriers,
-        )
+        append_qed_cycle(4)
 
     if final_creg is not None:
-        append_11_site_patch_stabilizer_measurement(
+        _append_patch_stabilizer_measurement(
             circuit,
+            spec,
             patch_qubits=patch_qubits,
             classical_bits=list(final_creg),
+            bell_partner_flag_classical_bits=(
+                list(final_bell_partner_creg) if final_bell_partner_creg is not None else None
+            ),
             basis=final_stabilizer_basis,
             add_barriers=add_barriers,
         )
@@ -352,6 +244,8 @@ def build_kickback_tomography_experiment(
     preparation_bits = (
         cultivation_round_bits_from_positions(
             tuple(circuit.find_bit(bit).index for bit in prep_creg),
+            root_check_index=spec.cultivation_root_check_index,
+            reset_before_root_check=spec.patch_sites == 11 and not no_reset,
         )
         if prep_creg is not None
         else None
@@ -365,9 +259,13 @@ def build_kickback_tomography_experiment(
         preparation_round=preparation_bits,
         tomography_measure_round=cultivation_round_bits_from_positions(
             tuple(circuit.find_bit(bit).index for bit in kt_measure_creg),
+            root_check_index=spec.cultivation_root_check_index,
+            reset_before_root_check=spec.patch_sites == 11 and not no_reset,
         ),
         tomography_check_round=cultivation_round_bits_from_positions(
             tuple(circuit.find_bit(bit).index for bit in kt_check_creg),
+            root_check_index=spec.cultivation_root_check_index,
+            reset_before_root_check=spec.patch_sites == 11 and not no_reset,
         ),
         qed_cycles=qed_positions,
         qed_cycle_indices=qed_indices,
@@ -376,12 +274,17 @@ def build_kickback_tomography_experiment(
             if final_creg is not None
             else ()
         ),
+        final_bell_partner_flags=(
+            tuple(circuit.find_bit(bit).index for bit in final_bell_partner_creg)
+            if final_bell_partner_creg is not None
+            else ()
+        ),
         encoder_flags=encoder_flag_positions,
-        no_reset=no_reset,
     )
     circuit.metadata = {
         **(circuit.metadata or {}),
         "kickback_tomography_bit_layout": {
+            "patch_sites": spec.patch_sites,
             "preparation_round": (
                 layout.preparation_round.all_positions if layout.preparation_round else None
             ),
@@ -389,6 +292,7 @@ def build_kickback_tomography_experiment(
             "tomography_check_round": layout.tomography_check_round.all_positions,
             "qed_cycles": layout.qed_cycles,
             "final_stabilizers": layout.final_stabilizers,
+            "final_bell_partner_flags": layout.final_bell_partner_flags,
             "encoder_flags": layout.encoder_flags,
             "qed_cycle_indices": qed_indices,
             "final_stabilizer_basis": final_stabilizer_basis,
@@ -400,80 +304,134 @@ def build_kickback_tomography_experiment(
     return KickbackTomographyExperiment(circuit=circuit, layout=layout)
 
 
+def _append_patch_encoder(
+    circuit: QuantumCircuit,
+    spec: KickbackTomographyPatchSpec,
+    *,
+    patch_qubits: list,
+    injected_state: InjectedStateName | None,
+    injection_azimuth_angle: float | None,
+    flag_classical_bits: list | None,
+    add_barriers: bool,
+) -> None:
+    """Append the selected patch encoder and optional flag measurements."""
+    if spec.patch_sites == 11:
+        append_11_site_patch_rosenfeld_encoder(
+            circuit,
+            patch_qubits=patch_qubits,
+            injected_state=injected_state,
+            injection_azimuth_angle=injection_azimuth_angle,
+            flag_classical_bits=flag_classical_bits,
+            add_barriers=add_barriers,
+        )
+    elif spec.patch_sites == 14:
+        append_14_site_patch_abstract_routed_encoder(
+            circuit,
+            patch_qubits=patch_qubits,
+            injected_state=injected_state,
+            injection_azimuth_angle=injection_azimuth_angle,
+            flag_classical_bits=flag_classical_bits,
+            add_barriers=add_barriers,
+        )
+    else:
+        raise ValueError(f"Unsupported KT patch_sites: {spec.patch_sites}.")
+
+
+def _append_patch_stabilizer_measurement(
+    circuit: QuantumCircuit,
+    spec: KickbackTomographyPatchSpec,
+    *,
+    patch_qubits: list,
+    classical_bits: list,
+    bell_partner_flag_classical_bits: list | None = None,
+    basis: FinalStabilizerMode,
+    add_barriers: bool,
+) -> None:
+    """Append one full-QED or final stabilizer measurement on the patch."""
+    if spec.patch_sites == 11:
+        append_11_site_patch_stabilizer_measurement(
+            circuit,
+            patch_qubits=patch_qubits,
+            classical_bits=classical_bits,
+            basis=basis,
+            add_barriers=add_barriers,
+        )
+    elif spec.patch_sites == 14:
+        append_14_site_patch_superdense_stabilizer_measurement(
+            circuit,
+            patch_qubits=patch_qubits,
+            classical_bits=classical_bits,
+            bell_partner_flag_classical_bits=bell_partner_flag_classical_bits,
+            basis=basis,
+            add_barriers=add_barriers,
+        )
+    else:
+        raise ValueError(f"Unsupported KT patch_sites: {spec.patch_sites}.")
+
+
+def _append_patch_projection_round(
+    circuit: QuantumCircuit,
+    spec: KickbackTomographyPatchSpec,
+    *,
+    patch_qubits: list,
+    classical_bits: list,
+    add_barriers: bool,
+    running_kt: bool,
+) -> None:
+    """Append one cultivation-derived H_XY measurement on the patch."""
+    if spec.patch_sites == 11:
+        append_11_site_patch_h_xy_projection_round(
+            circuit,
+            patch_qubits=patch_qubits,
+            classical_bits=classical_bits,
+            add_barriers=add_barriers,
+        )
+    elif spec.patch_sites == 14:
+        append_14_site_patch_h_xy_projection_round(
+            circuit,
+            patch_qubits=patch_qubits,
+            classical_bits=classical_bits,
+            add_barriers=add_barriers,
+            running_kt=running_kt,
+        )
+    else:
+        raise ValueError(f"Unsupported KT patch_sites: {spec.patch_sites}.")
+
+
 # =============================================================================
 # Counts parsing and KT estimators
 # =============================================================================
 
+
 _KT_FOLDED_MEASUREMENT_QUBIT = "folded_measurement_site_7"
 
 
-def _interpret_kickback_tomography_round(
+def _interpret_cultivation_round(
     bitstring: str,
     round_bits: KickbackCultivationRoundBits,
-    *,
-    no_reset: bool,
-) -> tuple[int, int]:
-    """Interpret one KT root and its same-qubit double-check measurement."""
+) -> tuple[int, int | None]:
+    """Return one round's root and its optional measurement-frame-corrected check.
 
+    The 14-site round has no root check. For 11 sites, a reset makes the raw
+    repeated site-7 result report the root; without reset, ``MeasurementFrame``
+    converts its raw result to the same semantic value. Each round starts a
+    fresh frame.
+    """
     measurement_frame = MeasurementFrame()
     root = measurement_frame.advance(
         _KT_FOLDED_MEASUREMENT_QUBIT,
         qiskit_bit_value(bitstring, round_bits.folded_root),
     )
-
-    # With no reset, the frame intentionally retains the root outcome: this
-    # maps the expected raw double-check 0 back to the semantic root value.
-    # With reset, clear that residual before interpreting the double-check.
-    if not no_reset:
+    if round_bits.folded_root_check is None:
+        return root, None
+    if round_bits.reset_before_root_check:
         measurement_frame.reset(_KT_FOLDED_MEASUREMENT_QUBIT)
 
-    double_check = measurement_frame.advance(
+    root_check = measurement_frame.advance(
         _KT_FOLDED_MEASUREMENT_QUBIT,
-        qiskit_bit_value(
-            bitstring,
-            round_bits.folded_root_double_check,
-        ),
+        qiskit_bit_value(bitstring, round_bits.folded_root_check),
     )
-    return root, double_check
-
-
-def kickback_tomography_shot_is_retained(
-    bitstring: str,
-    layout: KickbackTomographyBitLayout,
-    *,
-    retain_measure_check_disagreement: bool = True,
-) -> bool:
-    """Return whether one KT shot passes detector postselection.
-
-    By default, the two KT roots are not required to agree. A disagreement is
-    retained but excluded from the logical-error numerator by
-    :func:`summarize_kickback_tomography_counts`. Set
-    ``retain_measure_check_disagreement=False`` to reject disagreements.
-    """
-
-    if any(qiskit_bit_value(bitstring, position) for position in layout.detector_positions):
-        return False
-
-    measurement_round_root, measurement_round_double_check = _interpret_kickback_tomography_round(
-        bitstring,
-        layout.tomography_measure_round,
-        no_reset=layout.no_reset,
-    )
-    check_round_root, check_round_double_check = _interpret_kickback_tomography_round(
-        bitstring,
-        layout.tomography_check_round,
-        no_reset=layout.no_reset,
-    )
-    if (
-        measurement_round_double_check != measurement_round_root
-        or check_round_double_check != check_round_root
-    ):
-        return False
-
-    if not retain_measure_check_disagreement and measurement_round_root != check_round_root:
-        return False
-
-    return True
+    return root, root_check
 
 
 def summarize_kickback_tomography_counts(
@@ -482,12 +440,13 @@ def summarize_kickback_tomography_counts(
     *,
     retain_measure_check_disagreement: bool = True,
 ) -> KickbackTomographySummary:
-    """Summarize KT retainment and logical error from Qiskit counts.
+    """Postselect Qiskit counts and summarize the two KT logical readouts.
 
-    A logical-error shot has both tomography roots equal to 1 after all
-    detectors pass. If the measurement round and check round roots disagree,
-    the shot is retained in the retained-shot denominator
-    but does not contribute to the logical-error numerator.
+    Fixed-zero detector bits reject first. For the 11-site patch, each folded
+    root must also agree with its measurement-frame-corrected site-7 check;
+    the 14-site patch has no root check. Shots whose two roots disagree are
+    retained by default and reported separately. Agreement at zero is a
+    logical success; agreement at one is a logical error.
     """
 
     total_shots = sum(counts.values())
@@ -497,25 +456,38 @@ def summarize_kickback_tomography_counts(
     measure_check_disagreement_shots = 0
 
     for bitstring, count in counts.items():
-        if not kickback_tomography_shot_is_retained(
+        # Encoder flags, preparation, QED syndromes, KT flags, and the final
+        # stabilizer check are fixed-zero postselection detectors.
+        if any(qiskit_bit_value(bitstring, position) for position in layout.detector_positions):
+            continue
+
+        # The 11-site repeated-root checks have different raw behavior when
+        # resets are removed, so compare their semantic frame values. The
+        # 14-site round has no repeated-root measurement.
+        measurement_root, measurement_root_check = _interpret_cultivation_round(
             bitstring,
-            layout,
-            retain_measure_check_disagreement=retain_measure_check_disagreement,
+            layout.tomography_measure_round,
+        )
+        check_root, check_root_check = _interpret_cultivation_round(
+            bitstring,
+            layout.tomography_check_round,
+        )
+        if (measurement_root_check is not None and measurement_root_check != measurement_root) or (
+            check_root_check is not None and check_root_check != check_root
         ):
             continue
 
-        retained_shots += count
-        measurement_root = qiskit_bit_value(
-            bitstring,
-            layout.tomography_measure_round.folded_root,
-        )
-        check_root = qiskit_bit_value(
-            bitstring,
-            layout.tomography_check_round.folded_root,
-        )
+        # Root disagreement is diagnostic, not a logical error. The caller may
+        # retain it in the denominator or turn it into another rejection rule.
         if measurement_root != check_root:
-            measure_check_disagreement_shots += count
-        elif measurement_root:
+            if retain_measure_check_disagreement:
+                retained_shots += count
+                measure_check_disagreement_shots += count
+            continue
+
+        # Equal roots are the repeated KT logical outcome.
+        retained_shots += count
+        if measurement_root:
             logical_error_shots += count
         else:
             logical_success_shots += count

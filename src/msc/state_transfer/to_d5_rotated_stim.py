@@ -41,7 +41,6 @@ TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
         d5.append_logical_measurement,
     ),
 )
-MERGED_BOUNDARY_CHECKS = TRANSFER_SPEC.merged_boundary_checks
 # Hirano sets post_selection=True on these two bulk-X measurement objects. The
 # persistent flag rejects the initial known-+1 detector and all three merge-
 # round detectors in each stream; other noisy surface streams remain decodable.
@@ -55,6 +54,7 @@ HIRANO_POSTSELECTED_SURFACE_X_LABELS = ("X_bcgh", "X_fgkl")
 
 def build_steane_to_rotated_d5_lattice_surgery_circuit(
     *,
+    patch_sites: common.SteanePatchSites = 14,
     injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
@@ -70,6 +70,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     """
     return helper.build_lattice_surgery_circuit(
         TRANSFER_SPEC,
+        patch_sites=patch_sites,
         injected_state=injected_state,
         include_cultivation=include_cultivation,
         include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
@@ -95,7 +96,10 @@ def append_ideal_verification_and_readout(
     """
     readout_basis = normalize_pauli_char(readout_basis)
 
-    qubits = helper.transfer_qubits(TRANSFER_SPEC)
+    qubits = helper.transfer_qubits(
+        TRANSFER_SPEC,
+        patch_sites=transfer_layout.patch_sites,
+    )
     surface_qubits = [qubits[label] for label in TRANSFER_SPEC.surface_order]
     operations = TRANSFER_SPEC.surface_code_operations
 
@@ -162,6 +166,7 @@ def append_ideal_verification_and_readout(
 def parse_transfer_measurements(
     shot: Sequence[bool | int] | np.ndarray,
     *,
+    patch_sites: common.SteanePatchSites = 14,
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
@@ -169,6 +174,7 @@ def parse_transfer_measurements(
     return analysis.parse_transfer_measurements(
         shot,
         spec=TRANSFER_SPEC,
+        patch_sites=patch_sites,
         include_cultivation=include_cultivation,
         include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,
