@@ -349,6 +349,7 @@ def test_patch_logical_expectation(
 # -----------------------------------
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("basis", ["X", "Y", "Z"])
 @pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ENCODER_STATE_CASES)
 def test_patch_logical_via_measurement_circuit(
@@ -376,7 +377,7 @@ def test_patch_logical_via_measurement_circuit(
                 ancilla_qubit=ancilla_qubit,
                 destructive=False,
             )
-        else:
+        elif patch_spec.name == "14-site":
             append_14_site_patch_logical_measurement(
                 circuit,
                 basis,
@@ -384,11 +385,13 @@ def test_patch_logical_via_measurement_circuit(
                 ancilla_qubit=ancilla_qubit,
                 destructive=False,
             )
+        else:  # pragma: no cover - parametrization uses only supported patches.
+            raise ValueError(f"Unsupported patch: {patch_spec.name!r}.")
 
-        assert circuit[-1].name == "M"
+        assert circuit[-1].name == {"X": "MX", "Y": "MY", "Z": "M"}[basis]
         measured = _peek(
             circuit[:-1],
-            _pauli_string((ancilla_qubit,), "Z", patch_spec.num_qubits + 1),
+            _pauli_string((ancilla_qubit,), basis, patch_spec.num_qubits + 1),
         )
         if basis == "Y" and logical_y_parity_is_inverted(support):
             measured = -measured
@@ -518,8 +521,10 @@ def _build_and_run_patch_syndrome(
     measurement_start = circuit.num_measurements
     if patch_spec.name == "11-site":
         append_11_site_patch_stabilizer_measurement(circuit, add_ticks=False)
-    else:
+    elif patch_spec.name == "14-site":
         append_14_site_patch_superdense_stabilizer_measurement(circuit, add_ticks=False)
+    else:  # pragma: no cover - parametrization uses only supported patches.
+        raise ValueError(f"Unsupported patch: {patch_spec.name!r}.")
 
     syndrome = _sample(circuit, shots=1)[0, measurement_start:]
     if patch_spec.name == "11-site":
@@ -585,13 +590,15 @@ def test_patch_single_basis_stabilizer_measurement(
             basis=basis,
             add_ticks=False,
         )
-    else:
+    elif patch_spec.name == "14-site":
         append_14_site_patch_superdense_stabilizer_measurement(
             circuit,
             basis=basis,
             add_ticks=False,
         )
-    expected_measurement_count = 6 if patch_spec.name == "14-site" else 3
+    else:  # pragma: no cover - parametrization uses only supported patches.
+        raise ValueError(f"Unsupported patch: {patch_spec.name!r}.")
+    expected_measurement_count = 7 if patch_spec.name == "14-site" else 3
     assert circuit.num_measurements == expected_measurement_count
     assert circuit.num_detectors == expected_measurement_count
     assert not _sample(circuit).any()
@@ -616,7 +623,7 @@ def test_patch_selected_stabilizer_measurement(
             add_ticks=False,
         )
         unselected_ancilla_sites = {6}
-    else:
+    elif patch_spec.name == "14-site":
         append_14_site_patch_superdense_stabilizer_measurement(
             circuit,
             basis=basis,
@@ -624,6 +631,8 @@ def test_patch_selected_stabilizer_measurement(
             add_ticks=False,
         )
         unselected_ancilla_sites = {11, 12}
+    else:  # pragma: no cover - parametrization uses only supported patches.
+        raise ValueError(f"Unsupported patch: {patch_spec.name!r}.")
 
     touched_qubits = {
         target.value
@@ -632,7 +641,7 @@ def test_patch_selected_stabilizer_measurement(
         if target.is_qubit_target
     }
     assert not unselected_ancilla_sites.intersection(touched_qubits)
-    expected_measurement_count = 4 if patch_spec.name == "14-site" else 2
+    expected_measurement_count = 5 if patch_spec.name == "14-site" else 2
     assert circuit.num_measurements == expected_measurement_count
     assert circuit.num_detectors == expected_measurement_count
     assert not _sample(circuit).any()
@@ -664,6 +673,7 @@ def _expected_patch_syndrome(
 _DATA_SITE_PAIRS = [(first, second) for first in range(7) for second in range(first + 1, 7)]
 
 
+@pytest.mark.slow
 class TestPatchSyndromeExtraction:
     """Verify both patch measurements against expected fault syndromes."""
 
@@ -777,8 +787,10 @@ def test_patch_routed_encoder_two_qubit_gates_are_local(
         coordinates = PATCH_11_SITE_COORDS
     elif encoder == "hirano":
         coordinates = PATCH_14_SITE_HIRANO_ENCODER_COORDS
-    else:
+    elif encoder == "abstract-routed":
         coordinates = PATCH_14_SITE_COORDS
+    else:  # pragma: no cover - parametrization uses supported encoder pairs.
+        raise ValueError(f"Unsupported {patch_spec.name} encoder: {encoder!r}.")
     for instruction in circuit:
         if instruction.name != "CX":
             continue
@@ -792,8 +804,10 @@ def test_patch_routed_encoder_two_qubit_gates_are_local(
                     True,
                     False,
                 }
-            else:
+            elif patch_spec.name == "14-site":
                 assert (abs(ax - bx), abs(ay - by)) == (1, 1)
+            else:  # pragma: no cover - parametrization uses supported patches.
+                raise ValueError(f"Unsupported patch: {patch_spec.name!r}.")
 
 
 @pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ROUTED_ENCODER_STATE_CASES)
@@ -811,11 +825,13 @@ def test_patch_routed_encoder_helper_expectation_values(
     elif encoder == "hirano":
         helper_sites = PATCH_14_SITE_HELPER_SITES
         helper_basis = "X"
-    else:
+    elif encoder == "abstract-routed":
         helper_sites = tuple(
             site for site in range(patch_spec.num_qubits) if site not in patch_spec.data_sites
         )
         helper_basis = "Z"
+    else:  # pragma: no cover - parametrization uses supported encoder pairs.
+        raise ValueError(f"Unsupported {patch_spec.name} encoder: {encoder!r}.")
     for site in helper_sites:
         assert (
             _peek(
@@ -837,8 +853,10 @@ def test_patch_routed_encoder_helper_flags_are_zero(
         helper_sites = PATCH_11_SITE_HELPER_SITES
     elif encoder == "abstract-routed":
         helper_sites = PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES
-    else:
+    elif encoder == "hirano":
         helper_sites = PATCH_14_SITE_HELPER_SITES
+    else:  # pragma: no cover - parametrization uses supported encoder pairs.
+        raise ValueError(f"Unsupported {patch_spec.name} encoder: {encoder!r}.")
     circuit = stim.Circuit()
     if patch_spec.name == "11-site":
         append_11_site_patch_rosenfeld_encoder(
@@ -854,13 +872,15 @@ def test_patch_routed_encoder_helper_flags_are_zero(
             measure_flags=True,
             add_ticks=False,
         )
-    else:
+    elif encoder == "abstract-routed":
         append_14_site_patch_abstract_routed_encoder(
             circuit,
             injected_state=state,
             measure_flags=True,
             add_ticks=False,
         )
+    else:  # pragma: no cover - parametrization uses supported encoder pairs.
+        raise ValueError(f"Unsupported {patch_spec.name} encoder: {encoder!r}.")
     shots = _sample(circuit, shots=1024)
     detection_events = circuit.compile_detector_sampler(seed=1).sample(32)
     assert shots.shape == (1024, len(helper_sites))
@@ -994,13 +1014,15 @@ def test_patch_destructive_logical_measurement(
                 support=support,
                 destructive=True,
             )
-        else:
+        elif patch_spec.name == "14-site":
             append_14_site_patch_logical_measurement(
                 circuit,
                 basis,
                 support=support,
                 destructive=True,
             )
+        else:  # pragma: no cover - parametrization uses only supported patches.
+            raise ValueError(f"Unsupported patch: {patch_spec.name!r}.")
         parities = _sample(circuit)[:, -len(support) :].sum(axis=1) % 2
         assert (parities == expected_parity).all()
 
@@ -1036,12 +1058,14 @@ def test_patch_logical_measurement_can_include_stim_observable(
             basis,
             observable_index=0,
         )
-    else:
+    elif patch_spec.name == "14-site":
         append_14_site_patch_logical_measurement(
             circuit,
             basis,
             observable_index=0,
         )
+    else:  # pragma: no cover - parametrization uses only supported patches.
+        raise ValueError(f"Unsupported patch: {patch_spec.name!r}.")
     _, observable_flips = circuit.compile_detector_sampler(seed=1).sample(
         32,
         separate_observables=True,
@@ -1069,8 +1093,8 @@ def test_14_site_superdense_detectors_are_deterministic(encoder: str) -> None:
     """Verify superdense ancilla detectors never fire on a clean codeword."""
     circuit = _build_14_site_superdense_circuit(encoder)
     detection_events = circuit.compile_detector_sampler(seed=2).sample(64)
-    assert circuit.num_detectors == 6
-    assert circuit.num_measurements == 6
+    assert circuit.num_detectors == 7
+    assert circuit.num_measurements == 7
     assert not detection_events.any()
 
 

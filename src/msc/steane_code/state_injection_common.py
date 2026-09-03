@@ -470,10 +470,10 @@ PATCH_14_SITE_HIRANO_ENCODER_LAYERS: tuple[tuple[tuple[PatchEncoderGateName, tup
 #
 # The Bell pair (|00>+|11>) is a +1 eigenstate of both X_A X_B and Z_A Z_B, so
 # each face's X- and Z-stabilizer can be extracted *simultaneously*: measuring A
-# in X returns the X-stabilizer and B in Z returns the Z-stabilizer.  Every data
+# in X returns the X-stabilizer and B in Z returns the Z-stabilizer. Every data
 # qubit couples only to whichever ancilla it neighbours — data → ancilla for the
-# Z parity, ancilla → data for the X parity — and the Bell correlation carries
-# each contribution into both readouts.
+# Z parity, ancilla → data for the X parity — and the Bell correlation combines
+# the spatially split contributions to each requested parity.
 
 # The subtlety is data qubit 2: it is shared by faces {0,2,3,5} and {0,2,4,6}
 # but neighbours only the former's Z-ancilla (12).  D2' (site 13) neighbours the
@@ -490,123 +490,147 @@ PATCH_14_SITE_HIRANO_ENCODER_LAYERS: tuple[tuple[tuple[PatchEncoderGateName, tup
 #                                       sites
 #   ("MEASURE_X"/"MEASURE_Z", (sites))  destructive X / Z ancilla readout (one
 #                                       detector per measurement, +1 reference)
-# The six readouts are ordered [X0145, Z0145, X0235, Z0235, X0246, Z0246].
+# The six stabilizer readouts are ordered
+# [X0145, Z0145, X0235, Z0235, X0246, Z0246]. A terminal D2' flag follows when
+# face 0246 is selected and D2' is not immediately reset for another parity.
 PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS: tuple[tuple[int, int], ...] = (
     (7, 8),
     (11, 12),
     (9, 10),
 )
-PATCH_14_SITE_SUPERDENSE_STABILIZER_MEASUREMENT_LAYERS: tuple[
-    tuple[
-        tuple[
-            Literal["CX", "RESET_X", "RESET_Z", "MEASURE_X", "MEASURE_Z"],
-            tuple,
-        ],
-        ...,
-    ],
-    ...,
-] = (
-    # Phase 1 — prepare the three helper Bell pairs (A in |+>, B in |0>, CX A→B).
+_SUPERDENSE_BELL_PREPARATION_LAYERS = (
     (("RESET_X", (7, 11, 9)), ("RESET_Z", (8, 12, 10))),
     (("CX", ((7, 8), (11, 12), (9, 10))),),
-    # Phase 2 — build the D2/D2' Z-basis repetition code (shared Z parity).
+)
+_SUPERDENSE_D2_Z_COPY_LAYERS = (
     (("RESET_Z", (13,)),),
     (("CX", ((2, 13),)),),
-    # Phase 3 — Z-stabilizer couplings CX(data → its neighbouring ancilla).
+)
+_SUPERDENSE_Z_COUPLING_LAYERS = (
     (("CX", ((0, 8), (3, 11), (2, 12), (4, 9), (13, 10))),),
     (("CX", ((4, 7), (5, 8), (0, 11), (6, 9))),),
     (("CX", ((1, 8), (5, 11), (0, 10))),),
-    # Phase 4 — swap the D2/D2' Z-rep code for an X-basis repetition code.
-    (("CX", ((2, 13),)),),
+)
+_SUPERDENSE_D2_Z_UNCOMPUTE_LAYER = (("CX", ((2, 13),)),)
+_SUPERDENSE_D2_X_COPY_LAYERS = (
     (("RESET_X", (13,)),),
     (("CX", ((13, 2),)),),
-    # Phase 5 — X-stabilizer couplings CX(ancilla → its neighbouring data).
+)
+_SUPERDENSE_X_COUPLING_LAYERS = (
     (("CX", ((8, 0), (11, 3), (12, 2), (9, 4), (10, 13))),),
     (("CX", ((7, 4), (8, 5), (11, 0), (9, 6))),),
     (("CX", ((8, 1), (11, 5), (10, 0))),),
-    # Phase 6 — disentangle the D2/D2' X-rep code, restoring data qubit 2.
-    (("CX", ((13, 2),)),),
-    # Phase 7 — unentangle each Bell pair with a final CX A→B.
-    (("CX", ((7, 8), (11, 12), (9, 10))),),
-    # Phase 8 — Bell-basis readout (MEASURE_X on each A, MEASURE_Z on each B).
-    (
-        ("MEASURE_X", (7,)),
-        ("MEASURE_Z", (8,)),
-        ("MEASURE_X", (11,)),
-        ("MEASURE_Z", (12,)),
-        ("MEASURE_X", (9,)),
-        ("MEASURE_Z", (10,)),
-    ),
+)
+_SUPERDENSE_D2_X_UNCOMPUTE_LAYER = (("CX", ((13, 2),)),)
+_SUPERDENSE_BELL_UNCOMPUTE_LAYER = (("CX", ((7, 8), (11, 12), (9, 10))),)
+_SUPERDENSE_BELL_READOUT_LAYER = (
+    ("MEASURE_X", (7,)),
+    ("MEASURE_Z", (8,)),
+    ("MEASURE_X", (11,)),
+    ("MEASURE_Z", (12,)),
+    ("MEASURE_X", (9,)),
+    ("MEASURE_Z", (10,)),
+)
+
+PATCH_14_SITE_SUPERDENSE_STABILIZER_MEASUREMENT_LAYERS = (
+    *_SUPERDENSE_BELL_PREPARATION_LAYERS,
+    *_SUPERDENSE_D2_Z_COPY_LAYERS,
+    *_SUPERDENSE_Z_COUPLING_LAYERS,
+    _SUPERDENSE_D2_Z_UNCOMPUTE_LAYER,
+    *_SUPERDENSE_D2_X_COPY_LAYERS,
+    *_SUPERDENSE_X_COUPLING_LAYERS,
+    _SUPERDENSE_D2_X_UNCOMPUTE_LAYER,
+    _SUPERDENSE_BELL_UNCOMPUTE_LAYER,
+    _SUPERDENSE_BELL_READOUT_LAYER,
 )
 
 
 def select_14_site_patch_superdense_measurement_layers(
     basis: PatchStabilizerBasis,
     stabilizer_indices: Sequence[int] | None,
-    *,
-    measure_bell_partner_flags: bool = True,
-) -> tuple[tuple[tuple[str, tuple], ...], ...]:
-    """Return the complete superdense layers needed by selected face readouts.
+):
+    """Select superdense layers and label every ancilla readout by its role.
 
-    Unselected Bell pairs and opposite-basis coupling phases are removed while
-    the default selection retains the original collision-free schedule exactly.
-    For a single-basis check, ``measure_bell_partner_flags`` also reads the
-    other Bell ancilla in its native basis. That known-zero Bell-partner
-    outcome detects faults hidden by the requested parity and is required by
-    the serialized 14-site transfer schedule to retain graphlike distance three.
+    Unselected faces and opposite-basis coupling phases are removed. For a
+    single-basis extraction, the unused Bell-ancilla result is labeled
+    ``BELL_PARTNER_FLAG`` instead of ``STABILIZER``.
+
+    Face 0246 uses a temporary repetition encoding of D2 into D2' (site 13).
+    Its final known-state measurement is labeled ``D2_COPY_FLAG``: Z after a
+    Z-only detour and X otherwise. ``"BOTH"`` omits the intermediate Z flag
+    because D2' is immediately reset for the X detour.
     """
     if basis not in ("X", "Z", "BOTH"):
         raise ValueError("basis must be 'X', 'Z', or 'BOTH'.")
     selected_indices = resolve_patch_stabilizer_indices(stabilizer_indices)
-    selected_helper_sites = {
+    measure_d2_copy_flag = 2 in selected_indices
+    measure_x_stabilizers = basis in ("X", "BOTH")
+    measure_z_stabilizers = basis in ("Z", "BOTH")
+    selected_ancilla_sites = {
         site for index in selected_indices for site in PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS[index]
     }
-    uses_d2_copy = 2 in selected_indices
-    selected_layers: list[tuple[tuple[str, tuple], ...]] = []
+    if measure_d2_copy_flag:
+        selected_ancilla_sites.add(13)
+    active_layers = list(_SUPERDENSE_BELL_PREPARATION_LAYERS)
 
-    for layer_index, tick_layer in enumerate(
-        PATCH_14_SITE_SUPERDENSE_STABILIZER_MEASUREMENT_LAYERS[:-1]
-    ):
-        if layer_index in (2, 3, 7) and not (uses_d2_copy and basis in ("Z", "BOTH")):
-            continue
-        if layer_index in (8, 9, 13) and not (uses_d2_copy and basis in ("X", "BOTH")):
-            continue
-        if layer_index in (4, 5, 6) and basis not in ("Z", "BOTH"):
-            continue
-        if layer_index in (10, 11, 12) and basis not in ("X", "BOTH"):
-            continue
+    if measure_z_stabilizers:
+        if measure_d2_copy_flag:
+            active_layers.extend(_SUPERDENSE_D2_Z_COPY_LAYERS)
+        active_layers.extend(_SUPERDENSE_Z_COUPLING_LAYERS)
+        if measure_d2_copy_flag:
+            active_layers.append(_SUPERDENSE_D2_Z_UNCOMPUTE_LAYER)
 
-        selected_operations: list[tuple[str, tuple]] = []
+    if measure_x_stabilizers:
+        if measure_d2_copy_flag:
+            active_layers.extend(_SUPERDENSE_D2_X_COPY_LAYERS)
+        active_layers.extend(_SUPERDENSE_X_COUPLING_LAYERS)
+        if measure_d2_copy_flag:
+            active_layers.append(_SUPERDENSE_D2_X_UNCOMPUTE_LAYER)
+
+    active_layers.append(_SUPERDENSE_BELL_UNCOMPUTE_LAYER)
+
+    selected_layers = []
+    for tick_layer in active_layers:
+        selected_operations = []
         for gate_name, operands in tick_layer:
             if gate_name in ("RESET_X", "RESET_Z"):
-                selected_sites = tuple(
-                    site for site in operands if site in selected_helper_sites or site == 13
+                selected_operands = tuple(
+                    site for site in operands if site in selected_ancilla_sites
                 )
-                if selected_sites:
-                    selected_operations.append((gate_name, selected_sites))
-            else:
-                selected_pairs = tuple(
+            elif gate_name == "CX":
+                selected_operands = tuple(
                     pair
                     for pair in operands
-                    if pair == (2, 13)
-                    or pair == (13, 2)
-                    or any(site in selected_helper_sites for site in pair)
+                    if pair[0] in selected_ancilla_sites or pair[1] in selected_ancilla_sites
                 )
-                if selected_pairs:
-                    selected_operations.append((gate_name, selected_pairs))
+            else:
+                raise ValueError(f"Unexpected operation before readout: {gate_name}.")
+            if selected_operands:
+                selected_operations.append((gate_name, selected_operands))
         if selected_operations:
             selected_layers.append(tuple(selected_operations))
 
-    readout_operations: list[tuple[str, tuple]] = []
+    if basis == "X":
+        x_readout_role = "STABILIZER"
+        z_readout_role = "BELL_PARTNER_FLAG"
+    elif basis == "Z":
+        x_readout_role = "BELL_PARTNER_FLAG"
+        z_readout_role = "STABILIZER"
+    elif basis == "BOTH":
+        x_readout_role = "STABILIZER"
+        z_readout_role = "STABILIZER"
+    else:  # pragma: no cover - basis is validated above.
+        raise ValueError(f"Unsupported stabilizer basis: {basis!r}.")
+
+    readouts = []
     for index in selected_indices:
         x_ancilla, z_ancilla = PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS[index]
-        # measure_bell_partner_flags=True behaves like basis="BOTH".
-        if basis in ("X", "BOTH") or measure_bell_partner_flags:
-            readout_operations.append(("MEASURE_X", (x_ancilla,)))
-        if basis in ("Z", "BOTH") or measure_bell_partner_flags:
-            readout_operations.append(("MEASURE_Z", (z_ancilla,)))
-    selected_layers.append(tuple(readout_operations))
-    return tuple(selected_layers)
+        readouts.append(("X", x_ancilla, x_readout_role))
+        readouts.append(("Z", z_ancilla, z_readout_role))
+    if measure_d2_copy_flag:
+        d2_copy_basis = "Z" if basis == "Z" else "X"
+        readouts.append((d2_copy_basis, 13, "D2_COPY_FLAG"))
+    return tuple(selected_layers), tuple(readouts)
 
 
 # =============================================================================

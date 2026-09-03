@@ -247,7 +247,7 @@ def append_11_site_patch_rosenfeld_encoder(
     patch_qubits: Sequence,
     injected_state: InjectedStateName | None = None,
     injection_azimuth_angle: float | None = None,
-    flag_classical_bits: Sequence | None = None,
+    flag_bits: Sequence | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
     """Append the Rosenfeld et al. nearest-neighbor Steane encoder on the 11-site patch.
@@ -258,7 +258,7 @@ def append_11_site_patch_rosenfeld_encoder(
     helper sites for nearest-neighbor routing.
 
     After the encoder layers the four helper sites should be in |0⟩. When
-    ``flag_classical_bits`` is provided the helpers are measured into those
+    ``flag_bits`` is provided the helpers are measured into those
     bits so the caller can postselect on all-zero outcomes.
 
     Parameters
@@ -280,7 +280,7 @@ def append_11_site_patch_rosenfeld_encoder(
         may be ``None`` because it is mutually exclusive with
         ``injected_state``. At most one argument may be non-``None``; when both
         are ``None``, ``injected_state="T"`` is used.
-    flag_classical_bits
+    flag_bits
         Four classical bits for the helper-site measurements. When ``None``
         (default), the helper sites are not measured.
     add_barriers
@@ -299,12 +299,8 @@ def append_11_site_patch_rosenfeld_encoder(
         raise ValueError(
             "injected_state and injection_azimuth_angle are mutually exclusive; supply at most one."
         )
-    if flag_classical_bits is not None and len(flag_classical_bits) < len(
-        PATCH_11_SITE_HELPER_SITES
-    ):
-        raise ValueError(
-            f"flag_classical_bits must contain at least {len(PATCH_11_SITE_HELPER_SITES)} bits."
-        )
+    if flag_bits is not None and len(flag_bits) < len(PATCH_11_SITE_HELPER_SITES):
+        raise ValueError(f"flag_bits must contain at least {len(PATCH_11_SITE_HELPER_SITES)} bits.")
 
     if injection_azimuth_angle is not None:
         circuit.h(patch_qubits[PATCH_11_SITE_ROSENFELD_ENCODER_INJECTION_SITE])
@@ -336,10 +332,10 @@ def append_11_site_patch_rosenfeld_encoder(
     if add_barriers:
         circuit.barrier(label="rosenfeld state injection")
 
-    if flag_classical_bits is not None:
-        flag_classical_bits = list(flag_classical_bits)
+    if flag_bits is not None:
+        flag_bits = list(flag_bits)
         for i, site in enumerate(PATCH_11_SITE_HELPER_SITES):
-            circuit.measure(patch_qubits[site], flag_classical_bits[i])
+            circuit.measure(patch_qubits[site], flag_bits[i])
 
     return circuit
 
@@ -353,7 +349,7 @@ def append_11_site_patch_stabilizer_measurement(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
-    classical_bits: Sequence,
+    bits: Sequence,
     basis: PatchStabilizerBasis = "BOTH",
     stabilizer_indices: Sequence[int] | None = None,
     add_barriers: bool = True,
@@ -370,7 +366,7 @@ def append_11_site_patch_stabilizer_measurement(
         Circuit being modified.
     patch_qubits
         Eleven qubits indexed by the 11-site patch labels.
-    classical_bits
+    bits
         One bit per selected stabilizer for a single basis, or two bits per
         selected stabilizer for ``"BOTH"``. In ``"BOTH"`` mode, the first
         group holds X-stabilizer outcomes and the second holds Z-stabilizer
@@ -395,10 +391,10 @@ def append_11_site_patch_stabilizer_measurement(
     selected_indices = resolve_patch_stabilizer_indices(stabilizer_indices)
 
     required_bits = len(selected_indices) * (2 if basis == "BOTH" else 1)
-    if len(classical_bits) < required_bits:
-        raise ValueError(f"classical_bits must contain at least {required_bits} bits.")
+    if len(bits) < required_bits:
+        raise ValueError(f"bits must contain at least {required_bits} bits.")
 
-    cb = list(classical_bits)
+    measurement_bits = list(bits)
     anc_sites = PATCH_11_SITE_STABILIZER_ANCILLA_SITES
     selected_ancilla_sites = tuple(anc_sites[index] for index in selected_indices)
 
@@ -414,7 +410,7 @@ def append_11_site_patch_stabilizer_measurement(
                 "X",
                 data_qubits=[patch_qubits[site] for site in support],
                 ancilla_qubit=patch_qubits[ancilla_site],
-                classical_bit=cb[output_index],
+                bit=measurement_bits[output_index],
             )
 
     if basis == "BOTH" and add_barriers:
@@ -424,7 +420,7 @@ def append_11_site_patch_stabilizer_measurement(
         # Z-stabilizer measurements.
         for site in selected_ancilla_sites:
             circuit.reset(patch_qubits[site])
-        classical_offset = len(selected_indices) if basis == "BOTH" else 0
+        bit_offset = len(selected_indices) if basis == "BOTH" else 0
         for output_index, stabilizer_index in enumerate(selected_indices):
             ancilla_site = anc_sites[stabilizer_index]
             support = PATCH_11_SITE_Z_STABILIZERS[stabilizer_index]
@@ -433,7 +429,7 @@ def append_11_site_patch_stabilizer_measurement(
                 "Z",
                 data_qubits=[patch_qubits[site] for site in support],
                 ancilla_qubit=patch_qubits[ancilla_site],
-                classical_bit=cb[classical_offset + output_index],
+                bit=measurement_bits[bit_offset + output_index],
             )
 
 
@@ -449,7 +445,7 @@ def append_11_site_patch_logical_measurement(
     patch_qubits: Sequence,
     support: tuple[int, ...] | None = None,
     ancilla_qubit=None,
-    classical_bits: Sequence,
+    bits: Sequence,
     destructive: bool = True,
 ) -> None:
     """Append a logical measurement on the 11-site patch."""
@@ -465,7 +461,7 @@ def append_11_site_patch_logical_measurement(
         default_logical_z=PATCH_11_SITE_DEFAULT_LOGICAL_Z,
         support=support,
         ancilla_qubit=ancilla_qubit,
-        classical_bits=classical_bits,
+        bits=bits,
         destructive=destructive,
     )
 
@@ -551,7 +547,7 @@ def append_14_site_patch_abstract_routed_encoder(
     patch_qubits: Sequence,
     injected_state: InjectedStateName | None = None,
     injection_azimuth_angle: float | None = None,
-    flag_classical_bits: Sequence | None = None,
+    flag_bits: Sequence | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
     """Append the routed arbitrary-state encoder found for IBM Miami.
@@ -581,7 +577,7 @@ def append_14_site_patch_abstract_routed_encoder(
     injection_azimuth_angle
         Equatorial angle for ``Rz(angle)|+>`` on D3, mutually exclusive with
         ``injected_state``.
-    flag_classical_bits
+    flag_bits
         Five classical bits for optional Z-basis measurements of H8–H12.
         ``None`` skips the flag measurements.
     """
@@ -593,11 +589,11 @@ def append_14_site_patch_abstract_routed_encoder(
         raise ValueError(
             "injected_state and injection_azimuth_angle are mutually exclusive; supply at most one."
         )
-    if flag_classical_bits is not None and len(flag_classical_bits) < len(
+    if flag_bits is not None and len(flag_bits) < len(
         PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES
     ):
         raise ValueError(
-            "flag_classical_bits must contain at least "
+            "flag_bits must contain at least "
             f"{len(PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES)} bits."
         )
 
@@ -614,16 +610,18 @@ def append_14_site_patch_abstract_routed_encoder(
             if gate_name == "H":
                 for site in operands:
                     circuit.h(patch_qubits[site])
-            else:  # "CX"
+            elif gate_name == "CX":
                 for control_site, target_site in operands:
                     circuit.cx(patch_qubits[control_site], patch_qubits[target_site])
+            else:  # pragma: no cover - defensive if the shared schedule is edited.
+                raise ValueError(f"Unsupported abstract-routed gate: {gate_name!r}.")
         if add_barriers:
             circuit.barrier(*patch_qubits)
 
-    if flag_classical_bits is not None:
-        flag_classical_bits = list(flag_classical_bits)
+    if flag_bits is not None:
+        flag_bits = list(flag_bits)
         for index, site in enumerate(PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES):
-            circuit.measure(patch_qubits[site], flag_classical_bits[index])
+            circuit.measure(patch_qubits[site], flag_bits[index])
     return circuit
 
 
@@ -632,7 +630,7 @@ def append_14_site_patch_hirano_encoder(
     *,
     patch_qubits: Sequence,
     injected_state: InjectedStateName = "S",
-    flag_classical_bits: Sequence | None = None,
+    flag_bits: Sequence | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
     """Append Qiskit's parallel of Hirano's 14-site encoder.
@@ -666,7 +664,7 @@ def append_14_site_patch_hirano_encoder(
         ``S``; ``"Sdg"``/``"-i"``/``"Y-"`` inject ``Sdg``. Every other state
         raises ``ValueError``. Use an abstract-routed 14-site encoder to encode an
         arbitrary state.
-    flag_classical_bits
+    flag_bits
         Six bits for optional X-basis helper measurements. ``None`` skips them.
     add_barriers
         Whether to keep barriers between Hirano schedule ticks.
@@ -680,12 +678,8 @@ def append_14_site_patch_hirano_encoder(
         patch_qubits,
         expected_count=NUM_QUBITS_PATCH_14_SITES,
     )
-    if flag_classical_bits is not None and len(flag_classical_bits) < len(
-        PATCH_14_SITE_HELPER_SITES
-    ):
-        raise ValueError(
-            f"flag_classical_bits must contain at least {len(PATCH_14_SITE_HELPER_SITES)} bits."
-        )
+    if flag_bits is not None and len(flag_bits) < len(PATCH_14_SITE_HELPER_SITES):
+        raise ValueError(f"flag_bits must contain at least {len(PATCH_14_SITE_HELPER_SITES)} bits.")
 
     if injected_state in ("S", "i", "Y+"):
         gate_on_injection_site = "S"
@@ -709,30 +703,39 @@ def append_14_site_patch_hirano_encoder(
             elif gate_name == "CX":
                 for control_site, target_site in operands:
                     circuit.cx(patch_qubits[control_site], patch_qubits[target_site])
-            else:  # "INJECT"
+            elif gate_name == "INJECT":
                 injection_qubit = patch_qubits[operands[0]]
                 if gate_on_injection_site == "S":
                     circuit.s(injection_qubit)
-                else:
+                elif gate_on_injection_site == "Sdg":
                     circuit.sdg(injection_qubit)
+                else:  # pragma: no cover - assigned from validated input above.
+                    raise ValueError(f"Unsupported injection gate: {gate_on_injection_site!r}.")
+            else:  # pragma: no cover - defensive if the shared schedule is edited.
+                raise ValueError(f"Unsupported Hirano encoder gate: {gate_name!r}.")
         if add_barriers:
             circuit.barrier()
 
-    if flag_classical_bits is not None:
-        flag_classical_bits = list(flag_classical_bits)
+    if flag_bits is not None:
+        flag_bits = list(flag_bits)
         for index, site in enumerate(PATCH_14_SITE_HELPER_SITES):
             circuit.h(patch_qubits[site])
-            circuit.measure(patch_qubits[site], flag_classical_bits[index])
+            circuit.measure(patch_qubits[site], flag_bits[index])
     return circuit
+
+
+# ----------------------------------------
+# Stabilizer measurement
+# ----------------------------------------
 
 
 def append_14_site_patch_superdense_stabilizer_measurement(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
-    classical_bits: Sequence,
-    bell_partner_flag_classical_bits: Sequence | None = None,
-    measure_bell_partner_flags: bool = True,
+    stabilizer_bits: Sequence,
+    bell_partner_flag_bits: Sequence | None = None,
+    d2_copy_flag_bit=None,
     basis: PatchStabilizerBasis = "BOTH",
     stabilizer_indices: Sequence[int] | None = None,
     add_barriers: bool = True,
@@ -744,52 +747,51 @@ def append_14_site_patch_superdense_stabilizer_measurement(
     six-readout order is ``[X0145, Z0145, X0235, Z0235, X0246, Z0246]``. D1
     remains at ``(1, 5)`` and couples to H8 in both directions.
 
-    Single-basis checks measure the other Bell ancilla in its native basis by
-    default and record it in ``bell_partner_flag_classical_bits``. Its ideal
+    Single-basis checks always measure the other Bell ancilla in its native basis
+    and record it in ``bell_partner_flag_bits``. Its ideal
     outcome is zero and is a fault flag, not another requested stabilizer
-    result. This default protects graphlike distance three; callers that cannot
-    retain the flag must explicitly set ``measure_bell_partner_flags=False``.
+    result. Retaining this flag protects graphlike distance three.
+
+    Selecting face 0246 always measures the restored D2' into
+    ``d2_copy_flag_bit``: Z for a Z-only extraction and X otherwise.
+    Its known-zero outcome flags the D2-copy detour and is not another
+    stabilizer result. ``stabilizer_bits`` contains only the requested
+    face-parity results; the two flag arguments contain only flag destinations.
     """
     patch_qubits = resolve_patch_qubits(
         patch_qubits,
         expected_count=NUM_QUBITS_PATCH_14_SITES,
     )
-    measurement_layers = select_14_site_patch_superdense_measurement_layers(
+    measurement_layers, readouts = select_14_site_patch_superdense_measurement_layers(
         basis,
         stabilizer_indices,
-        measure_bell_partner_flags=measure_bell_partner_flags,
     )
-    requested_gate = {"X": "MEASURE_X", "Z": "MEASURE_Z", "BOTH": None}[basis]
-    required_bits = sum(
-        len(operands)
-        for gate_name, operands in measurement_layers[-1]
-        if requested_gate is None or gate_name == requested_gate
+    required_stabilizer_bits = sum(readout_role == "STABILIZER" for _, _, readout_role in readouts)
+    if len(stabilizer_bits) < required_stabilizer_bits:
+        raise ValueError(
+            "stabilizer_bits must contain at least " f"{required_stabilizer_bits} bits."
+        )
+    stabilizer_bits = list(stabilizer_bits)
+    required_bell_partner_bits = sum(
+        readout_role == "BELL_PARTNER_FLAG" for _, _, readout_role in readouts
     )
-    if len(classical_bits) < required_bits:
-        raise ValueError(f"classical_bits must contain at least {required_bits} bits.")
-    classical_bits = list(classical_bits)
-    requires_bell_partner_bits = basis != "BOTH" and measure_bell_partner_flags
-    if requires_bell_partner_bits and bell_partner_flag_classical_bits is None:
+    if required_bell_partner_bits:
+        if bell_partner_flag_bits is None:
+            raise ValueError("bell_partner_flag_bits are required for a single-basis measurement.")
+        bell_partner_flag_bits = list(bell_partner_flag_bits)
+    elif bell_partner_flag_bits is not None:
+        raise ValueError("bell_partner_flag_bits require a single-basis measurement.")
+    else:
+        bell_partner_flag_bits = []
+    measure_d2_copy_flag = any(readout_role == "D2_COPY_FLAG" for _, _, readout_role in readouts)
+    if measure_d2_copy_flag and d2_copy_flag_bit is None:
+        raise ValueError("d2_copy_flag_bit is required for the D2-copy flag.")
+    if not measure_d2_copy_flag and d2_copy_flag_bit is not None:
+        raise ValueError("d2_copy_flag_bit requires a measurement of face 0246.")
+    if len(bell_partner_flag_bits) < required_bell_partner_bits:
         raise ValueError(
-            "bell_partner_flag_classical_bits are required when " "measure_bell_partner_flags=True."
+            "bell_partner_flag_bits must contain at least " f"{required_bell_partner_bits} bits."
         )
-    if not requires_bell_partner_bits and bell_partner_flag_classical_bits is not None:
-        raise ValueError(
-            "bell_partner_flag_classical_bits require a single-basis measurement "
-            "with measure_bell_partner_flags=True."
-        )
-    if requires_bell_partner_bits:
-        required_flag_bits = sum(
-            len(operands)
-            for gate_name, operands in measurement_layers[-1]
-            if gate_name != requested_gate
-        )
-        if len(bell_partner_flag_classical_bits) < required_flag_bits:
-            raise ValueError(
-                "bell_partner_flag_classical_bits must contain at least "
-                f"{required_flag_bits} bits."
-            )
-        bell_partner_flag_classical_bits = list(bell_partner_flag_classical_bits)
     measurement_index = 0
     bell_partner_flag_index = 0
 
@@ -803,22 +805,30 @@ def append_14_site_patch_superdense_stabilizer_measurement(
             elif gate_name == "CX":
                 for control_site, target_site in operands:
                     circuit.cx(patch_qubits[control_site], patch_qubits[target_site])
-            else:
-                for site in operands:
-                    if gate_name == "MEASURE_X":
-                        circuit.h(patch_qubits[site])
-                    if requires_bell_partner_bits and gate_name != requested_gate:
-                        classical_bit = bell_partner_flag_classical_bits[bell_partner_flag_index]
-                        bell_partner_flag_index += 1
-                    else:
-                        classical_bit = classical_bits[measurement_index]
-                        measurement_index += 1
-                    circuit.measure(
-                        patch_qubits[site],
-                        classical_bit,
-                    )
         if add_barriers:
             circuit.barrier()
+
+    for readout_basis, site, readout_role in readouts:
+        if readout_basis == "X":
+            circuit.h(patch_qubits[site])
+        if readout_role == "STABILIZER":
+            bit = stabilizer_bits[measurement_index]
+            measurement_index += 1
+        elif readout_role == "BELL_PARTNER_FLAG":
+            bit = bell_partner_flag_bits[bell_partner_flag_index]
+            bell_partner_flag_index += 1
+        elif readout_role == "D2_COPY_FLAG":
+            bit = d2_copy_flag_bit
+        else:  # pragma: no cover - roles are assigned by the shared selector.
+            raise ValueError(f"Unsupported superdense readout role: {readout_role!r}.")
+        circuit.measure(patch_qubits[site], bit)
+    if add_barriers:
+        circuit.barrier()
+
+
+# ----------------------------------------
+# Logical measurement
+# ----------------------------------------
 
 
 def append_14_site_patch_logical_measurement(
@@ -828,7 +838,7 @@ def append_14_site_patch_logical_measurement(
     patch_qubits: Sequence,
     support: tuple[int, ...] | None = None,
     ancilla_qubit=None,
-    classical_bits: Sequence,
+    bits: Sequence,
     destructive: bool = True,
 ) -> None:
     """Append a logical Pauli measurement on the fixed 14-site patch."""
@@ -844,6 +854,6 @@ def append_14_site_patch_logical_measurement(
         default_logical_z=PATCH_14_SITE_DEFAULT_LOGICAL_Z,
         support=support,
         ancilla_qubit=ancilla_qubit,
-        classical_bits=classical_bits,
+        bits=bits,
         destructive=destructive,
     )

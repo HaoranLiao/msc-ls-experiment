@@ -21,6 +21,7 @@ from msc.steane_code.kickback_tomography_qiskit import (
 from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
+    PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
 )
 from msc.steane_code.state_injection_qiskit import InjectedStateName
 
@@ -118,23 +119,30 @@ class TestKickbackTomographyCircuitConstruction:
             14: PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
         }[patch_sites]
         assert circuit.num_qubits == patch_sites
+        qed_measurement_count = (
+            PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND
+            if patch_sites == 14
+            else KT_STABILIZER_BITS_PER_CYCLE
+        )
+        final_measurement_count = 7 if patch_sites == 14 else 3
         assert circuit.num_clbits == (
             3 * measurements_per_round
-            + len(expected_indices) * KT_STABILIZER_BITS_PER_CYCLE
-            + KT_STABILIZER_BITS_PER_CYCLE // 2
-            + (KT_STABILIZER_BITS_PER_CYCLE // 2 if patch_sites == 14 else 0)
+            + len(expected_indices) * qed_measurement_count
+            + final_measurement_count
         )
         assert layout.preparation_round is not None
         assert len(layout.qed_cycles) == len(expected_indices)
-        assert all(len(cycle) == 6 for cycle in layout.qed_cycles)
+        assert all(len(cycle) == qed_measurement_count for cycle in layout.qed_cycles)
         assert layout.qed_cycle_indices == expected_indices
         assert len(layout.final_stabilizers) == 3
         assert len(layout.final_bell_partner_flags) == (3 if patch_sites == 14 else 0)
         assert metadata["qed_cycle_indices"] == expected_indices
+        assert metadata["final_d2_copy_flag"] == layout.final_d2_copy_flag
         if patch_sites == 14:
             expected_measurement_order = [
                 *expected_measurement_order[:-1],
                 *(["final_stab", "final_bell_partner_flags"] * 3),
+                "final_d2_copy_flag",
             ]
         assert _measurement_register_order(experiment) == expected_measurement_order
 
@@ -205,6 +213,7 @@ class TestKickbackTomographyCountsAnalysis:
             *layout.tomography_check_round.all_positions,
             *layout.final_stabilizers,
             *layout.final_bell_partner_flags,
+            *((layout.final_d2_copy_flag,) if layout.final_d2_copy_flag is not None else ()),
         )
         expected_detector_positions = (
             *layout.encoder_flags,
@@ -214,6 +223,7 @@ class TestKickbackTomographyCountsAnalysis:
             *(position for cycle in layout.qed_cycles for position in cycle),
             *layout.final_stabilizers,
             *layout.final_bell_partner_flags,
+            *((layout.final_d2_copy_flag,) if layout.final_d2_copy_flag is not None else ()),
         )
 
         assert sorted(output_partition) == list(range(experiment.circuit.num_clbits))
@@ -230,7 +240,12 @@ class TestKickbackTomographyCountsAnalysis:
                 == layout.tomography_measure_round.flag_positions[3]
             )
         assert layout.qed_cycle_indices == KT_FULL_QED_CYCLE_INDICES
-        assert all(len(cycle) == KT_STABILIZER_BITS_PER_CYCLE for cycle in layout.qed_cycles)
+        qed_measurement_count = (
+            PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND
+            if patch_sites == 14
+            else KT_STABILIZER_BITS_PER_CYCLE
+        )
+        assert all(len(cycle) == qed_measurement_count for cycle in layout.qed_cycles)
         assert len(layout.final_stabilizers) == KT_STABILIZER_BITS_PER_CYCLE
         assert layout.detector_positions == expected_detector_positions
 
@@ -395,6 +410,7 @@ class TestNoiselessKickbackTomography:
         assert summary.logical_error_shots == 0
         assert summary.logical_error_probability == 0.0
 
+    @pytest.mark.slow
     @pytest.mark.parametrize("state", ["Ty", "+", "1", "Y+", "T"])
     @pytest.mark.parametrize("patch_sites", [11, 14])
     @pytest.mark.parametrize("no_reset", [False, True])
@@ -444,6 +460,7 @@ class TestNoiselessKickbackTomography:
         assert summary.retained_shots == NUM_SHOTS
         assert summary.logical_error_probability == pytest.approx(expected_error, abs=tolerance)
 
+    @pytest.mark.slow
     @pytest.mark.parametrize("patch_sites", [11, 14])
     @pytest.mark.parametrize("no_reset", [False, True])
     def test_preparation_cultivation_projects_before_kt(

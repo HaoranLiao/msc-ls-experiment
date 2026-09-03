@@ -65,19 +65,13 @@ def apply_ty_dagger(circuit: QuantumCircuit, qubit) -> None:
 # ---------------------------------------------------------------------------
 
 
-def append_classical_bit_flip(circuit: QuantumCircuit, classical_bit) -> None:
-    """Flip a measured classical bit during circuit execution."""
-    clbit = circuit.clbits[classical_bit] if isinstance(classical_bit, int) else classical_bit
-    circuit.store(clbit, expr.bit_not(clbit))
-
-
 def append_scheduled_parity_measurements(
     circuit: QuantumCircuit,
     *,
     bases: Sequence[str],
     data_qubit_schedules: Sequence[Sequence[object | None]],
     ancilla_qubits: Sequence,
-    classical_bits: Sequence,
+    bits: Sequence,
 ) -> None:
     """Append scheduled non-destructive Pauli-string measurements.
 
@@ -97,13 +91,12 @@ def append_scheduled_parity_measurements(
         example, ``((q0, q1), (q2, q3))`` schedules ``q0`` and ``q2`` in the
         first step, followed by ``q1`` and ``q3`` in the second. Use ``None``
         when a measurement is idle during a step. All rows must have equal
-        length. Row order is paired with ``ancilla_qubits`` and
-        ``classical_bits``.
+        length. Row order is paired with ``ancilla_qubits`` and ``bits``.
     ancilla_qubits
         Measurement ancillas. The first ``len(data_qubit_schedules)`` entries
         are used and additional entries are untouched. Every schedule row must
         have a distinct ancilla, and every used ancilla must start in ``|0>``.
-    classical_bits
+    bits
         Destination bits for the ancilla measurements, in schedule order.
         Additional entries are untouched.
 
@@ -117,7 +110,7 @@ def append_scheduled_parity_measurements(
     schedules = [tuple(schedule) for schedule in data_qubit_schedules]
     bases = list(bases)
     ancillas = list(ancilla_qubits)
-    measurement_bits = list(classical_bits)
+    measurement_bits = list(bits)
     num_measurements = len(schedules)
 
     if len(bases) < num_measurements:
@@ -128,8 +121,7 @@ def append_scheduled_parity_measurements(
         )
     if len(measurement_bits) < num_measurements:
         raise ValueError(
-            "classical_bits must have at least "
-            f"{num_measurements} entries, got {len(measurement_bits)}."
+            "bits must have at least " f"{num_measurements} entries, got {len(measurement_bits)}."
         )
 
     schedule_widths = {len(schedule) for schedule in schedules}
@@ -174,8 +166,8 @@ def append_scheduled_parity_measurements(
         if basis in {"X", "Y"}:
             circuit.h(ancilla)
 
-    for ancilla, classical_bit in zip(used_ancillas, used_bits, strict=True):
-        circuit.measure(ancilla, classical_bit)
+    for ancilla, bit in zip(used_ancillas, used_bits, strict=True):
+        circuit.measure(ancilla, bit)
 
 
 def append_parity_measurement(
@@ -184,7 +176,7 @@ def append_parity_measurement(
     *,
     data_qubits: Sequence,
     ancilla_qubit,
-    classical_bit,
+    bit,
 ) -> None:
     """Append a single non-destructive Pauli-string parity measurement.
 
@@ -203,7 +195,7 @@ def append_parity_measurement(
         when appending the two-qubit interactions.
     ancilla_qubit
         Measurement ancilla, assumed to start in ``|0>``.
-    classical_bit
+    bit
         Destination bit for the ancilla measurement.
 
     Notes
@@ -222,7 +214,7 @@ def append_parity_measurement(
         bases=(basis,),
         data_qubit_schedules=(tuple(data_qubits),),
         ancilla_qubits=(ancilla_qubit,),
-        classical_bits=(classical_bit,),
+        bits=(bit,),
     )
 
 
@@ -237,7 +229,7 @@ def append_pauli_string_measurement(
     paulis: Sequence[str],
     data_qubits: Sequence,
     ancilla_qubit,
-    classical_bit,
+    bit,
 ) -> None:
     """Append a non-destructive measurement of a physical Pauli string.
 
@@ -263,7 +255,7 @@ def append_pauli_string_measurement(
             selected_paulis[0],
             data_qubits=selected_data_qubits,
             ancilla_qubit=ancilla_qubit,
-            classical_bit=classical_bit,
+            bit=bit,
         )
         return
 
@@ -276,7 +268,7 @@ def append_pauli_string_measurement(
         elif pauli == "Z":
             circuit.cz(ancilla_qubit, data_qubit)
     circuit.h(ancilla_qubit)
-    circuit.measure(ancilla_qubit, classical_bit)
+    circuit.measure(ancilla_qubit, bit)
 
 
 def append_logical_measurement_on_indexed_qubits(
@@ -288,7 +280,7 @@ def append_logical_measurement_on_indexed_qubits(
     default_logical_z: tuple[int, ...],
     support: tuple[int, ...] | None,
     ancilla_qubit,
-    classical_bits: Sequence,
+    bits: Sequence,
     destructive: bool,
 ) -> None:
     """Append a logical Pauli measurement to an existing circuit.
@@ -310,7 +302,7 @@ def append_logical_measurement_on_indexed_qubits(
         denotes a common X/Z support, as used by the self-dual Steane code.
     ancilla_qubit
         Ancilla used for a non-destructive parity measurement.
-    classical_bits
+    bits
         Destination bits: one per support qubit when destructive, otherwise one.
     destructive
         Directly measure the support when true; otherwise measure its parity.
@@ -323,7 +315,7 @@ def append_logical_measurement_on_indexed_qubits(
     basis = normalize_pauli_char(basis)
 
     qubits = list(indexed_qubits)
-    measurement_bits = list(classical_bits)
+    measurement_bits = list(bits)
     if support is not None:
         logical_x_support = support if basis in {"X", "Y"} else default_logical_x
         logical_z_support = support if basis in {"Z", "Y"} else default_logical_z
@@ -339,7 +331,7 @@ def append_logical_measurement_on_indexed_qubits(
     if destructive:
         if len(measurement_bits) < len(measurement_terms):
             raise ValueError(
-                "classical_bits must have at least "
+                "bits must have at least "
                 f"{len(measurement_terms)} entries for destructive measurement."
             )
 
@@ -356,20 +348,20 @@ def append_logical_measurement_on_indexed_qubits(
         if ancilla_qubit is None:
             raise ValueError("ancilla_qubit is required for non-destructive measurement.")
         if not measurement_bits:
-            raise ValueError(
-                "classical_bits must have at least 1 entry for " "non-destructive measurement."
-            )
+            raise ValueError("bits must have at least 1 entry for non-destructive measurement.")
 
         append_pauli_string_measurement(
             circuit,
             paulis=tuple(physical_basis for _, physical_basis in measurement_terms),
             data_qubits=[qubits[index] for index, _ in measurement_terms],
             ancilla_qubit=ancilla_qubit,
-            classical_bit=measurement_bits[0],
+            bit=measurement_bits[0],
         )
 
     if invert_parity:
-        append_classical_bit_flip(circuit, measurement_bits[0])
+        bit = measurement_bits[0]
+        clbit = circuit.clbits[bit] if isinstance(bit, int) else bit
+        circuit.store(clbit, expr.bit_not(clbit))
 
 
 # ---------------------------------------------------------------------------

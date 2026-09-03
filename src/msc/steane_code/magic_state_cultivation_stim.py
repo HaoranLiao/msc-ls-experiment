@@ -452,7 +452,8 @@ def append_14_site_patch_injection_and_cultivation(
     :func:`append_14_site_patch_superdense_stabilizer_measurement`). When
     ``measure_encoder_flags`` is true, the record order starts with the
     selected encoder's flags (five for abstract-routed, six for Hirano),
-    then six QED outcomes, then seven outcomes per cultivation round
+    then seven QED outcomes (six stabilizers plus the terminal D2' flag),
+    then seven outcomes per cultivation round
     (the folded root plus its six helper flags). Set ``cultivation_rounds=0``
     to stop after injection and optional QED. Every measured encoder-flag,
     QED, and cultivation outcome -- including every helper flag -- is
@@ -578,7 +579,8 @@ def build_14_site_patch_injection_and_cultivation_circuit(
     to Stim's record.
 
     Measurement-record layout: the selected encoder's flag entries, then (if
-    ``add_qed_round``) six Steane QED entries, then seven entries per
+    ``add_qed_round``) seven Steane QED entries (six stabilizers plus the
+    terminal D2' flag), then seven entries per
     cultivation round (the folded root plus its six helper flags). Every
     entry is emitted as a postselection detector.
 
@@ -595,7 +597,7 @@ def build_14_site_patch_injection_and_cultivation_circuit(
 
     # Measurement-record layout:
     # - selected encoder's flag entries;
-    # - 6 post-injection Steane QED entries, when enabled;
+    # - 7 post-injection Steane QED entries, when enabled;
     # - 7 entries for each cultivation round.
     append_14_site_patch_injection_and_cultivation(
         circuit,

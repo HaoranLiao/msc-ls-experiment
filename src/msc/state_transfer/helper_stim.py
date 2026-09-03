@@ -7,7 +7,6 @@ from itertools import zip_longest
 import stim
 
 from msc.rotated_surface_code import helper_stim as surface_helper
-from msc.rotated_surface_code.post_transfer import post_transfer_stim
 from msc.state_transfer import common
 from msc.steane_code import magic_state_cultivation_stim as cultivation
 from msc.steane_code import state_injection_stim as steane
@@ -88,54 +87,38 @@ class TransferMeasurementLayout:
             for name, labels in self.labels.items()
         }
 
-    def appended(
-        self,
-        records: Sequence[tuple[str, Sequence[str]]],
-    ) -> TransferMeasurementLayout:
-        """Return a layout extended by contiguous appended families."""
-        labels = dict(self.labels)
-        positions = dict(self.positions)
-        next_position = self.num_measurements
-        for name, family_labels in records:
-            if name in labels:
-                raise ValueError(f"duplicate measurement family {name!r}.")
-            labels[name] = tuple(family_labels)
-            positions[name] = tuple(range(next_position, next_position + len(family_labels)))
-            next_position += len(family_labels)
-        return TransferMeasurementLayout(
-            patch_sites=self.patch_sites,
-            labels=labels,
-            positions=positions,
-            num_measurements=next_position,
-        )
-
 
 def transfer_measurement_layout(
     spec: common.SurfaceCodeTransferSpec,
     *,
     patch_sites: common.SteanePatchSites = 14,
     include_cultivation: bool,
-    surface_readout_basis: common.SurfaceReadoutBasis | None,
-    include_post_transfer_stabilizer_rounds: bool = False,
 ) -> TransferMeasurementLayout:
     """Map shared measurement labels into Stim's physical append order.
 
     The shared schema groups measurements by meaning, whereas Stim stores one
     global record in circuit order. This layout explicitly interleaves each
     round as interface checks -> compatible surface checks -> color-code
-    checks, then places demolition, top-edge recovery, optional continuation,
-    and logical readout in their actual append order.
+    checks, then places demolition and the ``X_ab`` recovery in their actual
+    append order. ``X_cd`` first reappears in full surface round 1, which is
+    appended by the d=5 continuation.
     """
     labels = common.transfer_measurement_labels(
         spec,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
-        surface_readout_basis=surface_readout_basis,
-        include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
+        surface_readout_basis=None,
     )
-    # Stim physically measures the known +1 surface-X checks before merging so
-    # their circuit faults and first detector layer remain in the DEM.
-    labels["surface_init_x"] = spec.x_labels
+    if patch_sites == 14:
+        # Follow the grouped superdense readout order: same-face X/Z checks
+        # share one Bell pair, and the D2' restoration flag follows the 0246
+        # Bell-ancilla readouts whenever that face is measured.
+        labels["steane_verify"] = tuple(
+            f"round{round_index + 1}_{check_name}"
+            for round_index, checks in enumerate(common.STEANE_MERGE_VERIFICATION_ROUNDS)
+            for group in common.group_14_site_superdense_verification_checks(checks)
+            for check_name in group.check_names_in_readout_order
+        )
     measurement_chunks: list[tuple[str, tuple[str, ...]]] = [
         (name, labels[name]) for name in ("enc_flags", "steane_qed")
     ]
@@ -169,50 +152,36 @@ def transfer_measurement_layout(
                 ),
             )
         )
-        verification_checks = common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]
-        for check_name in verification_checks:
-            verification_chunk = (
-                "steane_verify",
-                take_measurement_labels("steane_verify", 1),
-            )
-            if patch_sites == 11:
-                measurement_chunks.append(verification_chunk)
-            elif patch_sites == 14:
-                bell_partner_flag_chunk = (
-                    "steane_bell_partner_flags",
-                    take_measurement_labels("steane_bell_partner_flags", 1),
+        if patch_sites == 14:
+            for group in common.group_14_site_superdense_verification_checks(
+                common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]
+            ):
+                _, readouts = steane.select_14_site_patch_superdense_measurement_layers(
+                    group.basis,
+                    group.stabilizer_indices,
                 )
-                if check_name.startswith("X"):
-                    measurement_chunks.extend((verification_chunk, bell_partner_flag_chunk))
-                elif check_name.startswith("Z"):
-                    measurement_chunks.extend((bell_partner_flag_chunk, verification_chunk))
-                else:
-                    raise ValueError(f"unsupported Steane check {check_name!r}.")
-            else:
-                raise ValueError("patch_sites must be 11 or 14.")
+                for _, _, readout_role in readouts:
+                    if readout_role == "STABILIZER":
+                        family = "steane_verify"
+                    elif readout_role in ("BELL_PARTNER_FLAG", "D2_COPY_FLAG"):
+                        family = "steane_bell_partner_flags"
+                    else:  # pragma: no cover - assigned by the shared selector.
+                        raise ValueError(f"Unsupported superdense readout role: {readout_role!r}.")
+                    measurement_chunks.append((family, take_measurement_labels(family, 1)))
+        elif patch_sites == 11:
+            for _ in common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]:
+                verification_chunk = (
+                    "steane_verify",
+                    take_measurement_labels("steane_verify", 1),
+                )
+                measurement_chunks.append(verification_chunk)
+        else:  # pragma: no cover - resolved patch specs support only 11/14 sites.
+            raise ValueError("patch_sites must be 11 or 14.")
 
     measurement_chunks.extend(
         (name, take_measurement_labels(name, len(labels[name])))
         for name in ("steane_x", "surface_x_recovery")
     )
-    if include_post_transfer_stabilizer_rounds:
-        for _ in range(spec.distance):
-            measurement_chunks.extend(
-                (
-                    (
-                        "post_transfer_surface_z",
-                        take_measurement_labels("post_transfer_surface_z", len(spec.z_labels)),
-                    ),
-                    (
-                        "post_transfer_surface_x",
-                        take_measurement_labels("post_transfer_surface_x", len(spec.x_labels)),
-                    ),
-                )
-            )
-    if surface_readout_basis is not None:
-        name = f"surface_logical_{normalize_pauli_char(surface_readout_basis).lower()}"
-        measurement_chunks.append((name, take_measurement_labels(name, len(labels[name]))))
-
     family_labels: dict[str, list[str]] = {}
     family_positions: dict[str, list[int]] = {}
     next_position = 0
@@ -243,61 +212,40 @@ def build_lattice_surgery_circuit(
     patch_sites: common.SteanePatchSites = 14,
     injected_state: steane.StimInjectedStateName = steane.DEFAULT_STIM_INJECTED_STATE,
     include_cultivation: bool = True,
-    include_post_transfer_stabilizer_rounds: bool = False,
-    surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     add_ticks: bool = True,
 ) -> stim.Circuit:
     """Build the detector-annotated logical-Y-proxy transfer circuit.
 
-    The fixed-patch sequence follows Section III A of Hirano et al. and is
-    specialized by ``spec`` to the rotated target:
-
     1. Encode ``injected_state`` on the selected Steane patch and measure its
-       encoder-flag acceptance bits. The default 14-site path uses the
-       abstract-routed encoder; the 11-site path uses Rosenfeld's encoder.
-    2. Measure every Steane X and Z stabilizer for post-injection QED.
-    3. Optionally apply logical-Y cultivation, the Stim proxy for H_XY
+       encoder flags. The default 14-site path uses the abstract-routed encoder;
+       the 11-site path uses Rosenfeld's encoder.
+    2. Measure all six Steane stabilizers for post-injection QED.
+    3. Optionally apply logical-Y cultivation, Stim's proxy for H_XY
        cultivation.
-    4. Prepare the target in product ``|+>`` and measure a complete X/Z
-       stabilizer round. Z checks project logical ``|+_L>`` and establish its
-       Z reference; X checks are compared with their known +1 values.
-    5. Perform exactly three merged rounds. Each measures interface-Z checks,
-       compatible surface Z/X checks, and the paper-defined Steane groups in
-       rounds one and two. On the 14-site patch, every selective check also
-       measures the opposite-basis Bell partner as a known-zero fault flag.
-    6. Demolish Steane data in X and recover withheld top-edge X checks.
-    7. Optionally append ``distance`` full surface-stabilizer rounds.
-    8. Optionally append a destructive surface logical readout.
+    4. Prepare the surface patch in product ``|+>`` and measure a complete X/Z
+       round. Z checks project ``|+_L>`` and establish references; X checks are
+       compared with their known +1 values.
+    5. Perform three merge rounds of interface Z checks, compatible surface
+       checks, and the prescribed Steane verification groups. Same-face X/Z
+       requests on the 14-site patch share one Bell pair; single-basis
+       extractions also read the unused Bell partner as a known-zero flag.
+    6. Demolish Steane data in X, then measure only ``X_ab`` as Hirano's
+       ``m_ab``. There is no standalone ``X_cd`` recovery.
+    7. End at the transfer boundary. The d=5 wrapper owns the required full
+       surface rounds and destructive readout.
 
-    ``injected_state`` defaults to Stim's Clifford ``S|+>`` proxy. Disable
-    cultivation only for transfer plumbing, stabilizer-basis channel tests, or
-    an already-cultivated input. ``surface_readout_basis=None`` ends at the
-    transfer boundary; an X, Y, or Z readout is an analysis addition.
+    Each merge round appends interface Z checks, compatible surface checks,
+    then Steane verification. Mixed interface check ``Z35bc`` retains Hirano's
+    hook-safe ``3 -> b -> 5 -> c`` order. Full round 1 establishes the deferred
+    ``X_cd`` stream when present.
 
-    Each merge round appends interface checks -> compatible surface checks ->
-    color-code verification. The 14-site Bell-partner flags close a two-fault path
-    that is invisible if a selective superdense check reads only its requested
-    Bell ancilla, retaining graphlike distance three in this serialized
-    schedule. Mixed checks use Hirano's hook-safe alternating paths, especially
-    ``3 -> b -> 5 -> c`` for ``Z35bc``. The merged surface measurements form
-    spacetime-decoder input after execution. Interface changes, Steane checks,
-    and Bell-partner flags are strict postselection; surface syndromes are decoded,
-    and corrections remain in a classical Pauli frame.
-
-    Compatible X checks use the known +1 product-preparation boundary;
-    nondeterministic Z checks use the pre-merge initialization results as their
-    reference. Both sectors therefore contribute three detector layers.
-    Timelike matching edges distinguish repeated measurement faults from
-    persistent data errors.
-
-    The modular helper preserves measured observables and round order, but it
-    does not implement the paper's superdense interleaving, exact circuit-level
-    detector error model, later code expansion, or complementary-gap lookup.
-    Protocol and surface-history detectors are always appended; a corrected
-    logical observable is included whenever readout is requested.
+    Known-+1 initial X results and measured initial Z results seed the surface
+    change detectors. Protocol checks are postselected, surface histories are
+    decoded, and transfer corrections remain in a classical Pauli frame.
+    Stim uses ``S|+>`` and logical-Y cultivation as Clifford proxies. This
+    serialized helper does not reproduce Hirano's exact concurrent timing,
+    idle noise, later code expansion, or complementary-gap lookup.
     """
-    if surface_readout_basis is not None:
-        surface_readout_basis = normalize_pauli_char(surface_readout_basis)
     patch_spec = common.resolve_steane_transfer_patch_spec(patch_sites)
     qubits = transfer_qubits(spec, patch_sites=patch_sites)
     steane_patch = [qubits[label] for label in patch_spec.site_labels]
@@ -335,7 +283,7 @@ def build_lattice_surgery_circuit(
             add_ticks=add_ticks,
         )
         append_steane_logical_measurement = steane.append_14_site_patch_logical_measurement
-    else:
+    else:  # pragma: no cover - resolved above by the patch specification.
         raise ValueError("patch_sites must be 11 or 14.")
 
     # 2. Prepare surface |+_L>. Product |+> fixes every X check to +1; measure
@@ -354,7 +302,6 @@ def build_lattice_surgery_circuit(
         selected_stabilizer_names=spec.z_labels + spec.x_labels,
         ancillas=[qubits[label.lower()] for label in spec.z_labels + spec.x_labels],
         round_label=f"initialize {spec.name} |+_L>",
-        reset_ancillas_initially=True,
         add_ticks=add_ticks,
     )
 
@@ -372,12 +319,11 @@ def build_lattice_surgery_circuit(
             selected_stabilizer_names=spec.z_labels + spec.merged_x_labels,
             ancillas=[qubits[label.lower()] for label in spec.z_labels + spec.merged_x_labels],
             round_label=f"merged interval round {round_index + 1}",
-            reset_ancillas_initially=True,
             add_ticks=add_ticks,
         )
         verification_checks = common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]
-        for check_name in verification_checks:
-            if patch_sites == 11:
+        if patch_sites == 11:
+            for check_name in verification_checks:
                 steane.append_11_site_patch_stabilizer_measurement(
                     circuit,
                     patch_qubits=steane_patch,
@@ -387,20 +333,21 @@ def build_lattice_surgery_circuit(
                     ),
                     add_ticks=add_ticks,
                 )
-            elif patch_sites == 14:
+        elif patch_sites == 14:
+            for group in common.group_14_site_superdense_verification_checks(verification_checks):
                 steane.append_14_site_patch_superdense_stabilizer_measurement(
                     circuit,
                     patch_qubits=steane_patch,
-                    basis=check_name[0],
-                    stabilizer_indices=(
-                        patch_spec.merge_verification_stabilizer_indices[check_name],
-                    ),
+                    basis=group.basis,
+                    stabilizer_indices=group.stabilizer_indices,
                     add_ticks=add_ticks,
                 )
-            else:
-                raise ValueError("patch_sites must be 11 or 14.")
+        else:  # pragma: no cover - resolved above by the patch specification.
+            raise ValueError("patch_sites must be 11 or 14.")
 
-    # 4. Demolish Steane in X and restore the withheld surface-X boundary.
+    # 4. Demolish Steane in X and complete lattice surgery. In Hirano's Fig. 9
+    # path the sole selected result is X_ab (m_ab); X_cd is deliberately absent
+    # until the first complete noisy surface round.
     append_steane_logical_measurement(
         circuit,
         "X",
@@ -413,25 +360,11 @@ def build_lattice_surgery_circuit(
     operations.append_scheduled_stabilizer_round(
         circuit,
         surface_qubits=surface_qubits,
-        selected_stabilizer_names=spec.top_x_recovery_labels,
-        ancillas=[qubits[label.lower()] for label in spec.top_x_recovery_labels],
-        round_label="recover surface top edge",
-        reset_ancillas_initially=False,
-        add_ticks=add_ticks,
-    )
-
-    # 5. Optional fixed-patch history and terminal logical-support readout.
-    post_transfer_stim.append_rotated_post_transfer(
-        circuit,
-        surface_qubits=surface_qubits,
-        z_ancillas=[qubits[label.lower()] for label in spec.z_labels],
-        x_ancillas=[qubits[label.lower()] for label in spec.x_labels],
-        z_stabilizer_names=spec.z_labels,
-        x_stabilizer_names=spec.x_labels,
-        stabilizer_rounds=spec.distance if include_post_transfer_stabilizer_rounds else 0,
-        append_scheduled_stabilizer_round=operations.append_scheduled_stabilizer_round,
-        logical_readout_basis=surface_readout_basis,
-        append_logical_measurement=operations.append_logical_measurement,
+        selected_stabilizer_names=common.SURFACE_RECOVERY_X_LABELS,
+        ancillas=[qubits[label.lower()] for label in common.SURFACE_RECOVERY_X_LABELS],
+        round_label="complete lattice surgery X references",
+        # Hirano resets A_AB in X before coupling it to a,b and reading m_ab.
+        # The Stim surface helper uses the equivalent native RX/CX/MX sequence.
         add_ticks=add_ticks,
     )
 
@@ -439,8 +372,6 @@ def build_lattice_surgery_circuit(
         spec,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
-        include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
-        surface_readout_basis=surface_readout_basis,
     )
 
     # 6. Hard-postselect color/interface checks, then retain surface history for decoding.
@@ -483,19 +414,6 @@ def build_lattice_surgery_circuit(
             layout.by_label("surface_init_x")[label] for label in spec.merged_x_labels
         ),
     )
-    if include_post_transfer_stabilizer_rounds:
-        surface_helper.append_stabilizer_detectors(
-            circuit,
-            rounds=layout.rounds("post_transfer_surface_z", spec.distance),
-            first_round_reference=merged_z_rounds[-1],
-        )
-        surface_helper.append_stabilizer_detectors(
-            circuit,
-            rounds=layout.rounds("post_transfer_surface_x", spec.distance),
-            first_round_reference=restored_surface_x_reference_positions(spec, layout),
-        )
-    if surface_readout_basis is not None:
-        append_transfer_logical_observable(circuit, layout=layout, basis=surface_readout_basis)
     if circuit.num_measurements != layout.num_measurements:
         raise RuntimeError("transfer measurement layout does not match the Stim circuit.")
     return circuit
@@ -593,6 +511,8 @@ def append_transfer_logical_observable(
       listed above.
 
     Here “plus” means addition modulo two in one Stim ``OBSERVABLE_INCLUDE``.
+    The layout's ``surface_logical_<basis>`` family identifies the physical
+    measurement positions contributing to the logical-support parity.
     """
     basis = normalize_pauli_char(basis)
     circuit_stim.append_observable_include(
@@ -603,27 +523,6 @@ def append_transfer_logical_observable(
         ),
         observable_index=observable_index,
     )
-
-
-def restored_surface_x_reference_positions(
-    spec: common.SurfaceCodeTransferSpec,
-    layout: TransferMeasurementLayout,
-) -> tuple[int, ...]:
-    """Return the completed surface-X reference in canonical label order.
-
-    Compatible X checks come from the final merge round. The top-edge checks
-    that anticommute with interface Z are measured only after Steane demolition;
-    those values fill the remaining reference positions for later full rounds.
-    """
-    positions = dict(
-        zip(
-            spec.merged_x_labels,
-            layout.rounds("merged_surface_x")[-1],
-            strict=True,
-        )
-    )
-    positions.update(layout.by_label("surface_x_recovery"))
-    return tuple(positions[label] for label in spec.x_labels)
 
 
 def transfer_logical_frame_positions(

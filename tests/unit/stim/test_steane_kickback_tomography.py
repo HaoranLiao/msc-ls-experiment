@@ -21,6 +21,7 @@ from msc.steane_code.kickback_tomography_stim import (
 from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
+    PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
 )
 from msc.steane_code.state_injection_stim import StimInjectedStateName
 
@@ -57,6 +58,8 @@ def _measurement_record_order(
         label_positions(f"qed_{cycle_index}", positions)
     label_positions("final_stab", layout.final_stabilizers)
     label_positions("final_bell_partner_flags", layout.final_bell_partner_flags)
+    if layout.final_d2_copy_flag is not None:
+        label_positions("final_d2_copy_flag", (layout.final_d2_copy_flag,))
 
     order: list[str] = []
     for position in range(experiment.circuit.num_measurements):
@@ -168,15 +171,20 @@ class TestKickbackTomographyCircuitConstruction:
             14: PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
         }[patch_sites]
         assert circuit.num_qubits == patch_sites
+        qed_measurement_count = (
+            PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND
+            if patch_sites == 14
+            else KT_STABILIZER_BITS_PER_CYCLE
+        )
+        final_measurement_count = 7 if patch_sites == 14 else 3
         assert circuit.num_measurements == (
             3 * measurements_per_round
-            + len(expected_indices) * KT_STABILIZER_BITS_PER_CYCLE
-            + KT_STABILIZER_BITS_PER_CYCLE // 2
-            + (KT_STABILIZER_BITS_PER_CYCLE // 2 if patch_sites == 14 else 0)
+            + len(expected_indices) * qed_measurement_count
+            + final_measurement_count
         )
         assert layout.preparation_round is not None
         assert len(layout.qed_cycles) == len(expected_indices)
-        assert all(len(cycle) == KT_STABILIZER_BITS_PER_CYCLE for cycle in layout.qed_cycles)
+        assert all(len(cycle) == qed_measurement_count for cycle in layout.qed_cycles)
         assert layout.qed_cycle_indices == expected_indices
         assert len(layout.final_stabilizers) == (KT_STABILIZER_BITS_PER_CYCLE // 2)
         assert len(layout.final_bell_partner_flags) == (3 if patch_sites == 14 else 0)
@@ -184,6 +192,7 @@ class TestKickbackTomographyCircuitConstruction:
             expected_measurement_order = [
                 *expected_measurement_order[:-1],
                 *(["final_stab", "final_bell_partner_flags"] * 3),
+                "final_d2_copy_flag",
             ]
         assert _measurement_record_order(experiment, expected_indices) == expected_measurement_order
 
@@ -277,6 +286,7 @@ class TestKickbackTomographyShotAnalysis:
             *qed_by_index[4],
             *layout.final_stabilizers,
             *layout.final_bell_partner_flags,
+            *((layout.final_d2_copy_flag,) if layout.final_d2_copy_flag is not None else ()),
         )
         expected_detector_positions = (
             *layout.encoder_flags,
@@ -286,6 +296,7 @@ class TestKickbackTomographyShotAnalysis:
             *(position for cycle in layout.qed_cycles for position in cycle),
             *layout.final_stabilizers,
             *layout.final_bell_partner_flags,
+            *((layout.final_d2_copy_flag,) if layout.final_d2_copy_flag is not None else ()),
         )
 
         assert output_partition == tuple(range(experiment.circuit.num_measurements))
@@ -301,7 +312,12 @@ class TestKickbackTomographyShotAnalysis:
                 == layout.tomography_measure_round.flag_positions[3]
             )
         assert layout.qed_cycle_indices == KT_FULL_QED_CYCLE_INDICES
-        assert all(len(cycle) == KT_STABILIZER_BITS_PER_CYCLE for cycle in layout.qed_cycles)
+        qed_measurement_count = (
+            PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND
+            if patch_sites == 14
+            else KT_STABILIZER_BITS_PER_CYCLE
+        )
+        assert all(len(cycle) == qed_measurement_count for cycle in layout.qed_cycles)
         assert len(layout.final_stabilizers) == KT_STABILIZER_BITS_PER_CYCLE
         assert layout.detector_positions == expected_detector_positions
 

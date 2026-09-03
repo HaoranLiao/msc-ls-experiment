@@ -13,10 +13,10 @@ def resolve_patch_qubits(
     *,
     expected_count: int,
 ) -> list[_QubitT]:
-    """Validate an exact patch size and return the qubits as a list."""
-    if len(patch_qubits) != expected_count:
-        raise ValueError(f"patch_qubits must contain exactly {expected_count} qubits.")
-    return list(patch_qubits)
+    """Require enough patch qubits and return the required prefix as a list."""
+    if len(patch_qubits) < expected_count:
+        raise ValueError(f"patch_qubits must contain at least {expected_count} qubits.")
+    return list(patch_qubits[:expected_count])
 
 
 def normalize_bit(bit: int | bool) -> int:
@@ -75,7 +75,7 @@ def qiskit_bit_value(bitstring: str, position: int) -> int:
 
 def parse_qiskit_bitstring(
     bitstring: str,
-    labels: tuple[str, ...] | list[str],
+    labels: Sequence[str],
 ) -> dict[str, int]:
     """Map a Qiskit bitstring to a ``{label: 0|1}`` dict.
 
@@ -89,7 +89,7 @@ def parse_qiskit_bitstring(
             f"bitstring {bitstring!r} has {len(flattened)} bits, "
             f"but {len(labels)} labels were provided."
         )
-    return {label: qiskit_bit_value(flattened, position) for position, label in enumerate(labels)}
+    return dict(zip(labels, map(int, reversed(flattened)), strict=True))
 
 
 def parse_qiskit_registers(

@@ -58,7 +58,7 @@ def _run_single_fault(
         surface_qubits=surface_qubits,
         selected_stabilizer_names=z_names,
         ancillas=list(z_ancillas),
-        classical_bits=list(init_z),
+        bits=list(init_z),
         round_label="initialize",
         reset_ancillas_initially=False,
         add_barriers=False,
@@ -75,7 +75,7 @@ def _run_single_fault(
         surface_qubits=surface_qubits,
         selected_stabilizer_names=z_names + x_names,
         ancillas=[*list(z_ancillas), *list(x_ancillas)],
-        classical_bits=[*list(detect_z), *list(detect_x)],
+        bits=[*list(detect_z), *list(detect_x)],
         round_label="detect",
         reset_ancillas_initially=True,
         add_barriers=False,
@@ -84,7 +84,7 @@ def _run_single_fault(
         circuit,
         "X",
         surface_qubits=surface_qubits,
-        classical_bits=list(logical_x),
+        bits=list(logical_x),
         destructive=True,
     )
 
@@ -203,7 +203,7 @@ def _run_repeated_faults(
         surface_qubits=surface_qubits,
         selected_stabilizer_names=z_names,
         ancillas=list(z_ancillas),
-        classical_bits=list(init_z),
+        bits=list(init_z),
         round_label="initialize",
         reset_ancillas_initially=False,
         add_barriers=False,
@@ -221,7 +221,7 @@ def _run_repeated_faults(
             surface_qubits=surface_qubits,
             selected_stabilizer_names=z_names + x_names,
             ancillas=[*list(z_ancillas), *list(x_ancillas)],
-            classical_bits=[
+            bits=[
                 *list(round_z_registers[round_index]),
                 *list(round_x_registers[round_index]),
             ],
@@ -233,7 +233,7 @@ def _run_repeated_faults(
         circuit,
         "X",
         surface_qubits=surface_qubits,
-        classical_bits=list(logical_x),
+        bits=list(logical_x),
         destructive=True,
     )
 
@@ -453,6 +453,28 @@ def test_spacetime_measurement_faults_use_timelike_edges(
 
     # Both sectors are explained by measurement faults, so no data recovery.
     assert recovery.is_trivial
+
+
+@pytest.mark.parametrize("code", (d3, d5), ids=("d3", "d5"))
+def test_spacetime_complementary_gap_compares_logical_sectors(code: ModuleType) -> None:
+    """A trivial history is one code distance from either logical sector."""
+    zero_z_deltas = dict.fromkeys(code.Z_STABILIZERS, 0)
+    zero_x_deltas = dict.fromkeys(code.X_STABILIZERS, 0)
+
+    recovery = SpaceTimeRotatedDecoder(
+        data_qubits=code.SURFACE_ORDER,
+        z_stabilizers=code.Z_STABILIZERS,
+        x_stabilizers=code.X_STABILIZERS,
+        logical_x=code.DEFAULT_LOGICAL_X,
+        logical_z=code.DEFAULT_LOGICAL_Z,
+    ).decode(
+        z_delta_history=(zero_z_deltas, zero_z_deltas),
+        x_delta_history=(zero_x_deltas, zero_x_deltas),
+    )
+
+    assert recovery.x_complementary_gap == code.DISTANCE
+    assert recovery.z_complementary_gap == code.DISTANCE
+    assert recovery.complementary_gap == code.DISTANCE
 
 
 @pytest.mark.parametrize(

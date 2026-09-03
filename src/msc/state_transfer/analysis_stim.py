@@ -7,13 +7,9 @@ import numpy as np
 from msc.state_transfer.common import (
     SteanePatchSites,
     SurfaceCodeTransferSpec,
-    SurfaceReadoutBasis,
     interpret_transfer_measurements,
 )
-from msc.state_transfer.helper_stim import (
-    TransferMeasurementLayout,
-    transfer_measurement_layout,
-)
+from msc.state_transfer.helper_stim import transfer_measurement_layout
 
 
 def parse_transfer_measurements(
@@ -22,27 +18,16 @@ def parse_transfer_measurements(
     spec: SurfaceCodeTransferSpec,
     patch_sites: SteanePatchSites = 14,
     include_cultivation: bool = True,
-    include_post_transfer_stabilizer_rounds: bool = False,
-    surface_readout_basis: SurfaceReadoutBasis | None = None,
-    layout: TransferMeasurementLayout | None = None,
 ) -> dict[str, object]:
     """Label one record row, then derive checks, recovery, and Pauli byproducts."""
     shot = np.asarray(shot, dtype=bool)
     if shot.ndim != 1:
         raise ValueError("shot must be a one-dimensional array.")
-    if layout is None:
-        layout = transfer_measurement_layout(
-            spec,
-            patch_sites=patch_sites,
-            include_cultivation=include_cultivation,
-            include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
-            surface_readout_basis=surface_readout_basis,
-        )
-    elif layout.patch_sites != patch_sites:
-        raise ValueError(
-            "layout patch does not match patch_sites: "
-            f"expected {patch_sites}, got {layout.patch_sites}."
-        )
+    layout = transfer_measurement_layout(
+        spec,
+        patch_sites=patch_sites,
+        include_cultivation=include_cultivation,
+    )
     if shot.shape[0] != layout.num_measurements:
         raise ValueError(
             "shot width does not match the transfer measurement layout: "
@@ -54,8 +39,6 @@ def parse_transfer_measurements(
         bits,
         spec=spec,
         include_cultivation=include_cultivation,
-        include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
-        surface_readout_basis=surface_readout_basis,
     )
     parsed["registers"] = {
         name: {

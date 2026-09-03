@@ -20,7 +20,7 @@ TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
         ("Z1a", ("1",), ("a",)),
         ("Z35bc", ("3", "5"), ("b", "c")),
     ),
-    top_x_recovery_labels=("X_ab",),
+    withheld_surface_stabilizer_labels=("X_ab",),
     surface_code_operations=common.SurfaceCodeOperations(
         d3.prepare_product_plus,
         d3.append_scheduled_stabilizer_round,
@@ -80,6 +80,8 @@ def parse_transfer_measurements(
         spec=TRANSFER_SPEC,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
-        include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
+        post_transfer_stabilizer_rounds=(
+            TRANSFER_SPEC.distance if include_post_transfer_stabilizer_rounds else 0
+        ),
         surface_readout_basis=surface_readout_basis,
     )

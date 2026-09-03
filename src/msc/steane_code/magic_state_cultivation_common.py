@@ -81,6 +81,8 @@ STEANE_QED_MEASUREMENTS_PER_ROUND: int = len(
 # 14-site cultivation patch layout
 # =============================================================================
 
+PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND: int = STEANE_QED_MEASUREMENTS_PER_ROUND + 1
+
 # 14-site labeling used in the cultivation patch
 # ----------------------------------------------
 #

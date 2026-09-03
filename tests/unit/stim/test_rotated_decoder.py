@@ -57,7 +57,6 @@ def _run_single_fault(
         selected_stabilizer_names=z_names + x_names,
         ancillas=z_ancillas + x_ancillas,
         round_label="detect",
-        reset_ancillas_initially=True,
         add_ticks=False,
     )
     code.append_logical_measurement(
@@ -143,6 +142,7 @@ def test_zero_syndrome_decodes_to_identity(code: ModuleType) -> None:
     assert recovery.is_trivial
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("code", (d3, d5), ids=("d3", "d5"))
 @pytest.mark.parametrize("pauli", ("X", "Y", "Z"))
 def test_single_fault_syndromes_and_frame_corrected_readout(
@@ -221,7 +221,6 @@ def _run_spacetime_single_fault(
             selected_stabilizer_names=z_names + x_names,
             ancillas=z_ancillas + x_ancillas,
             round_label=f"detect{round_index}",
-            reset_ancillas_initially=True,
             add_ticks=False,
         )
     code.append_logical_measurement(
@@ -300,6 +299,7 @@ def _run_spacetime_single_fault(
     return recovery.x_error_sites, recovery.z_error_sites, corrected_logical_x
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("code", (d3, d5), ids=("d3", "d5"))
 @pytest.mark.parametrize("pauli", ("X", "Y", "Z"))
 def test_spacetime_decoder_corrects_persistent_single_fault(

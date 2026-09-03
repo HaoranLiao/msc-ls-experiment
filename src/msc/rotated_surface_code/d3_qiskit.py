@@ -48,8 +48,7 @@ def draw_patch(ax: Axes | None = None) -> tuple[plt.Figure, Axes]:
     return common.draw_patch(PATCH_SPEC, ax)
 
 
-# These two preparation helpers need no patch geometry, so expose them directly.
-reset_to_zero = helper.reset_to_zero
+# Product-state preparation needs no patch geometry, so expose it directly.
 prepare_product_plus = helper.prepare_product_plus
 
 
@@ -59,7 +58,7 @@ def append_scheduled_stabilizer_round(
     surface_qubits: Sequence[object],
     selected_stabilizer_names: Sequence[str],
     ancillas: Sequence[object],
-    classical_bits: Sequence[object],
+    bits: Sequence[object],
     round_label: str,
     reset_ancillas_initially: bool = False,
     add_barriers: bool = True,
@@ -67,7 +66,7 @@ def append_scheduled_stabilizer_round(
     """Append selected rotated-d=3 stabilizers in the canonical schedule.
 
     For every position ``i``, ``selected_stabilizer_names[i]`` is measured
-    with ``ancillas[i]`` and stored in ``classical_bits[i]``. The selection may
+    with ``ancillas[i]`` and stored in ``bits[i]``. The selection may
     contain only X checks, only Z checks, or any mixed-basis subset. Every
     selected check retains its row from ``FULL_STABILIZER_SCHEDULE``, so every
     valid selection has at most four two-qubit layers.
@@ -80,8 +79,8 @@ def append_scheduled_stabilizer_round(
         At least nine data qubits ordered according to ``SURFACE_ORDER``.
     selected_stabilizer_names
         Unique names from ``FULL_STABILIZER_SCHEDULE``. Their order aligns
-        positionally with ``ancillas`` and ``classical_bits``.
-    ancillas, classical_bits
+        positionally with ``ancillas`` and ``bits``.
+    ancillas, bits
         One distinct ancilla and one result bit per selected stabilizer;
         additional entries are untouched.
     round_label
@@ -111,7 +110,7 @@ def append_scheduled_stabilizer_round(
         circuit,
         label_to_qubit=label2qubit(surface_qubits),
         ancillas=ancillas,
-        classical_bits=classical_bits,
+        bits=bits,
         selected_stabilizer_schedules={
             name: FULL_STABILIZER_SCHEDULE[name] for name in selected_stabilizer_names
         },
@@ -128,7 +127,7 @@ def append_logical_measurement(
     surface_qubits: Sequence[object],
     support: tuple[str, ...] | None = None,
     ancilla_qubit=None,
-    classical_bits: Sequence[object],
+    bits: Sequence[object],
     destructive: bool = True,
 ) -> None:
     """Append an X, Y, or Z logical measurement on the d=3 patch.
@@ -147,7 +146,7 @@ def append_logical_measurement(
         default X and Z supports.
     ancilla_qubit
         Ancilla required for non-destructive measurement.
-    classical_bits
+    bits
         One result bit per measured physical term when destructive, or at
         least one bit when non-destructive.
     destructive
@@ -162,6 +161,6 @@ def append_logical_measurement(
         default_logical_z=DEFAULT_LOGICAL_Z,
         support=support,
         ancilla_qubit=ancilla_qubit,
-        classical_bits=classical_bits,
+        bits=bits,
         destructive=destructive,
     )

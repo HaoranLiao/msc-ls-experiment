@@ -13,7 +13,6 @@ from msc.rotated_surface_code.d3_qiskit import (
     append_scheduled_stabilizer_round,
     draw_patch,
     prepare_product_plus,
-    reset_to_zero,
 )
 from msc.rotated_surface_code.decoding import (
     PauliFrame,
@@ -37,7 +36,6 @@ __all__ = [
     "Z_STABILIZERS",
     "StabilizerFrame",
     "prepare_product_plus",
-    "reset_to_zero",
     "append_scheduled_stabilizer_round",
     "draw_patch",
 ]

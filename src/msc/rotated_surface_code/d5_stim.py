@@ -16,6 +16,7 @@ from matplotlib.axes import Axes
 
 from msc.rotated_surface_code import common
 from msc.rotated_surface_code import helper_stim as helper
+from msc.utils.normalize import normalize_pauli_char
 
 PATCH_SPEC = common.D5_PATCH_SPEC
 DISTANCE = PATCH_SPEC.distance
@@ -47,8 +48,7 @@ def draw_patch(ax: Axes | None = None) -> tuple[plt.Figure, Axes]:
     return common.draw_patch(PATCH_SPEC, ax)
 
 
-# These two preparation helpers need no patch geometry, so expose them directly.
-reset_to_zero = helper.reset_to_zero
+# Product-state preparation needs no patch geometry, so expose it directly.
 prepare_product_plus = helper.prepare_product_plus
 
 
@@ -59,7 +59,6 @@ def append_scheduled_stabilizer_round(
     selected_stabilizer_names: Sequence[str],
     ancillas: Sequence[int],
     round_label: str,
-    reset_ancillas_initially: bool = False,
     add_ticks: bool = True,
 ) -> tuple[int, ...]:
     """Measure selected rotated-d=5 stabilizers in the canonical schedule.
@@ -67,7 +66,8 @@ def append_scheduled_stabilizer_round(
     For every position ``i``, ``selected_stabilizer_names[i]`` is measured
     with ``ancillas[i]`` and appears in the same Stim record order. X-only,
     Z-only, and mixed-basis subsets all retain their canonical rows and require
-    at most four two-qubit layers.
+    at most four two-qubit layers. Ancillas are reset and measured natively in
+    each check's basis; the circuit contains no Hadamard basis changes.
 
     ``surface_qubits`` must contain at least 25 indices in ``SURFACE_ORDER``;
     names and used ancillas must be unique. An empty selection is valid. When
@@ -87,9 +87,34 @@ def append_scheduled_stabilizer_round(
         label_to_qubit=label2qubit(surface_qubits),
         ancillas=ancillas,
         selected_stabilizer_schedules=selected_stabilizer_schedules,
-        reset_ancillas_initially=reset_ancillas_initially,
         add_ticks=add_ticks,
         tick_label=f"{round_label} scheduled stabilizer round",
+    )
+
+
+def append_full_data_readout(
+    circuit: stim.Circuit,
+    basis: str,
+    *,
+    surface_qubits: Sequence[int],
+    previous_stabilizer_measurement_positions: Sequence[int],
+) -> tuple[int, ...]:
+    """Read all d=5 data qubits and append compatible boundary detectors."""
+    basis = normalize_pauli_char(basis)
+    if basis == "X":
+        stabilizers = X_STABILIZERS
+    elif basis == "Z":
+        stabilizers = Z_STABILIZERS
+    else:
+        raise ValueError("full-data readout basis must be X or Z.")
+    return helper.append_full_data_readout(
+        circuit,
+        basis,
+        surface_qubits=surface_qubits,
+        surface_order=SURFACE_ORDER,
+        surface_index=SURFACE_INDEX,
+        stabilizers=stabilizers,
+        previous_stabilizer_measurement_positions=previous_stabilizer_measurement_positions,
     )
 
 

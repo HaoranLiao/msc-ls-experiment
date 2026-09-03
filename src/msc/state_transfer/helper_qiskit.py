@@ -43,11 +43,13 @@ def build_lattice_surgery_circuit(
     ``3 -> b -> 5 -> c``, and, for d=5, ``d -> e``. The product of the target's
     interface checks is logical ``Z_L Z_L``; the alternating ``Z35bc`` order is
     Hirano's hook-safe path. Interface and color-code outcomes are later
-    postselected. On the 14-site patch, each selective color-code check also
-    records the opposite-basis Bell partner as a known-zero flag; this closes
-    an otherwise-hidden two-fault path and retains graphlike distance three in
-    the serialized schedule. Surface histories are spacetime-decoded into the
-    Pauli frame.
+    postselected. On the 14-site patch, same-face X/Z requests share one Bell-
+    pair preparation and one simultaneous ``BOTH`` extraction. Single-basis
+    requests omit the opposite-basis data-coupling phase but read its Bell
+    partner as a known-zero Bell-correlation flag, not as the omitted face
+    parity. This closes an otherwise-hidden two-fault path and retains graphlike
+    distance three in the serialized schedule. Surface histories are
+    spacetime-decoded into the Pauli frame.
     """
     if surface_readout_basis is not None:
         surface_readout_basis = normalize_pauli_char(surface_readout_basis)
@@ -74,10 +76,11 @@ def build_lattice_surgery_circuit(
 
     # Classical allocation uses one register per measurement family:
     # - enc_flags: 4 Rosenfeld or 5 abstract-routed encoder-flag bits;
-    # - steane_qed: 6 post-injection Steane stabilizer bits;
+    # - steane_qed: 6 post-injection Steane stabilizer bits, plus the 14-site
+    #   D2-copy flag when applicable;
     # - cult: 5 (11-site) or 7 (14-site) bits, when cultivation is enabled;
-    # - surface_init_z: one bit per surface Z stabilizer
-    #   (4 for d=3, 12 for d=5);
+    # - surface_init_z/x: one bit per surface stabilizer
+    #   (4 + 4 for d=3, 12 + 12 for d=5);
     # - interface_z: one bit per interface check in each of the 3 merge rounds
     #   (6 for d=3, 9 for d=5);
     # - merged_surface_z: one bit per Z stabilizer in each merge round
@@ -85,11 +88,10 @@ def build_lattice_surgery_circuit(
     # - merged_surface_x: one bit per compatible X stabilizer in each merge round
     #   (9 for d=3, 30 for d=5);
     # - steane_verify: 8 requested checks across the two verification groups;
-    # - steane_bell_partner_flags: 8 opposite-basis Bell readouts for the 14-site
-    #   patch only; these known-zero flags protect the serialized schedule;
+    # - steane_bell_partner_flags: six Bell-partner/D2' flags for the
+    #   14-site patch only;
     # - steane_x: 7 Steane demolition bits;
-    # - surface_x_recovery: one bit per withheld top-edge X check
-    #   (1 for d=3, 2 for d=5);
+    # - surface_x_recovery: one bit for the X_ab completion measurement m_ab;
     # - post_transfer_surface_z/x: distance rounds of full syndromes, if enabled
     #   (12 Z + 12 X bits for d=3, 60 Z + 60 X bits for d=5);
     # - surface_logical_x/y/z: one bit per measured physical qubit, if requested
@@ -98,7 +100,9 @@ def build_lattice_surgery_circuit(
         spec,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
-        include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
+        post_transfer_stabilizer_rounds=(
+            spec.distance if include_post_transfer_stabilizer_rounds else 0
+        ),
         surface_readout_basis=surface_readout_basis,
     )
     cregs = {
@@ -112,9 +116,9 @@ def build_lattice_surgery_circuit(
             circuit,
             patch_qubits=steane_patch,
             injected_state=injected_state,
-            encoder_classical_bits=list(cregs["enc_flags"]),
-            qed_classical_bits=list(cregs["steane_qed"]),
-            cultivation_classical_bits=[list(cregs["cult"])] if include_cultivation else [],
+            encoder_bits=list(cregs["enc_flags"]),
+            qed_bits=list(cregs["steane_qed"]),
+            cultivation_bits=[list(cregs["cult"])] if include_cultivation else [],
             cultivation_rounds=int(include_cultivation),
             add_qed_round=True,
             add_barriers=add_barriers,
@@ -127,9 +131,9 @@ def build_lattice_surgery_circuit(
             patch_qubits=steane_patch,
             injected_state=injected_state,
             encoder="abstract_routed",
-            encoder_classical_bits=list(cregs["enc_flags"]),
-            qed_classical_bits=list(cregs["steane_qed"]),
-            cultivation_classical_bits=[list(cregs["cult"])] if include_cultivation else [],
+            encoder_bits=list(cregs["enc_flags"]),
+            qed_bits=list(cregs["steane_qed"]),
+            cultivation_bits=[list(cregs["cult"])] if include_cultivation else [],
             cultivation_rounds=int(include_cultivation),
             add_qed_round=True,
             add_barriers=add_barriers,
@@ -139,8 +143,8 @@ def build_lattice_surgery_circuit(
         raise ValueError("patch_sites must be 11 or 14.")
 
     # 2. Prepare surface |+_L>. Product |+> fixes every X check to +1; the
-    # initial Z measurements project into the code space and establish its
-    # nondeterministic Z-check reference before the merge.
+    # complete X/Z round records that X boundary while the Z checks project
+    # into the code space and establish their nondeterministic reference.
     operations = spec.surface_code_operations
     operations.prepare_product_plus(
         circuit,
@@ -151,9 +155,9 @@ def build_lattice_surgery_circuit(
     operations.append_scheduled_stabilizer_round(
         circuit,
         surface_qubits=surface_qubits,
-        selected_stabilizer_names=spec.z_labels,
-        ancillas=[qubits[name.lower()] for name in spec.z_labels],
-        classical_bits=list(cregs["surface_init_z"]),
+        selected_stabilizer_names=spec.z_labels + spec.x_labels,
+        ancillas=[qubits[name.lower()] for name in spec.z_labels + spec.x_labels],
+        bits=list(cregs["surface_init_z"]) + list(cregs["surface_init_x"]),
         round_label=f"initialize {spec.name} |+_L>",
         reset_ancillas_initially=True,
         add_barriers=False,
@@ -167,14 +171,22 @@ def build_lattice_surgery_circuit(
         "merged_surface_z": len(spec.z_labels),
         "merged_surface_x": len(spec.merged_x_labels),
     }
-    classical_bits_by_family = {name: list(cregs[name]) for name in round_widths}
-    verification_bits = iter(cregs["steane_verify"])
-    bell_partner_flag_bits = iter(cregs.get("steane_bell_partner_flags", ()))
+    bits_by_family = {name: list(cregs[name]) for name in round_widths}
+    verification_bit_by_label = dict(
+        zip(measurement_labels["steane_verify"], cregs["steane_verify"], strict=True)
+    )
+    bell_partner_flag_bit_by_label = dict(
+        zip(
+            measurement_labels.get("steane_bell_partner_flags", ()),
+            cregs.get("steane_bell_partner_flags", ()),
+            strict=True,
+        )
+    )
     for round_index in range(common.LATTICE_SURGERY_ROUNDS):
         interface_start = round_index * round_widths["interface_z"]
-        for (check_name, steane_labels, surface_labels), classical_bit in zip(
+        for (check_name, steane_labels, surface_labels), bit in zip(
             spec.merged_boundary_checks,
-            classical_bits_by_family["interface_z"][
+            bits_by_family["interface_z"][
                 interface_start : interface_start + round_widths["interface_z"]
             ],
             strict=True,
@@ -185,7 +197,7 @@ def build_lattice_surgery_circuit(
                 for label in (steane_label, surface_label):
                     if label is not None:
                         circuit.cx(qubits[label], ancilla)
-            circuit.measure(ancilla, classical_bit)
+            circuit.measure(ancilla, bit)
 
         z_start = round_index * round_widths["merged_surface_z"]
         x_start = round_index * round_widths["merged_surface_x"]
@@ -194,11 +206,11 @@ def build_lattice_surgery_circuit(
             surface_qubits=surface_qubits,
             selected_stabilizer_names=spec.z_labels + spec.merged_x_labels,
             ancillas=[qubits[name.lower()] for name in spec.z_labels + spec.merged_x_labels],
-            classical_bits=(
-                classical_bits_by_family["merged_surface_z"][
+            bits=(
+                bits_by_family["merged_surface_z"][
                     z_start : z_start + round_widths["merged_surface_z"]
                 ]
-                + classical_bits_by_family["merged_surface_x"][
+                + bits_by_family["merged_surface_x"][
                     x_start : x_start + round_widths["merged_surface_x"]
                 ]
             ),
@@ -206,42 +218,64 @@ def build_lattice_surgery_circuit(
             reset_ancillas_initially=True,
             add_barriers=False,
         )
-        for check_name in common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]:
-            if patch_sites == 11:
+        verification_checks = common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]
+        if patch_sites == 11:
+            for check_name in verification_checks:
                 steane.append_11_site_patch_stabilizer_measurement(
                     circuit,
                     patch_qubits=steane_patch,
-                    classical_bits=[next(verification_bits)],
+                    bits=[verification_bit_by_label[f"round{round_index + 1}_{check_name}"]],
                     basis=check_name[0],
                     stabilizer_indices=(
                         patch_spec.merge_verification_stabilizer_indices[check_name],
                     ),
                     add_barriers=False,
                 )
-            elif patch_sites == 14:
+        elif patch_sites == 14:
+            for group in common.group_14_site_superdense_verification_checks(verification_checks):
+                measure_d2_copy_flag = (
+                    patch_spec.merge_verification_stabilizer_indices["X0246"]
+                    in group.stabilizer_indices
+                )
                 steane.append_14_site_patch_superdense_stabilizer_measurement(
                     circuit,
                     patch_qubits=steane_patch,
-                    classical_bits=[next(verification_bits)],
-                    bell_partner_flag_classical_bits=[next(bell_partner_flag_bits)],
-                    basis=check_name[0],
-                    stabilizer_indices=(
-                        patch_spec.merge_verification_stabilizer_indices[check_name],
+                    stabilizer_bits=[
+                        verification_bit_by_label[f"round{round_index + 1}_{check_name}"]
+                        for check_name in group.check_names_in_readout_order
+                    ],
+                    bell_partner_flag_bits=(
+                        [
+                            bell_partner_flag_bit_by_label[
+                                f"round{round_index + 1}_{check_name}_bell_partner_flag"
+                            ]
+                            for check_name in group.check_names_in_readout_order
+                        ]
+                        if group.basis != "BOTH"
+                        else None
                     ),
+                    d2_copy_flag_bit=(
+                        bell_partner_flag_bit_by_label[f"round{round_index + 1}_D2_copy_flag"]
+                        if measure_d2_copy_flag
+                        else None
+                    ),
+                    basis=group.basis,
+                    stabilizer_indices=group.stabilizer_indices,
                     add_barriers=False,
                 )
-            else:
-                raise ValueError("patch_sites must be 11 or 14.")
+        else:
+            raise ValueError("patch_sites must be 11 or 14.")
         if add_barriers:
             circuit.barrier(label=f"merged interval round {round_index + 1}")
 
-    # 4. Demolish Steane in X and restore the withheld surface-X boundary.
+    # 4. Demolish Steane in X, then measure X_ab as Hirano's m_ab. X_cd is
+    # withheld by the d=5 merge but does not receive a standalone recovery.
     append_steane_logical_measurement(
         circuit,
         "X",
         patch_qubits=steane_patch,
         support=patch_spec.data_sites_in_hirano_order,
-        classical_bits=list(cregs["steane_x"]),
+        bits=list(cregs["steane_x"]),
         destructive=True,
     )
     if add_barriers:
@@ -249,28 +283,28 @@ def build_lattice_surgery_circuit(
     operations.append_scheduled_stabilizer_round(
         circuit,
         surface_qubits=surface_qubits,
-        selected_stabilizer_names=spec.top_x_recovery_labels,
-        ancillas=[qubits[name.lower()] for name in spec.top_x_recovery_labels],
-        classical_bits=list(cregs["surface_x_recovery"]),
+        selected_stabilizer_names=common.SURFACE_RECOVERY_X_LABELS,
+        ancillas=[qubits[name.lower()] for name in common.SURFACE_RECOVERY_X_LABELS],
+        bits=list(cregs["surface_x_recovery"]),
         round_label="recover surface top edge",
-        reset_ancillas_initially=False,
+        reset_ancillas_initially=True,
         add_barriers=add_barriers,
     )
 
     # 5. Optional fixed-patch history and destructive logical-support readout.
-    post_transfer_qiskit.append_rotated_post_transfer(
+    post_transfer_qiskit.append_rotated_full_stabilizer_rounds(
         circuit,
         surface_qubits=surface_qubits,
         z_ancillas=[qubits[name.lower()] for name in spec.z_labels],
         x_ancillas=[qubits[name.lower()] for name in spec.x_labels],
         z_stabilizer_names=spec.z_labels,
         x_stabilizer_names=spec.x_labels,
-        z_classical_bits=(
+        z_bits=(
             list(cregs["post_transfer_surface_z"])
             if include_post_transfer_stabilizer_rounds
             else ()
         ),
-        x_classical_bits=(
+        x_bits=(
             list(cregs["post_transfer_surface_x"])
             if include_post_transfer_stabilizer_rounds
             else ()
@@ -278,7 +312,7 @@ def build_lattice_surgery_circuit(
         stabilizer_rounds=spec.distance if include_post_transfer_stabilizer_rounds else 0,
         append_scheduled_stabilizer_round=operations.append_scheduled_stabilizer_round,
         logical_readout_basis=surface_readout_basis,
-        logical_classical_bits=(
+        logical_bits=(
             list(cregs[f"surface_logical_{surface_readout_basis.lower()}"])
             if surface_readout_basis
             else ()

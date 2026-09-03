@@ -47,8 +47,7 @@ def draw_patch(ax: Axes | None = None) -> tuple[plt.Figure, Axes]:
     return common.draw_patch(PATCH_SPEC, ax)
 
 
-# These two preparation helpers need no patch geometry, so expose them directly.
-reset_to_zero = helper.reset_to_zero
+# Product-state preparation needs no patch geometry, so expose it directly.
 prepare_product_plus = helper.prepare_product_plus
 
 
@@ -59,7 +58,6 @@ def append_scheduled_stabilizer_round(
     selected_stabilizer_names: Sequence[str],
     ancillas: Sequence[int],
     round_label: str,
-    reset_ancillas_initially: bool = False,
     add_ticks: bool = True,
 ) -> tuple[int, ...]:
     """Measure selected rotated-d=3 stabilizers in the canonical schedule.
@@ -68,7 +66,8 @@ def append_scheduled_stabilizer_round(
     with ``ancillas[i]``. Their order is also the Stim measurement-record
     order. The selection may contain X checks, Z checks, or any mixed-basis
     subset; every selected check retains its canonical row and therefore uses
-    at most four two-qubit layers.
+    at most four two-qubit layers. Ancillas are reset and measured natively in
+    each check's basis; the circuit contains no Hadamard basis changes.
 
     ``surface_qubits`` must contain at least nine indices in ``SURFACE_ORDER``;
     names and used ancillas must be unique. An empty selection is valid. When
@@ -88,7 +87,6 @@ def append_scheduled_stabilizer_round(
         label_to_qubit=label2qubit(surface_qubits),
         ancillas=ancillas,
         selected_stabilizer_schedules=selected_stabilizer_schedules,
-        reset_ancillas_initially=reset_ancillas_initially,
         add_ticks=add_ticks,
         tick_label=f"{round_label} scheduled stabilizer round",
     )

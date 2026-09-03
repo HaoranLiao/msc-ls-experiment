@@ -9,6 +9,7 @@ from typing import Literal
 from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
+    PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
     STEANE_QED_MEASUREMENTS_PER_ROUND,
 )
 from msc.steane_code.state_injection_common import (
@@ -32,6 +33,7 @@ class KickbackTomographyPatchSpec:
     encoder_flag_count: int
     cultivation_measurement_count: int
     cultivation_root_check_index: int | None
+    qed_measurement_count: int
 
 
 def resolve_kickback_tomography_patch_spec(
@@ -44,6 +46,7 @@ def resolve_kickback_tomography_patch_spec(
             encoder_flag_count=len(PATCH_11_SITE_HELPER_SITES),
             cultivation_measurement_count=PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
             cultivation_root_check_index=4,
+            qed_measurement_count=STEANE_QED_MEASUREMENTS_PER_ROUND,
         )
     elif patch_sites == 14:
         return KickbackTomographyPatchSpec(
@@ -51,6 +54,7 @@ def resolve_kickback_tomography_patch_spec(
             encoder_flag_count=len(PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES),
             cultivation_measurement_count=PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
             cultivation_root_check_index=None,
+            qed_measurement_count=PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
         )
     else:
         raise ValueError("patch_sites must be 11 or 14.")
@@ -85,6 +89,7 @@ class KickbackTomographyBitLayout:
     qed_cycle_indices: tuple[int, ...]
     final_stabilizers: tuple[int, ...]
     final_bell_partner_flags: tuple[int, ...] = ()
+    final_d2_copy_flag: int | None = None
     encoder_flags: tuple[int, ...] = ()
 
     @property
@@ -99,6 +104,8 @@ class KickbackTomographyBitLayout:
             positions.extend(cycle)
         positions.extend(self.final_stabilizers)
         positions.extend(self.final_bell_partner_flags)
+        if self.final_d2_copy_flag is not None:
+            positions.append(self.final_d2_copy_flag)
         return tuple(positions)
 
 

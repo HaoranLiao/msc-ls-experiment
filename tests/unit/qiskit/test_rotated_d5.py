@@ -112,7 +112,7 @@ class TestCanonicalStabilizerSchedule:
             surface_qubits=list(data),
             selected_stabilizer_names=selected_stabilizer_names,
             ancillas=ancillas,
-            classical_bits=bits,
+            bits=bits,
             round_label="scheduled",
             add_barriers=False,
         )
@@ -273,6 +273,39 @@ class TestCanonicalStabilizerSchedule:
             ), selection_name
 
 
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_full_data_readout_uses_canonical_surface_order(basis: str) -> None:
+    """Map every d=5 data measurement to its corresponding ``a..y`` bit.
+
+    Final-boundary analysis reconstructs stabilizer parities by indexing this
+    flat readout with ``SURFACE_ORDER``. A qubit-to-bit permutation would run
+    successfully but silently combine the wrong data bits into those final
+    syndromes, so this ordering is part of the public readout contract.
+    """
+    data = QuantumRegister(NUM_DATA_QUBITS, "data")
+    readout = ClassicalRegister(NUM_DATA_QUBITS, "readout")
+    circuit = QuantumCircuit(data, readout)
+
+    d5.append_full_data_readout(
+        circuit,
+        basis,
+        surface_qubits=list(data),
+        bits=list(readout),
+    )
+
+    measurements = [instruction for instruction in circuit.data if instruction.name == "measure"]
+    assert len(measurements) == NUM_DATA_QUBITS
+    assert tuple(
+        circuit.find_bit(instruction.qubits[0]).index for instruction in measurements
+    ) == tuple(range(NUM_DATA_QUBITS))
+    assert tuple(
+        circuit.find_bit(instruction.clbits[0]).index for instruction in measurements
+    ) == tuple(range(NUM_DATA_QUBITS))
+    assert sum(instruction.name == "h" for instruction in circuit.data) == (
+        NUM_DATA_QUBITS if basis == "X" else 0
+    )
+
+
 # ===========================================================================
 # SET 2: Logical-zero preparation and Z checks
 # ===========================================================================
@@ -295,7 +328,7 @@ class TestLogicalZeroPreparation:
             surface_qubits=list(data),
             selected_stabilizer_names=X_NAMES,
             ancillas=list(x_anc),
-            classical_bits=list(x_cl),
+            bits=list(x_cl),
             round_label="init",
             reset_ancillas_initially=False,
             add_barriers=False,
@@ -305,7 +338,7 @@ class TestLogicalZeroPreparation:
             surface_qubits=list(data),
             selected_stabilizer_names=Z_NAMES,
             ancillas=list(z_anc),
-            classical_bits=list(z_cl),
+            bits=list(z_cl),
             round_label="check",
             reset_ancillas_initially=False,
             add_barriers=False,
@@ -314,7 +347,7 @@ class TestLogicalZeroPreparation:
             circuit,
             "Z",
             surface_qubits=list(data),
-            classical_bits=list(log_cl),
+            bits=list(log_cl),
             destructive=True,
         )
 
@@ -349,7 +382,7 @@ class TestLogicalPlusPreparation:
             surface_qubits=list(data),
             selected_stabilizer_names=Z_NAMES,
             ancillas=list(z_anc),
-            classical_bits=list(z_cl),
+            bits=list(z_cl),
             round_label="init",
             reset_ancillas_initially=False,
             add_barriers=False,
@@ -359,7 +392,7 @@ class TestLogicalPlusPreparation:
             surface_qubits=list(data),
             selected_stabilizer_names=X_NAMES,
             ancillas=list(x_anc),
-            classical_bits=list(x_cl),
+            bits=list(x_cl),
             round_label="check",
             reset_ancillas_initially=False,
             add_barriers=False,
@@ -368,7 +401,7 @@ class TestLogicalPlusPreparation:
             circuit,
             "X",
             surface_qubits=list(data),
-            classical_bits=list(log_cl),
+            bits=list(log_cl),
             destructive=True,
         )
 

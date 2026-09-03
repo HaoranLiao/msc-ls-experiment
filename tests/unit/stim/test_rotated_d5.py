@@ -58,6 +58,35 @@ class TestPatchGeometry:
 
 
 class TestCanonicalStabilizerSchedule:
+    def test_native_basis_preparation_reset_and_readout(self) -> None:
+        """Use Hirano's RX/MX surface operations without noisy H decompositions."""
+        circuit = stim.Circuit()
+        d5.prepare_product_plus(circuit, qubits=tuple(range(NUM_DATA_QUBITS)))
+        d5.append_scheduled_stabilizer_round(
+            circuit,
+            surface_qubits=tuple(range(NUM_DATA_QUBITS)),
+            selected_stabilizer_names=("Z_abfg", "X_ab"),
+            ancillas=(NUM_DATA_QUBITS, NUM_DATA_QUBITS + 1),
+            round_label="native basis",
+            add_ticks=False,
+        )
+
+        assert circuit[0].name == "RX"
+        assert tuple(target.qubit_value for target in circuit[0].targets_copy()) == tuple(
+            range(NUM_DATA_QUBITS)
+        )
+        assert all(instruction.name != "H" for instruction in circuit)
+        assert tuple(
+            (instruction.name, tuple(target.qubit_value for target in instruction.targets_copy()))
+            for instruction in circuit
+            if instruction.name in {"R", "RX"}
+        )[-2:] == (("R", (25,)), ("RX", (26,)))
+        assert tuple(
+            (instruction.name, tuple(target.qubit_value for target in instruction.targets_copy()))
+            for instruction in circuit
+            if instruction.name in {"M", "MX"}
+        ) == (("M", (25,)), ("MX", (26,)))
+
     def test_paper_top_and_bottom_boundary_rows(self) -> None:
         assert d5.X_STABILIZER_SCHEDULE["X_ab"] == ("", "", "a", "b")
         assert d5.X_STABILIZER_SCHEDULE["X_cd"] == ("", "", "c", "d")
@@ -206,3 +235,43 @@ class TestLogicalPlusPreparation:
         assert circuit.num_observables == 1
         assert not detection_events.any()
         assert not observable_flips.any()
+
+
+# ===========================================================================
+# Other tests
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    ("basis", "stabilizer_names"),
+    (("X", X_NAMES), ("Z", Z_NAMES)),
+)
+def test_full_data_readout_closes_compatible_stabilizers(
+    basis: str,
+    stabilizer_names: tuple[str, ...],
+) -> None:
+    """Compare destructive all-data parities with the final syndrome round."""
+    circuit = stim.Circuit()
+    if basis == "X":
+        d5.prepare_product_plus(circuit, qubits=tuple(range(NUM_DATA_QUBITS)))
+    stabilizer_positions = d5.append_scheduled_stabilizer_round(
+        circuit,
+        surface_qubits=tuple(range(NUM_DATA_QUBITS)),
+        selected_stabilizer_names=stabilizer_names,
+        ancillas=tuple(range(NUM_DATA_QUBITS, NUM_DATA_QUBITS + len(stabilizer_names))),
+        round_label="readout reference",
+        add_ticks=False,
+    )
+    readout_positions = d5.append_full_data_readout(
+        circuit,
+        basis,
+        surface_qubits=tuple(range(NUM_DATA_QUBITS)),
+        previous_stabilizer_measurement_positions=stabilizer_positions,
+    )
+    detection_events = circuit.compile_detector_sampler(seed=4).sample(32)
+
+    assert readout_positions == tuple(
+        range(len(stabilizer_names), len(stabilizer_names) + NUM_DATA_QUBITS)
+    )
+    assert circuit.num_detectors == len(stabilizer_names)
+    assert not detection_events.any()

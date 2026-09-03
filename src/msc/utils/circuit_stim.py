@@ -79,26 +79,27 @@ def append_scheduled_parity_measurements(
         Stim circuit to modify.
     bases
         Case-insensitive Pauli basis for each row. Z uses data-controlled CX,
-        X uses ancilla-controlled CX, and Y uses ancilla-controlled CY. X/Y
-        ancillas receive Hadamards before and after their interactions.
+        X uses ancilla-controlled CX, and Y uses ancilla-controlled CY.
     data_qubit_schedules
         Matrix with one parity-measurement row and one interaction-time-step
         column. Use ``None`` for idle positions. Rows must have equal length;
         each column must be collision-free.
     ancilla_qubits
         The first row-count indices are used, one distinct ancilla per row.
-        Every used ancilla must start in ``|0>``.
+        Every used ancilla is reset in its measurement basis with ``RX``,
+        ``RY``, or ``RZ`` and read out natively with ``MX``, ``MY``, or ``MZ``.
     invert_results
         Optional result-sign inversion per row. Omitted entries default to
         false only when the entire argument is omitted; a supplied sequence
         must contain one value per row.
     add_ticks
-        Whether to separate basis changes and interaction columns with ticks.
+        Whether to separate reset, interaction, and measurement layers with
+        ticks.
 
     Notes
     -----
-    Row order defines Stim measurement-record order. This helper does not reset
-    ancillas. Additional basis, ancilla, and inversion entries are untouched.
+    Row order defines Stim measurement-record order. Additional basis,
+    ancilla, and inversion entries are untouched.
     """
     schedules = tuple(tuple(schedule) for schedule in data_qubit_schedules)
     num_measurements = len(schedules)
@@ -139,15 +140,10 @@ def append_scheduled_parity_measurements(
         if set(active_data_qubits) & set(used_ancillas):
             raise ValueError("a measurement ancilla cannot also be data in one parallel step.")
 
-    rotated_ancillas = tuple(
-        ancilla
-        for basis, ancilla in zip(selected_bases, used_ancillas, strict=True)
-        if basis in {"X", "Y"}
-    )
-    if rotated_ancillas:
-        circuit.append("H", rotated_ancillas)
-        if add_ticks:
-            circuit.append("TICK", [])
+    for basis, ancilla in zip(selected_bases, used_ancillas, strict=True):
+        circuit.append({"X": "RX", "Y": "RY", "Z": "RZ"}[basis], [ancilla])
+    if used_ancillas and add_ticks:
+        circuit.append("TICK", [])
 
     for data_qubits_at_step in schedule_layers:
         cx_targets: list[int] = []
@@ -172,21 +168,14 @@ def append_scheduled_parity_measurements(
             circuit.append("CY", cy_targets)
         if add_ticks:
             circuit.append("TICK", [])
-
-    if rotated_ancillas:
-        circuit.append("H", rotated_ancillas)
-        if add_ticks:
-            circuit.append("TICK", [])
-    if used_ancillas:
-        measurement_targets = tuple(
-            stim.target_inv(ancilla) if invert_result else ancilla
-            for ancilla, invert_result in zip(
-                used_ancillas,
-                selected_inversions,
-                strict=True,
-            )
-        )
-        circuit.append("M", measurement_targets)
+    for basis, ancilla, invert_result in zip(
+        selected_bases,
+        used_ancillas,
+        selected_inversions,
+        strict=True,
+    ):
+        target = stim.target_inv(ancilla) if invert_result else ancilla
+        circuit.append({"X": "MX", "Y": "MY", "Z": "MZ"}[basis], [target])
 
 
 def append_parity_measurement(
@@ -199,10 +188,10 @@ def append_parity_measurement(
 ) -> None:
     """Append a non-destructive Pauli-string parity measurement.
 
-    The ancilla is assumed to start in ``|0>``. The measurement result is
-    appended to Stim's measurement record. Set ``invert_result`` when the
-    physical Pauli-string parity has the opposite sign from the represented
-    logical observable.
+    The ancilla is reset and measured directly in ``basis`` without Hadamard
+    basis changes. The result is appended to Stim's measurement record. Set
+    ``invert_result`` when the physical Pauli-string parity has the opposite
+    sign from the represented logical observable.
     """
     basis = normalize_pauli_char(basis)
     append_scheduled_parity_measurements(
@@ -231,10 +220,9 @@ def append_pauli_string_measurement(
 
     ``paulis`` and ``data_qubits`` give the Pauli acting on each physical
     qubit. Homogeneous strings reuse :func:`append_parity_measurement`. Mixed
-    strings prepare the ancilla in ``|+>``, apply the corresponding controlled
-    Pauli from the ancilla to each data qubit, return the ancilla to the Z
-    basis, and measure it. The ancilla must start in ``|0>``; this helper does
-    not reset it or add ticks. ``invert_result`` reverses the recorded sign.
+    strings reset the ancilla with ``RX``, apply the corresponding controlled
+    Pauli from the ancilla to each data qubit, and measure it with ``MX``.
+    ``invert_result`` reverses the recorded sign.
     """
     selected_paulis = tuple(normalize_pauli_char(pauli) for pauli in paulis)
     selected_data_qubits = tuple(data_qubits)
@@ -253,14 +241,13 @@ def append_pauli_string_measurement(
         )
         return
 
-    circuit.append("H", [ancilla_qubit])
+    circuit.append("RX", [ancilla_qubit])
     for pauli, data_qubit in zip(selected_paulis, selected_data_qubits, strict=True):
         circuit.append({"X": "CX", "Y": "CY", "Z": "CZ"}[pauli], [ancilla_qubit, data_qubit])
-    circuit.append("H", [ancilla_qubit])
     measurement_target: int | stim.GateTarget = ancilla_qubit
     if invert_result:
         measurement_target = stim.target_inv(measurement_target)
-    circuit.append("M", [measurement_target])
+    circuit.append("MX", [measurement_target])
 
 
 def append_logical_measurement_on_indexed_qubits(

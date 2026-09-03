@@ -12,22 +12,7 @@ from msc.utils.circuit_stim import (
     append_logical_measurement_on_indexed_qubits,
     append_scheduled_parity_measurements,
 )
-
-
-def reset_to_zero(
-    circuit: stim.Circuit,
-    *,
-    qubits: Sequence[int],
-    add_ticks: bool = False,
-    tick_label: str | None = None,
-) -> None:
-    """Reset a collection of qubits to ``|0>``."""
-    del tick_label
-    selected_qubits = tuple(qubits)
-    if selected_qubits:
-        circuit.append("R", selected_qubits)
-    if add_ticks:
-        circuit.append("TICK", [])
+from msc.utils.normalize import normalize_pauli_char
 
 
 def prepare_product_plus(
@@ -37,11 +22,11 @@ def prepare_product_plus(
     add_ticks: bool = False,
     tick_label: str | None = None,
 ) -> None:
-    """Prepare a collection of qubits in ``|+>`` from caller-supplied ``|0>`` states."""
+    """Reset a collection of qubits directly into ``|+>``."""
     del tick_label
     selected_qubits = tuple(qubits)
     if selected_qubits:
-        circuit.append("H", selected_qubits)
+        circuit.append("RX", selected_qubits)
     if add_ticks:
         circuit.append("TICK", [])
 
@@ -52,7 +37,6 @@ def append_scheduled_stabilizer_round(
     label_to_qubit: Mapping[str, int],
     ancillas: Sequence[int],
     selected_stabilizer_schedules: Mapping[str, tuple[str, ...]],
-    reset_ancillas_initially: bool,
     add_ticks: bool,
     tick_label: str | None,
 ) -> tuple[int, ...]:
@@ -63,9 +47,9 @@ def append_scheduled_stabilizer_round(
     defines both ancilla alignment and Stim measurement-record order; every
     selected stabilizer requires a distinct ancilla and retains its canonical
     schedule row. Each stabilizer name begins with its physical basis,
-    ``"X"`` or ``"Z"``. If ``reset_ancillas_initially`` is true, every used
-    ancilla is reset immediately before the interactions; otherwise the caller
-    must supply ancillas already in ``|0>``.
+    ``"X"`` or ``"Z"``. Every ancilla is reset and measured directly in that
+    basis with ``RX``/``RZ`` and ``MX``/``MZ``; no Hadamard basis changes are
+    inserted.
 
     This measures only. Pass the returned record positions to
     :func:`append_stabilizer_detectors` to annotate known-``+1`` or change
@@ -85,11 +69,6 @@ def append_scheduled_stabilizer_round(
         selected_stabilizer_schedules=selected_stabilizer_schedules,
         ancillas=ancillas,
     )
-    if reset_ancillas_initially and used_ancillas:
-        circuit.append("R", used_ancillas)
-        if add_ticks:
-            circuit.append("TICK", [])
-
     append_scheduled_parity_measurements(
         circuit,
         bases=tuple(name[0] for name in selected_stabilizer_schedules),
@@ -133,6 +112,58 @@ def append_stabilizer_detectors(
             )
         previous_positions = current_positions
     return tuple(range(first_detector, circuit.num_detectors))
+
+
+def append_full_data_readout(
+    circuit: stim.Circuit,
+    basis: str,
+    *,
+    surface_qubits: Sequence[int],
+    surface_order: Sequence[str],
+    surface_index: Mapping[str, int],
+    stabilizers: Mapping[str, Sequence[str]],
+    previous_stabilizer_measurement_positions: Sequence[int],
+) -> tuple[int, ...]:
+    """Destructively read every data qubit and close compatible checks.
+
+    X- or Z-basis data measurements reconstruct the stabilizers of the same
+    basis. Each reconstructed parity is compared with the corresponding final
+    syndrome-round result, producing the readout-boundary detectors used by
+    Hirano's non-full-postselection experiment. The returned record positions
+    follow ``surface_order``.
+    """
+    basis = normalize_pauli_char(basis)
+    if basis not in {"X", "Z"}:
+        raise ValueError("full-data readout basis must be X or Z.")
+    selected_surface_order = tuple(surface_order)
+    selected_surface_qubits = tuple(surface_qubits[: len(selected_surface_order)])
+    if len(selected_surface_qubits) != len(selected_surface_order):
+        raise ValueError("surface_qubits does not cover surface_order.")
+    previous_positions = tuple(previous_stabilizer_measurement_positions)
+    if len(previous_positions) != len(stabilizers):
+        raise ValueError("previous stabilizer positions do not match the readout basis.")
+
+    first_measurement_position = circuit.num_measurements
+    circuit.append("MX" if basis == "X" else "M", selected_surface_qubits)
+    readout_positions = tuple(
+        range(first_measurement_position, first_measurement_position + len(selected_surface_order))
+    )
+    readout_position_by_label = {
+        label: readout_positions[surface_index[label]] for label in selected_surface_order
+    }
+    for previous_position, support in zip(
+        previous_positions,
+        stabilizers.values(),
+        strict=True,
+    ):
+        circuit_stim.append_detector(
+            circuit,
+            measurement_positions=(
+                previous_position,
+                *(readout_position_by_label[label] for label in support),
+            ),
+        )
+    return readout_positions
 
 
 def append_logical_measurement(

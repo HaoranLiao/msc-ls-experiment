@@ -292,13 +292,8 @@ def append_11_site_patch_stabilizer_measurement(
     selected_indices = resolve_patch_stabilizer_indices(stabilizer_indices)
     first_stabilizer_position = circuit.num_measurements
     anc = PATCH_11_SITE_STABILIZER_ANCILLA_SITES
-    selected_ancilla_sites = tuple(anc[index] for index in selected_indices)
 
     if basis in ("X", "BOTH"):
-        circuit.append(
-            "R",
-            [patch_qubits[site] for site in selected_ancilla_sites],
-        )
         for stabilizer_index in selected_indices:
             ancilla_site = anc[stabilizer_index]
             support = PATCH_11_SITE_X_STABILIZERS[stabilizer_index]
@@ -312,10 +307,6 @@ def append_11_site_patch_stabilizer_measurement(
             circuit.append("TICK", [])
 
     if basis in ("Z", "BOTH"):
-        circuit.append(
-            "R",
-            [patch_qubits[site] for site in selected_ancilla_sites],
-        )
         for stabilizer_index in selected_indices:
             ancilla_site = anc[stabilizer_index]
             support = PATCH_11_SITE_Z_STABILIZERS[stabilizer_index]
@@ -476,11 +467,13 @@ def append_14_site_patch_abstract_routed_encoder(
         for gate_name, operands in tick_layer:
             if gate_name == "H":
                 circuit.append("H", [patch_qubits[site] for site in operands])
-            else:  # "CX"
+            elif gate_name == "CX":
                 targets: list[int] = []
                 for control_site, target_site in operands:
                     targets.extend((patch_qubits[control_site], patch_qubits[target_site]))
                 circuit.append("CX", targets)
+            else:  # pragma: no cover - defensive if the shared schedule is edited.
+                raise ValueError(f"Unsupported abstract-routed gate: {gate_name!r}.")
         if add_ticks:
             circuit.append("TICK", [])
 
@@ -601,11 +594,13 @@ def append_14_site_patch_hirano_encoder(
                 for control_site, target_site in operands:
                     targets.extend((patch_qubits[control_site], patch_qubits[target_site]))
                 circuit.append("CX", targets)
-            else:  # "INJECT"
+            elif gate_name == "INJECT":
                 circuit.append(
                     gate_on_injection_site,
                     [patch_qubits[operands[0]]],
                 )
+            else:  # pragma: no cover - defensive if the shared schedule is edited.
+                raise ValueError(f"Unsupported Hirano encoder gate: {gate_name!r}.")
         if add_ticks:
             circuit.append("TICK", [])
 
@@ -632,28 +627,25 @@ def append_14_site_patch_superdense_stabilizer_measurement(
     patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
     basis: PatchStabilizerBasis = "BOTH",
     stabilizer_indices: Sequence[int] | None = None,
-    measure_bell_partner_flags: bool = True,
     add_ticks: bool = True,
 ) -> None:
-    """Append one conceptually-clear superdense round on the 14-site patch.
+    """Append selected 14-site Steane checks using superdense Bell ancillas.
 
-    Reads selected weight-4 Steane faces at once. Each face owns a
-    neighbouring helper Bell pair (X-ancilla A, Z-ancilla B); every data qubit
-    couples only to whichever ancilla it neighbours (data → ancilla for the Z
-    parity, ancilla → data for the X parity), and the Bell correlation
-    (``X_A X_B`` and ``Z_A Z_B``) carries each contribution into both readouts.
-    With the default selection, six ancilla measurements — ``MX`` on each A,
-    ``MZ`` on each B — return the three faces' X- and Z-stabilizers, ordered
-    ``[X0145, Z0145, X0235, Z0235, X0246, Z0246]``.  Each is annotated with a
-    single-measurement detector against its ``+1`` preparation reference, so a
-    noiseless codeword produces no detection events.
+    Each face uses one Bell pair to extract its X and Z parity simultaneously.
+    The default record order is
+    ``[X0145, Z0145, X0235, Z0235, X0246, Z0246]``. Each result receives a
+    detector against its known ``+1`` value.
 
-    Data qubit 2 is shared by two faces but neighbours only one face's Z-ancilla,
-    so the round couples its second copy D2' (site 13) to the distant ancilla:
-    it first builds a Z-basis repetition code between D2 and D2' (shared Z
-    parity), then swaps it for an X-basis repetition code (shared X parity), and
-    finally restores data qubit 2.  Qubit 1 stays at its home site throughout —
-    no relocation.
+    A single-basis extraction omits the opposite-basis data couplings but still
+    reads the partner ancilla in its native basis. This known-zero result is a
+    Bell-correlation fault flag, not the opposite-basis stabilizer parity.
+
+    Face 0246 temporarily encodes D2 into D2' (site 13) to reach its distant
+    ancilla. After the final uncompute, D2' should be ``|0>`` for a Z-only
+    extraction or ``|+>`` otherwise, so its measurement is a restoration flag.
+    The ``Z0246`` or ``X0246`` parity is reported separately by the Bell
+    ancilla. If both bases are extracted, D2' is reset directly from the Z
+    repetition encoding into the X encoding, so only the final X flag is read.
 
     Parameters
     ----------
@@ -666,11 +658,6 @@ def append_14_site_patch_superdense_stabilizer_measurement(
     stabilizer_indices
         Ordered subset of the three canonical stabilizers to measure. ``None``
         measures all three.
-    measure_bell_partner_flags
-        For a single-basis check, also measure the other Bell ancilla in its
-        native basis and postselect its known-zero outcome. This defaults to
-        true because the flag retains graphlike distance three in serialized
-        schedules; callers that cannot retain it must explicitly disable it.
     add_ticks
         Whether to insert ``TICK`` layer separators between round layers.
     """
@@ -679,11 +666,11 @@ def append_14_site_patch_superdense_stabilizer_measurement(
         expected_count=NUM_QUBITS_PATCH_14_SITES,
     )
 
-    for tick_layer in select_14_site_patch_superdense_measurement_layers(
+    measurement_layers, readouts = select_14_site_patch_superdense_measurement_layers(
         basis,
         stabilizer_indices,
-        measure_bell_partner_flags=measure_bell_partner_flags,
-    ):
+    )
+    for tick_layer in measurement_layers:
         for gate_name, operands in tick_layer:
             if gate_name in ("RESET_X", "RESET_Z"):
                 stim_reset = "RX" if gate_name == "RESET_X" else "RZ"
@@ -693,16 +680,19 @@ def append_14_site_patch_superdense_stabilizer_measurement(
                 for control_site, target_site in operands:
                     targets.extend((patch_qubits[control_site], patch_qubits[target_site]))
                 circuit.append("CX", targets)
-            else:  # "MEASURE_X" / "MEASURE_Z" destructive ancilla readout
-                stim_gate = "MX" if gate_name == "MEASURE_X" else "M"
-                for site in operands:
-                    circuit.append(stim_gate, [patch_qubits[site]])
-                    circuit_stim.append_detector(
-                        circuit,
-                        measurement_positions=(circuit.num_measurements - 1,),
-                    )
         if add_ticks:
             circuit.append("TICK", [])
+
+    # Stabilizers and both flag roles are known-zero detectors in this Stim path.
+    for readout_basis, site, _readout_role in readouts:
+        stim_gate = "MX" if readout_basis == "X" else "M"
+        circuit.append(stim_gate, [patch_qubits[site]])
+        circuit_stim.append_detector(
+            circuit,
+            measurement_positions=(circuit.num_measurements - 1,),
+        )
+    if add_ticks:
+        circuit.append("TICK", [])
 
 
 def append_14_site_patch_logical_measurement(

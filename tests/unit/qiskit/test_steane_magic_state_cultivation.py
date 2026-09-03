@@ -15,6 +15,7 @@ from msc.noise import build_noisy_aer_simulator
 from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
+    PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
     STEANE_QED_MEASUREMENTS_PER_ROUND,
 )
 from msc.steane_code.magic_state_cultivation_qiskit import (
@@ -65,6 +66,7 @@ class PatchCultivationSuite:
     default_logical_x: tuple[int, ...]
     default_logical_z: tuple[int, ...]
     encoder_flag_bits: int
+    qed_measurements_per_round: int
     cultivation_measurements_per_round: int
     accepted_test_states: tuple[InjectedStateName, ...]
     success_rate_test_states: tuple[InjectedStateName, ...]
@@ -83,6 +85,7 @@ ELEVEN_SITE = PatchCultivationSuite(
     default_logical_x=PATCH_11_SITE_DEFAULT_LOGICAL_X,
     default_logical_z=PATCH_11_SITE_DEFAULT_LOGICAL_Z,
     encoder_flag_bits=len(PATCH_11_SITE_HELPER_SITES),
+    qed_measurements_per_round=STEANE_QED_MEASUREMENTS_PER_ROUND,
     cultivation_measurements_per_round=PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     accepted_test_states=("Ty", "1", "+", "Y+", "T"),
     success_rate_test_states=("Ty", "1", "+", "Y+", "T"),
@@ -98,6 +101,7 @@ FOURTEEN_SITE = PatchCultivationSuite(
     default_logical_x=PATCH_14_SITE_DEFAULT_LOGICAL_X,
     default_logical_z=PATCH_14_SITE_DEFAULT_LOGICAL_Z,
     encoder_flag_bits=len(PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES),
+    qed_measurements_per_round=PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
     cultivation_measurements_per_round=PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     accepted_test_states=("T",),
     success_rate_test_states=("T",),
@@ -146,7 +150,7 @@ def _build_cultivation_with_logical_measurement(
         basis,
         patch_qubits=list(circuit.qregs[0]),
         support=support,
-        classical_bits=list(logical_creg),
+        bits=list(logical_creg),
         destructive=True,
     )
 
@@ -157,7 +161,7 @@ def _n_postselection_bits(patch: PatchCultivationSuite, n_rounds: int) -> int:
     """Return encoder-flag, QED, and cultivation postselection bits."""
     return (
         patch.encoder_flag_bits
-        + STEANE_QED_MEASUREMENTS_PER_ROUND
+        + patch.qed_measurements_per_round
         + n_rounds * patch.cultivation_measurements_per_round
     )
 
@@ -216,6 +220,7 @@ def _postselect_and_compute_expectation(
 class TestPostselectedLogicalExpectation:
     """Postselection projects onto the logical H_XY +1 state."""
 
+    @pytest.mark.slow
     @pytest.mark.parametrize(
         ("patch", "state"), PATCH_ACCEPTED_STATE_CASES, ids=PATCH_ACCEPTED_STATE_IDS
     )
@@ -328,17 +333,24 @@ class TestStabilizerSyndromesAfterCultivation:
 
     @pytest.mark.parametrize("patch", PATCH_SUITES, ids=PATCH_IDS)
     def test_all_stabilizers_trivial(self, patch: PatchCultivationSuite) -> None:
-        """All 6 stabilizer measurements yield 0 (eigenvalue +1) after cultivation."""
+        """All stabilizer results and the 14-site D2-copy flag are zero."""
         for state in patch.stabilizer_check_states:
             circuit = patch.build_circuit(state, add_qed_round=True, add_barriers=False)
 
-            # Append stabilizer measurement
-            stab_creg = ClassicalRegister(STEANE_QED_MEASUREMENTS_PER_ROUND, "stab")
+            stab_creg = ClassicalRegister(patch.qed_measurements_per_round, "stab")
             circuit.add_register(stab_creg)
+            measurement_destinations = (
+                {
+                    "stabilizer_bits": list(stab_creg)[:STEANE_QED_MEASUREMENTS_PER_ROUND],
+                    "d2_copy_flag_bit": stab_creg[-1],
+                }
+                if patch.patch_sites == 14
+                else {"bits": list(stab_creg)}
+            )
             patch.append_stabilizer_measurement(
                 circuit,
                 patch_qubits=list(circuit.qregs[0]),
-                classical_bits=list(stab_creg),
+                **measurement_destinations,
                 add_barriers=False,
             )
 
@@ -384,6 +396,7 @@ class TestNoisyCultivation:
     are preferentially rejected.
     """
 
+    @pytest.mark.slow
     @pytest.mark.parametrize("patch", PATCH_SUITES, ids=PATCH_IDS)
     @pytest.mark.parametrize("basis", ["X", "Y", "Z"])
     def test_postselected_fidelity_near_ideal(

@@ -1,4 +1,20 @@
-"""Stim continuation of a rotated surface patch after state transfer."""
+"""Append full rotated-surface stabilizer rounds in Stim.
+
+This module appends the repeated measurement schedule and returns the Z and X
+measurement positions for every round. It does not add temporal detectors:
+the correct reference for round 1 depends on what happened before these
+rounds.
+
+The d=5 lattice-surgery callers complete that boundary differently::
+
+    append_post_transfer_stabilization(...)
+    ├── append_rotated_full_stabilizer_rounds(...)  # this module
+    └── compare round 1 with merge-round and m_ab results
+
+    append_ideal_y_verification(...)
+    ├── append_rotated_full_stabilizer_rounds(...)  # this module
+    └── compare the ideal round with the final noisy round
+"""
 
 from __future__ import annotations
 
@@ -6,12 +22,10 @@ from collections.abc import Callable, Sequence
 
 import stim
 
-from msc.rotated_surface_code import helper_stim as helper
-
 CircuitAppender = Callable[..., None]
 
 
-def append_rotated_post_transfer(
+def append_rotated_full_stabilizer_rounds(
     circuit: stim.Circuit,
     *,
     surface_qubits: Sequence[int],
@@ -21,74 +35,44 @@ def append_rotated_post_transfer(
     x_stabilizer_names: Sequence[str],
     stabilizer_rounds: int,
     append_scheduled_stabilizer_round: CircuitAppender,
-    logical_readout_basis: str | None,
-    append_logical_measurement: CircuitAppender,
-    z_reference_measurement_positions: Sequence[int] | None = None,
-    x_reference_measurement_positions: Sequence[int] | None = None,
-    observable_index: int | None = None,
     add_ticks: bool = True,
-) -> None:
-    """Append full rounds, optional change detectors, and logical readout.
+) -> tuple[tuple[tuple[int, ...], ...], tuple[tuple[int, ...], ...]]:
+    """Append full rounds and return their Z/X measurement-position histories.
 
-    Supplying both reference-position sequences appends change detectors for
-    every full stabilizer round. ``observable_index`` includes the destructive
-    logical measurement parity as a Stim observable. Protocol-specific Pauli-
-    frame measurements must be appended separately by the enclosing builder.
+    This helper owns only the repeated rotated-patch schedule. It cannot append
+    the first temporal detectors because their references depend on the
+    preceding protocol: lattice surgery, code expansion, or another boundary.
     """
     if stabilizer_rounds < 0:
         raise ValueError("stabilizer_rounds must be nonnegative.")
-    if (z_reference_measurement_positions is None) != (x_reference_measurement_positions is None):
-        raise ValueError("both X and Z stabilizer references must be supplied together.")
+    if stabilizer_rounds == 0:
+        return (), ()
 
     first_round_measurement = circuit.num_measurements
-    if stabilizer_rounds:
-        round_circuit = stim.Circuit()
-        append_scheduled_stabilizer_round(
-            round_circuit,
-            surface_qubits=surface_qubits,
-            selected_stabilizer_names=tuple(z_stabilizer_names) + tuple(x_stabilizer_names),
-            ancillas=tuple(z_ancillas) + tuple(x_ancillas),
-            round_label="post-transfer round",
-            reset_ancillas_initially=True,
-            add_ticks=add_ticks,
-        )
-        if stabilizer_rounds == 1:
-            circuit += round_circuit
-        else:
-            circuit.append(stim.CircuitRepeatBlock(stabilizer_rounds, round_circuit))
-
-        # The rounds are placed as one (possibly REPEAT) block, so their change
-        # detectors are annotated here by absolute record position rather than
-        # inside each round: the first round compares against an external prior-
-        # stage reference that does not fit a REPEAT-internal relative offset.
-        if z_reference_measurement_positions is not None:
-            if x_reference_measurement_positions is None:  # pragma: no cover - guarded above.
-                raise RuntimeError("missing X stabilizer reference positions.")
-            z_round_width = len(z_stabilizer_names)
-            round_width = z_round_width + len(x_stabilizer_names)
-            z_rounds: list[tuple[int, ...]] = []
-            x_rounds: list[tuple[int, ...]] = []
-            for round_index in range(stabilizer_rounds):
-                round_start = first_round_measurement + round_index * round_width
-                z_rounds.append(tuple(range(round_start, round_start + z_round_width)))
-                x_rounds.append(
-                    tuple(range(round_start + z_round_width, round_start + round_width))
-                )
-            helper.append_stabilizer_detectors(
-                circuit, rounds=z_rounds, first_round_reference=z_reference_measurement_positions
-            )
-            helper.append_stabilizer_detectors(
-                circuit, rounds=x_rounds, first_round_reference=x_reference_measurement_positions
-            )
-
-    if logical_readout_basis is None:
-        return
-    append_logical_measurement(
-        circuit,
-        logical_readout_basis,
+    round_circuit = stim.Circuit()
+    stabilizer_names = tuple(z_stabilizer_names) + tuple(x_stabilizer_names)
+    ancillas = tuple(z_ancillas) + tuple(x_ancillas)
+    append_scheduled_stabilizer_round(
+        round_circuit,
         surface_qubits=surface_qubits,
-        destructive=True,
-        observable_index=observable_index,
+        selected_stabilizer_names=stabilizer_names,
+        ancillas=ancillas,
+        round_label="post-transfer round",
+        add_ticks=add_ticks,
     )
-    if add_ticks:
-        circuit.append("TICK", [])
+    if stabilizer_rounds == 1:
+        circuit += round_circuit
+    else:
+        circuit.append(stim.CircuitRepeatBlock(stabilizer_rounds, round_circuit))
+
+    z_measurement_rounds: list[tuple[int, ...]] = []
+    x_measurement_rounds: list[tuple[int, ...]] = []
+    z_round_width = len(z_stabilizer_names)
+    round_width = z_round_width + len(x_stabilizer_names)
+    for round_index in range(stabilizer_rounds):
+        round_start = first_round_measurement + round_index * round_width
+        z_measurement_rounds.append(tuple(range(round_start, round_start + z_round_width)))
+        x_measurement_rounds.append(
+            tuple(range(round_start + z_round_width, round_start + round_width))
+        )
+    return tuple(z_measurement_rounds), tuple(x_measurement_rounds)

@@ -139,7 +139,7 @@ def test_one_round_logical_expectations(
     append_11_site_patch_stabilizer_measurement(
         circuit,
         patch_qubits=patch_qubits,
-        classical_bits=list(syndrome),
+        bits=list(syndrome),
         add_barriers=False,
     )
     circuit.save_statevector(label="statevector")
@@ -214,14 +214,14 @@ def test_two_round_logical_expectations(
     append_11_site_patch_stabilizer_measurement(
         circuit,
         patch_qubits=patch_qubits,
-        classical_bits=list(first_syndrome),
+        bits=list(first_syndrome),
         add_barriers=False,
     )
     append_pauli_faults(circuit, [second_fault], qubit_map=patch_qubits)
     append_11_site_patch_stabilizer_measurement(
         circuit,
         patch_qubits=patch_qubits,
-        classical_bits=list(second_syndrome),
+        bits=list(second_syndrome),
         add_barriers=False,
     )
     circuit.save_statevector(label="statevector")

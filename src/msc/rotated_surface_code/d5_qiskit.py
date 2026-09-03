@@ -47,8 +47,7 @@ def draw_patch(ax: Axes | None = None) -> tuple[plt.Figure, Axes]:
     return common.draw_patch(PATCH_SPEC, ax)
 
 
-# These two preparation helpers need no patch geometry, so expose them directly.
-reset_to_zero = helper.reset_to_zero
+# Product-state preparation needs no patch geometry, so expose it directly.
 prepare_product_plus = helper.prepare_product_plus
 
 
@@ -58,7 +57,7 @@ def append_scheduled_stabilizer_round(
     surface_qubits: Sequence[object],
     selected_stabilizer_names: Sequence[str],
     ancillas: Sequence[object],
-    classical_bits: Sequence[object],
+    bits: Sequence[object],
     round_label: str,
     reset_ancillas_initially: bool = False,
     add_barriers: bool = True,
@@ -66,7 +65,7 @@ def append_scheduled_stabilizer_round(
     """Append selected rotated-d=5 stabilizers in the canonical schedule.
 
     For every position ``i``, ``selected_stabilizer_names[i]`` is measured
-    with ``ancillas[i]`` and stored in ``classical_bits[i]``. The selection may
+    with ``ancillas[i]`` and stored in ``bits[i]``. The selection may
     contain X checks, Z checks, or any mixed-basis subset. Every selected check
     retains its row from ``FULL_STABILIZER_SCHEDULE``, so every valid selection
     has at most four two-qubit layers.
@@ -83,13 +82,34 @@ def append_scheduled_stabilizer_round(
         circuit,
         label_to_qubit=label2qubit(surface_qubits),
         ancillas=ancillas,
-        classical_bits=classical_bits,
+        bits=bits,
         selected_stabilizer_schedules={
             name: FULL_STABILIZER_SCHEDULE[name] for name in selected_stabilizer_names
         },
         reset_ancillas_initially=reset_ancillas_initially,
         add_barriers=add_barriers,
         barrier_label=f"{round_label} scheduled stabilizer round",
+    )
+
+
+def append_full_data_readout(
+    circuit: QuantumCircuit,
+    basis: str,
+    *,
+    surface_qubits: Sequence[object],
+    bits: Sequence[object],
+) -> None:
+    """Destructively read all d=5 data qubits into bits ordered ``a..y``.
+
+    Unlike Stim, Qiskit does not append readout-boundary detectors. Compatible
+    stabilizer parities must be reconstructed from these 25 bits in analysis.
+    """
+    helper.append_full_data_readout(
+        circuit,
+        basis,
+        surface_qubits=surface_qubits,
+        surface_order=SURFACE_ORDER,
+        bits=bits,
     )
 
 
@@ -100,7 +120,7 @@ def append_logical_measurement(
     surface_qubits: Sequence[object],
     support: tuple[str, ...] | None = None,
     ancilla_qubit=None,
-    classical_bits: Sequence[object],
+    bits: Sequence[object],
     destructive: bool = True,
 ) -> None:
     """Append an X, Y, or Z logical measurement on the d=5 patch.
@@ -120,6 +140,6 @@ def append_logical_measurement(
         default_logical_z=DEFAULT_LOGICAL_Z,
         support=support,
         ancilla_qubit=ancilla_qubit,
-        classical_bits=classical_bits,
+        bits=bits,
         destructive=destructive,
     )

@@ -373,7 +373,7 @@ def test_patch_logical_via_measurement_circuit(
             patch_qubits=list(range(patch_spec.num_qubits)),
             support=support,
             ancilla_qubit=ancilla_qubit,
-            classical_bits=[0],
+            bits=[0],
             destructive=False,
         )
         if basis == "Y":
@@ -503,26 +503,33 @@ def _build_and_run_patch_syndrome(
     faults: list[tuple[str, int]],
 ) -> tuple[tuple[int, ...], tuple[int, ...]]:
     """Encode, inject faults, and return the measured X/Z syndromes."""
-    circuit = QuantumCircuit(patch_spec.num_qubits, 6)
+    bit_count = 6 if patch_spec.name == "11-site" else 7
+    circuit = QuantumCircuit(patch_spec.num_qubits, bit_count)
     _apply_patch_encoder(circuit, patch_spec, encoder, injected_state)
     append_pauli_faults(circuit, faults)
     if patch_spec.name == "11-site":
         append_11_site_patch_stabilizer_measurement(
             circuit,
             patch_qubits=list(range(patch_spec.num_qubits)),
-            classical_bits=list(range(6)),
+            bits=list(range(6)),
             add_barriers=False,
         )
-    else:
+    elif patch_spec.name == "14-site":
         append_14_site_patch_superdense_stabilizer_measurement(
             circuit,
             patch_qubits=list(range(patch_spec.num_qubits)),
-            classical_bits=list(range(6)),
+            stabilizer_bits=list(range(6)),
+            d2_copy_flag_bit=6,
             add_barriers=False,
         )
+    else:  # pragma: no cover - parametrization uses only supported patches.
+        raise ValueError(f"Unsupported patch: {patch_spec.name!r}.")
 
     bitstring = next(iter(AerSimulator().run(circuit, shots=1).result().get_counts()))
-    bits = parse_qiskit_bitstring(bitstring, tuple(f"b{i}" for i in range(6)))
+    bits = parse_qiskit_bitstring(
+        bitstring,
+        tuple(f"b{i}" for i in range(bit_count)),
+    )
     if patch_spec.name == "11-site":
         return (
             tuple(bits[f"b{i}"] for i in range(3)),
@@ -576,29 +583,30 @@ def test_patch_single_basis_stabilizer_measurement(
     basis: str,
 ) -> None:
     """Verify a complete one-basis stabilizer round on either patch."""
-    classical_bit_count = 6 if patch_spec.name == "14-site" else 3
-    circuit = QuantumCircuit(patch_spec.num_qubits, classical_bit_count)
+    bit_count = 3 if patch_spec.name == "11-site" else 7
+    circuit = QuantumCircuit(patch_spec.num_qubits, bit_count)
     _apply_patch_encoder(circuit, patch_spec, encoder, "S")
     if patch_spec.name == "11-site":
         append_11_site_patch_stabilizer_measurement(
             circuit,
             patch_qubits=list(range(patch_spec.num_qubits)),
-            classical_bits=list(range(3)),
+            bits=list(range(3)),
             basis=basis,
             add_barriers=False,
         )
-    else:
+    elif patch_spec.name == "14-site":
         append_14_site_patch_superdense_stabilizer_measurement(
             circuit,
             patch_qubits=list(range(patch_spec.num_qubits)),
-            classical_bits=list(range(3)),
-            bell_partner_flag_classical_bits=list(range(3, 6)),
+            stabilizer_bits=list(range(3)),
+            bell_partner_flag_bits=list(range(3, 6)),
+            d2_copy_flag_bit=6,
             basis=basis,
             add_barriers=False,
         )
-    assert AerSimulator().run(circuit, shots=1).result().get_counts() == {
-        "0" * classical_bit_count: 1
-    }
+    else:  # pragma: no cover - parametrization uses only supported patches.
+        raise ValueError(f"Unsupported patch: {patch_spec.name!r}.")
+    assert AerSimulator().run(circuit, shots=1).result().get_counts() == {"0" * bit_count: 1}
 
 
 @pytest.mark.parametrize(("patch_spec", "encoder"), PATCH_ENCODERS)
@@ -609,31 +617,34 @@ def test_patch_selected_stabilizer_measurement(
     basis: str,
 ) -> None:
     """Verify either patch measures only the requested stabilizer subset."""
-    classical_bit_count = 4 if patch_spec.name == "14-site" else 2
-    circuit = QuantumCircuit(patch_spec.num_qubits, classical_bit_count)
+    bit_count = 5 if patch_spec.name == "14-site" else 2
+    circuit = QuantumCircuit(patch_spec.num_qubits, bit_count)
     _apply_patch_encoder(circuit, patch_spec, encoder, "S")
     measurement_start = len(circuit.data)
     if patch_spec.name == "11-site":
         append_11_site_patch_stabilizer_measurement(
             circuit,
             patch_qubits=list(range(patch_spec.num_qubits)),
-            classical_bits=list(range(2)),
+            bits=list(range(2)),
             basis=basis,
             stabilizer_indices=(0, 2),
             add_barriers=False,
         )
         unselected_ancilla_sites = {6}
-    else:
+    elif patch_spec.name == "14-site":
         append_14_site_patch_superdense_stabilizer_measurement(
             circuit,
             patch_qubits=list(range(patch_spec.num_qubits)),
-            classical_bits=list(range(2)),
-            bell_partner_flag_classical_bits=list(range(2, 4)),
+            stabilizer_bits=list(range(2)),
+            bell_partner_flag_bits=list(range(2, 4)),
+            d2_copy_flag_bit=4,
             basis=basis,
             stabilizer_indices=(0, 2),
             add_barriers=False,
         )
         unselected_ancilla_sites = {11, 12}
+    else:  # pragma: no cover - parametrization uses only supported patches.
+        raise ValueError(f"Unsupported patch: {patch_spec.name!r}.")
 
     appended_instructions = circuit.data[measurement_start:]
     assert all(
@@ -644,11 +655,9 @@ def test_patch_selected_stabilizer_measurement(
     )
     assert (
         sum(instruction.operation.name == "measure" for instruction in appended_instructions)
-        == classical_bit_count
+        == bit_count
     )
-    assert AerSimulator().run(circuit, shots=1).result().get_counts() == {
-        "0" * classical_bit_count: 1
-    }
+    assert AerSimulator().run(circuit, shots=1).result().get_counts() == {"0" * bit_count: 1}
 
 
 # ---------------------------------------
@@ -791,8 +800,10 @@ def test_patch_injection_azimuth_angle_matches_named_state(
         encoder_function = append_11_site_patch_rosenfeld_encoder
     elif encoder == "abstract":
         encoder_function = append_14_site_patch_abstract_encoder
-    else:
+    elif patch_spec.name == "14-site" and encoder == "abstract-routed":
         encoder_function = append_14_site_patch_abstract_routed_encoder
+    else:  # pragma: no cover - parametrization uses supported encoder pairs.
+        raise ValueError(f"Unsupported {patch_spec.name} encoder: {encoder!r}.")
     encoder_arguments = {
         "patch_qubits": list(range(patch_spec.num_qubits)),
         "add_barriers": False,
@@ -827,8 +838,10 @@ def test_patch_routed_encoder_two_qubit_gates_are_local(
         coordinates = PATCH_11_SITE_COORDS
     elif encoder == "hirano":
         coordinates = PATCH_14_SITE_HIRANO_ENCODER_COORDS
-    else:
+    elif encoder == "abstract-routed":
         coordinates = PATCH_14_SITE_COORDS
+    else:  # pragma: no cover - parametrization uses supported encoder pairs.
+        raise ValueError(f"Unsupported {patch_spec.name} encoder: {encoder!r}.")
     for instruction in circuit.data:
         if instruction.operation.num_qubits != 2:
             continue
@@ -842,8 +855,10 @@ def test_patch_routed_encoder_two_qubit_gates_are_local(
                 True,
                 False,
             }
-        else:
+        elif patch_spec.name == "14-site":
             assert (abs(ax - bx), abs(ay - by)) == (1, 1)
+        else:  # pragma: no cover - parametrization uses only supported patches.
+            raise ValueError(f"Unsupported patch: {patch_spec.name!r}.")
 
 
 @pytest.mark.parametrize(("patch_spec", "encoder", "state"), PATCH_ROUTED_ENCODER_STATE_CASES)
@@ -862,11 +877,13 @@ def test_patch_routed_encoder_helper_expectation_values(
     elif encoder == "hirano":
         helper_sites = PATCH_14_SITE_HELPER_SITES
         observable = SparsePauliOp("X")
-    else:
+    elif encoder == "abstract-routed":
         helper_sites = tuple(
             site for site in range(patch_spec.num_qubits) if site not in patch_spec.data_sites
         )
         observable = SparsePauliOp("Z")
+    else:  # pragma: no cover - parametrization uses supported encoder pairs.
+        raise ValueError(f"Unsupported {patch_spec.name} encoder: {encoder!r}.")
     for site in helper_sites:
         assert statevector.expectation_value(observable, [site]).real == pytest.approx(
             1.0, abs=TOLERANCE
@@ -884,15 +901,17 @@ def test_patch_routed_encoder_helper_flags_are_zero(
         helper_sites = PATCH_11_SITE_HELPER_SITES
     elif encoder == "abstract-routed":
         helper_sites = PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES
-    else:
+    elif encoder == "hirano":
         helper_sites = PATCH_14_SITE_HELPER_SITES
+    else:  # pragma: no cover - parametrization uses supported encoder pairs.
+        raise ValueError(f"Unsupported {patch_spec.name} encoder: {encoder!r}.")
     circuit = QuantumCircuit(patch_spec.num_qubits, len(helper_sites))
     if patch_spec.name == "11-site":
         append_11_site_patch_rosenfeld_encoder(
             circuit,
             patch_qubits=list(range(patch_spec.num_qubits)),
             injected_state=state,
-            flag_classical_bits=list(range(len(helper_sites))),
+            flag_bits=list(range(len(helper_sites))),
             add_barriers=False,
         )
     elif encoder == "hirano":
@@ -900,17 +919,19 @@ def test_patch_routed_encoder_helper_flags_are_zero(
             circuit,
             patch_qubits=list(range(patch_spec.num_qubits)),
             injected_state=state,
-            flag_classical_bits=list(range(len(helper_sites))),
+            flag_bits=list(range(len(helper_sites))),
             add_barriers=False,
         )
-    else:
+    elif encoder == "abstract-routed":
         append_14_site_patch_abstract_routed_encoder(
             circuit,
             patch_qubits=list(range(patch_spec.num_qubits)),
             injected_state=state,
-            flag_classical_bits=list(range(len(helper_sites))),
+            flag_bits=list(range(len(helper_sites))),
             add_barriers=False,
         )
+    else:  # pragma: no cover - parametrization uses supported encoder pairs.
+        raise ValueError(f"Unsupported {patch_spec.name} encoder: {encoder!r}.")
     shots = 1024
     assert AerSimulator().run(circuit, shots=shots).result().get_counts() == {
         "0" * len(helper_sites): shots
@@ -929,8 +950,10 @@ def test_patch_routed_encoder_two_qubit_depth_does_not_increase_after_transpile(
         coordinates = PATCH_11_SITE_COORDS
     elif encoder == "hirano":
         coordinates = PATCH_14_SITE_HIRANO_ENCODER_COORDS
-    else:
+    elif encoder == "abstract-routed":
         coordinates = PATCH_14_SITE_COORDS
+    else:  # pragma: no cover - parametrization uses supported encoder pairs.
+        raise ValueError(f"Unsupported {patch_spec.name} encoder: {encoder!r}.")
     coupling_map = [
         [site_a, site_b]
         for site_a, coordinate_a in enumerate(coordinates)

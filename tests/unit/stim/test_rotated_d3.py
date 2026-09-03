@@ -158,6 +158,7 @@ class TestCanonicalStabilizerSchedule:
         assert actual_interactions == expected_interactions
         assert two_qubit_depth(circuit) == 4
 
+    @pytest.mark.slow
     def test_every_subset_has_at_most_four_two_qubit_layers(self) -> None:
         names = Z_NAMES + X_NAMES
         for count in range(len(names) + 1):

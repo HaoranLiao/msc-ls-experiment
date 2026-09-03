@@ -53,6 +53,37 @@ LOGICAL_EXPECTATIONS = {
 # =============================================================================
 
 
+def test_14_site_verification_groups_reuse_each_bell_pair_once() -> None:
+    """Require simultaneous same-face extraction and skip bare X0145."""
+    assert common.group_14_site_superdense_verification_checks(
+        common.STEANE_MERGE_VERIFICATION_ROUNDS[0]
+    ) == (
+        common.SteaneSuperdenseVerificationGroup("Z", (0,), ("Z0145",)),
+        common.SteaneSuperdenseVerificationGroup(
+            "BOTH",
+            (1, 2),
+            ("X0235", "Z0235", "X0246", "Z0246"),
+        ),
+    )
+    assert common.group_14_site_superdense_verification_checks(
+        common.STEANE_MERGE_VERIFICATION_ROUNDS[1]
+    ) == (
+        common.SteaneSuperdenseVerificationGroup(
+            "Z",
+            (0, 1, 2),
+            ("Z0145", "Z0235", "Z0246"),
+        ),
+    )
+    assert not common.group_14_site_superdense_verification_checks(
+        common.STEANE_MERGE_VERIFICATION_ROUNDS[2]
+    )
+    assert all(
+        check_name != "X0145"
+        for round_checks in common.STEANE_MERGE_VERIFICATION_ROUNDS
+        for check_name in round_checks
+    )
+
+
 @pytest.mark.parametrize("patch_sites", [11, 14])
 def test_measurements_follow_hirano_merge_table(patch_sites: int) -> None:
     """Verify the physical Stim measurement record against the merge table.
@@ -60,8 +91,9 @@ def test_measurements_follow_hirano_merge_table(patch_sites: int) -> None:
     Each round measures ``Z1a``, ``Z35bc``, and ``Zde`` first; every surface Z
     check and only the compatible surface X checks second; and the listed
     color-code checks last. The third color-code list is deliberately empty.
-    Demolition then measures all seven Steane data qubits in X before restoring
-    ``X_ab`` and ``X_cd``.
+    Demolition then measures all seven Steane data qubits in X before measuring
+    only ``X_ab`` as the completion result ``m_ab``. ``X_cd`` remains absent
+    until the first complete post-transfer surface round.
 
     The interface path itself is also part of the rule: ``Z35bc`` alternates
     between codes as ``3 -> b -> 5 -> c`` to avoid a damaging hook error.
@@ -81,9 +113,9 @@ def test_measurements_follow_hirano_merge_table(patch_sites: int) -> None:
 
     # Check the d=5 geometry and the exact table-defined measurement sets.
     assert spec.merged_boundary_checks == expected_interface_checks
-    assert spec.top_x_recovery_labels == ("X_ab", "X_cd")
+    assert spec.withheld_surface_stabilizer_labels == ("X_ab", "X_cd")
     assert spec.merged_x_labels == tuple(
-        label for label in spec.x_labels if label not in spec.top_x_recovery_labels
+        label for label in spec.x_labels if label not in spec.withheld_surface_stabilizer_labels
     )
     assert common.STEANE_MERGE_VERIFICATION_ROUNDS == expected_color_checks
     assert common.FINAL_X_VERIFICATION_CHECKS == {
@@ -103,7 +135,6 @@ def test_measurements_follow_hirano_merge_table(patch_sites: int) -> None:
         spec,
         patch_sites=patch_sites,
         include_cultivation=False,
-        surface_readout_basis=None,
     )
     qubits = helper.transfer_qubits(spec, patch_sites=patch_sites)
     measurements = tuple(
@@ -132,10 +163,9 @@ def test_measurements_follow_hirano_merge_table(patch_sites: int) -> None:
         )
         bell_partner_flag_positions = (
             tuple(
-                layout.by_label("steane_bell_partner_flags")[
-                    prefix + check_name + "_bell_partner_flag"
-                ]
-                for check_name in color_checks
+                position
+                for label, position in layout.by_label("steane_bell_partner_flags").items()
+                if label.startswith(prefix)
             )
             if patch_sites == 14
             else ()
@@ -152,39 +182,41 @@ def test_measurements_follow_hirano_merge_table(patch_sites: int) -> None:
         assert tuple(measurements[position][1] for position in surface_positions) == tuple(
             qubits[label.lower()] for label in spec.z_labels + spec.merged_x_labels
         )
-        assert (
-            tuple(
-                label.removeprefix(prefix)
-                for label in layout.labels["steane_verify"]
-                if label.startswith(prefix)
-            )
-            == color_checks
-        )
+        assert {
+            label.removeprefix(prefix)
+            for label in layout.labels["steane_verify"]
+            if label.startswith(prefix)
+        } == set(color_checks)
         assert tuple(measurements[position][1] for position in color_positions) == tuple(
             steane_patch[EXPECTED_STEANE_VERIFICATION_READOUT_SITES[patch_sites][check_name]]
             for check_name in color_checks
         )
         if patch_sites == 14:
+            expected_flag_sites = (
+                (
+                    EXPECTED_STEANE_BELL_PARTNER_FLAG_SITES["Z0145"],
+                    13,
+                )
+                if round_index == 0
+                else (
+                    *(
+                        EXPECTED_STEANE_BELL_PARTNER_FLAG_SITES[check_name]
+                        for check_name in color_checks
+                    ),
+                    *((13,) if round_index == 1 else ()),
+                )
+            )
             assert tuple(
                 measurements[position][1] for position in bell_partner_flag_positions
-            ) == tuple(
-                steane_patch[EXPECTED_STEANE_BELL_PARTNER_FLAG_SITES[check_name]]
-                for check_name in color_checks
-            )
-            for check_name, verification_position, flag_position in zip(
-                color_checks,
-                color_positions,
-                bell_partner_flag_positions,
-                strict=True,
-            ):
-                if check_name.startswith("X"):
-                    assert verification_position < flag_position
-                elif check_name.startswith("Z"):
-                    assert flag_position < verification_position
-                else:
-                    raise AssertionError(f"unsupported Steane check {check_name!r}")
-        else:
+            ) == tuple(steane_patch[site] for site in expected_flag_sites)
+            if bell_partner_flag_positions:
+                assert bell_partner_flag_positions[0] < color_positions[0]
+            if round_index == 0:
+                assert max(color_positions) < bell_partner_flag_positions[-1]
+        elif patch_sites == 11:
             assert "steane_bell_partner_flags" not in layout.positions
+        else:  # pragma: no cover - parametrization uses only supported patches.
+            raise ValueError(f"Unsupported patch size: {patch_sites}.")
         previous_round_end = max((*surface_positions, *all_color_positions))
 
     # Verify the alternating mixed-code path used to suppress Z35bc hooks.
@@ -210,7 +242,7 @@ def test_measurements_follow_hirano_merge_table(patch_sites: int) -> None:
         ("MX", qubits[label]) for label in common.HIRANO_STEANE_DATA_ORDER
     )
     assert tuple(measurements[position][1] for position in recovery_positions) == tuple(
-        qubits[label.lower()] for label in spec.top_x_recovery_labels
+        qubits[label.lower()] for label in common.SURFACE_RECOVERY_X_LABELS
     )
 
 
@@ -219,44 +251,65 @@ def test_measurements_follow_hirano_merge_table(patch_sites: int) -> None:
 # =============================================================================
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("patch_sites", [11, 14])
 def test_transferred_pauli_expectation_values(patch_sites: int) -> None:
-    """Check all X/Y/Z expectations after transfer-frame correction.
+    """Check corrected X/Z observables after five full surface rounds.
 
-    The six Pauli eigenstates exercise both signs on every Bloch axis. The
+    The six Pauli eigenstates exercise deterministic and unbiased X/Z cases. The
     cultivated ``S|+>`` case additionally checks Stim's logical-Y Clifford
-    proxy for H_XY cultivation. Every expectation is computed only from shots
-    accepted by the color/interface postselection rules and after applying the
-    spacetime-decoder and teleportation Pauli frame.
+    proxy for H_XY cultivation. The circuit observable includes the transfer
+    byproducts and is measured only after the default five-round Hirano
+    continuation and full-data readout.
     """
     experiments = (
         *(
             (state, False, basis, expected)
             for state, expectations in LOGICAL_EXPECTATIONS.items()
             for basis, expected in expectations.items()
+            if basis in ("X", "Z")
         ),
-        *(("S", True, basis, expected) for basis, expected in LOGICAL_EXPECTATIONS["i"].items()),
+        *(
+            ("S", True, basis, expected)
+            for basis, expected in LOGICAL_EXPECTATIONS["i"].items()
+            if basis in ("X", "Z")
+        ),
     )
     for state, include_cultivation, basis, expected in experiments:
-        circuit = transfer.build_steane_to_rotated_d5_lattice_surgery_circuit(
+        circuit = helper.build_lattice_surgery_circuit(
+            transfer.TRANSFER_SPEC,
             patch_sites=patch_sites,
             injected_state=state,
             include_cultivation=include_cultivation,
-            surface_readout_basis=basis,
             add_ticks=False,
         )
+        transfer_layout = helper.transfer_measurement_layout(
+            transfer.TRANSFER_SPEC,
+            patch_sites=patch_sites,
+            include_cultivation=include_cultivation,
+        )
+        layout = transfer.append_post_transfer_and_readout(
+            circuit,
+            transfer_layout=transfer_layout,
+            readout_basis=basis,
+            full_post_selection=False,
+            add_ticks=False,
+        )
+        shots = circuit.compile_sampler(seed=42).sample(256)
+        unique_shots, multiplicities = np.unique(shots, axis=0, return_counts=True)
         logical_counts: Counter[int] = Counter()
-        for shot in circuit.compile_sampler(seed=42).sample(256):
-            measurements = transfer.parse_transfer_measurements(
-                shot,
-                patch_sites=patch_sites,
+        for shot, multiplicity in zip(unique_shots, multiplicities, strict=True):
+            measurements = common.interpret_transfer_measurements(
+                layout.extract(shot),
+                spec=transfer.TRANSFER_SPEC,
                 include_cultivation=include_cultivation,
+                post_transfer_stabilizer_rounds=transfer.TRANSFER_SPEC.distance,
                 surface_readout_basis=basis,
             )
             if common.transfer_acceptance_succeeds(measurements):
                 logical_counts[
                     common.corrected_surface_logical_readout(measurements, basis=basis)
-                ] += 1
+                ] += int(multiplicity)
         accepted = sum(logical_counts.values())
         assert accepted == 256
         expectation = (logical_counts[0] - logical_counts[1]) / accepted
@@ -274,31 +327,33 @@ def test_postselected_color_interface_and_decoded_surface_graphlike_distance(
     experiment,
     patch_sites: int,
 ) -> None:
-    """Verify closing postselection, noisy-surface decoding, and distance three.
+    """Verify the selective detector mask and full-protocol distance three.
 
-    Encoder, color-code, repeated-interface, and demolition checks form one
-    leading postselection block. The pre-merge surface-code X-detector layer
-    follows: ordinary surface-X events are decoded, while Hirano's two selected
-    surface-X streams reject. The ideal closing-round changes are postselected,
-    and the ideal logical-support readout adds no redundant boundary detectors.
-    Both readout probes require three graphlike faults for either Steane patch.
-    The serialized 14-site schedule retains the opposite-basis Bell-partner
-    flags that close the otherwise-hidden two-fault X-readout mechanism.
+    The distance is computed from the complete noisy circuit, from surface
+    initialization through all three merge rounds, five post-transfer rounds,
+    and destructive readout. Explicit DEM-range checks guard against silently
+    dropping either the merge or post-transfer phase before measuring distance.
+
+    Protocol checks and the persistent ``X_bcgh``/``X_fgkl`` streams reject;
+    other surface detectors are decoded. The 14-site Bell-partner flags retain
+    distance three by exposing an otherwise-hidden two-fault X-readout path.
     """
     circuit, layout = build_lattice_surgery_only_circuit(
         1e-3,
         experiment=experiment,
         patch_sites=patch_sites,
     )
+    analyzer = LatticeSurgeryOnlyShotAnalyzer(
+        circuit,
+        layout=layout,
+        full_post_selection=False,
+    )
     protocol_postselection_count = helper.num_transfer_protocol_postselection_detectors(layout)
-    assert layout.labels[f"surface_logical_{experiment.readout_basis.lower()}"] == (
-        transfer.TRANSFER_SPEC.logical_x
-        if experiment.readout_basis == "X"
-        else transfer.TRANSFER_SPEC.logical_z
+    ideal_input_detector_count = sum(
+        len(layout.positions[family]) for family in ("enc_flags", "steane_qed")
     )
 
-    # steane_verify contains the five round-1 and three round-2 requested
-    # checks. The 14-site path has one Bell-partner flag beside each requested check.
+    # Count the noisy protocol detectors preceding the surface history.
     steane_postselection_families = ["enc_flags", "steane_qed", "steane_verify"]
     if patch_sites == 14:
         steane_postselection_families.append("steane_bell_partner_flags")
@@ -313,76 +368,197 @@ def test_postselected_color_interface_and_decoded_surface_graphlike_distance(
         < circuit.num_detectors
     )
 
-    noisy_surface_history_detector_count = len(layout.positions["surface_init_x"]) + sum(
-        len(round_positions)
-        for family in ("merged_surface_z", "merged_surface_x")
-        for round_positions in layout.rounds(family)
-    )
-    closing_detector_start = protocol_postselection_count + noisy_surface_history_detector_count
-    closing_detector_count = sum(
-        len(layout.positions[family])
-        for family in (
-            transfer.IDEAL_POST_TRANSFER_SURFACE_Z_FAMILY,
-            transfer.IDEAL_POST_TRANSFER_SURFACE_X_FAMILY,
-        )
-    )
-    assert closing_detector_start + closing_detector_count == circuit.num_detectors
-
-    # Detector order is protocol prefix -> initial surface X -> all merged
-    # surface Z -> all merged surface X -> ideal closing round.
-    # Map the initial surface-X labels to absolute detector indices.
+    # Resolve detector ranges in circuit order.
     initial_x_detector_by_label = {
         label: protocol_postselection_count + offset
         for offset, label in enumerate(layout.labels["surface_init_x"])
     }
-    merged_x_detector_start = (
-        protocol_postselection_count
-        + len(layout.positions["surface_init_x"])
-        + len(layout.positions["merged_surface_z"])
+    merged_surface_detector_start = protocol_postselection_count + len(
+        layout.positions["surface_init_x"]
     )
-    # Offsets within each merge round's surface-X detector block.
+    merged_x_detector_start = merged_surface_detector_start + len(
+        layout.positions["merged_surface_z"]
+    )
     merged_x_detector_offset_by_label = {
         label: offset for offset, label in enumerate(transfer.TRANSFER_SPEC.merged_x_labels)
     }
     merged_x_round_width = len(transfer.TRANSFER_SPEC.merged_x_labels)
-    # All eight surface-X detectors postselected by Hirano's persistent flags:
-    # two initialization detectors plus the same two streams in three rounds.
-    postselected_surface_x_detector_indices = [
+    post_transfer_z_detector_start = merged_x_detector_start + len(
+        layout.positions["merged_surface_x"]
+    )
+    post_transfer_x_detector_start = post_transfer_z_detector_start + len(
+        layout.positions[transfer.POST_TRANSFER_SURFACE_Z_FAMILY]
+    )
+
+    # Select both persistent X streams at initialization and throughout time.
+    persistent_x_detector_indices = [
         initial_x_detector_by_label[label]
         for label in transfer.HIRANO_POSTSELECTED_SURFACE_X_LABELS
     ]
-    postselected_surface_x_detector_indices.extend(
+    persistent_x_detector_indices.extend(
         merged_x_detector_start
         + round_index * merged_x_round_width
         + merged_x_detector_offset_by_label[label]
         for round_index in range(common.LATTICE_SURGERY_ROUNDS)
         for label in transfer.HIRANO_POSTSELECTED_SURFACE_X_LABELS
     )
-    # One-hot test cases: protocol reject, decoded initialization event, all
-    # persistent-X rejects, decoded merge event, then closing-round reject.
-    one_hot_detector_indices = [
-        0,
+    post_transfer_rounds = layout.rounds(
+        transfer.POST_TRANSFER_SURFACE_X_FAMILY,
+        transfer.TRANSFER_SPEC.distance,
+    )
+    emitted_post_transfer_x_detector_labels = tuple(
+        label
+        for label in layout.labels[transfer.POST_TRANSFER_SURFACE_X_FAMILY]
+        if label != "round1_X_cd"
+    )
+    post_transfer_x_detector_offset_by_label = {
+        label: offset for offset, label in enumerate(emitted_post_transfer_x_detector_labels)
+    }
+    persistent_x_detector_indices.extend(
+        post_transfer_x_detector_start
+        + post_transfer_x_detector_offset_by_label[f"round{round_index + 1}_{label}"]
+        for round_index in range(len(post_transfer_rounds))
+        for label in transfer.HIRANO_POSTSELECTED_SURFACE_X_LABELS
+    )
+    readout_detector_start = post_transfer_x_detector_start + len(
+        emitted_post_transfer_x_detector_labels
+    )
+    compatible_readout_detector_count = len(
+        transfer.TRANSFER_SPEC.x_labels
+        if experiment.readout_basis == "X"
+        else transfer.TRANSFER_SPEC.z_labels
+    )
+    assert readout_detector_start + compatible_readout_detector_count == circuit.num_detectors
+    assert layout.labels[f"surface_data_{experiment.readout_basis.lower()}"] == (
+        transfer.TRANSFER_SPEC.surface_order
+    )
+
+    expected_postselection_detector_indices = {
+        *range(ideal_input_detector_count, protocol_postselection_count),
+        *persistent_x_detector_indices,
+    }
+    assert set(analyzer._postselection_detector_indices) == (
+        expected_postselection_detector_indices
+    )
+    assert {
         initial_x_detector_by_label["X_ab"],
-        *postselected_surface_x_detector_indices,
         merged_x_detector_start + merged_x_detector_offset_by_label["X_deij"],
-        closing_detector_start,
-    ]
-    detection_events = np.zeros((len(one_hot_detector_indices), circuit.num_detectors), dtype=bool)
-    detection_events[np.arange(len(one_hot_detector_indices)), one_hot_detector_indices] = True
-    accepted, logical_errors = LatticeSurgeryOnlyShotAnalyzer(
+        post_transfer_z_detector_start,
+        readout_detector_start,
+    }.isdisjoint(expected_postselection_detector_indices)
+    if patch_sites == 14:
+        assert len(analyzer._postselection_detector_indices) == 41
+        assert circuit.num_detectors - ideal_input_detector_count == 232
+
+    # Confirm that the one full DEM used below contains error mechanisms in
+    # both the merge and post-transfer/readout detector ranges.
+    dem_error_detector_indices = {
+        target.val
+        for instruction in circuit.detector_error_model(decompose_errors=True).flattened()
+        if instruction.type == "error"
+        for target in instruction.targets_copy()
+        if target.is_relative_detector_id()
+    }
+    assert dem_error_detector_indices & set(
+        range(merged_surface_detector_start, post_transfer_z_detector_start)
+    )
+    assert dem_error_detector_indices & set(
+        range(post_transfer_z_detector_start, circuit.num_detectors)
+    )
+    full_protocol_logical_error = circuit.shortest_graphlike_error(canonicalize_circuit_errors=True)
+    assert len(full_protocol_logical_error) == 3
+
+
+# =============================================================================
+# Post-transfer continuation
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    ("full_post_selection", "expected_rounds"),
+    ((False, transfer.TRANSFER_SPEC.distance), (True, 1)),
+)
+def test_post_transfer_round_count_matches_hirano_branch(
+    full_post_selection: bool,
+    expected_rounds: int,
+) -> None:
+    """Use five correction rounds for false and one rejection round for true."""
+    experiment = LATTICE_SURGERY_EXPERIMENTS[1]
+    circuit, layout = build_lattice_surgery_only_circuit(
+        1e-3,
+        experiment=experiment,
+        patch_sites=14,
+        full_post_selection=full_post_selection,
+    )
+    analyzer = LatticeSurgeryOnlyShotAnalyzer(
         circuit,
         layout=layout,
-        full_post_selection=False,
-    ).analyze(
-        detection_events,
-        np.zeros((len(one_hot_detector_indices), 1), dtype=bool),
+        full_post_selection=full_post_selection,
     )
-    assert accepted.tolist() == [
-        False,
-        True,
-        *([False] * len(postselected_surface_x_detector_indices)),
-        True,
-        False,
-    ]
-    assert not logical_errors.any()
-    assert len(circuit.shortest_graphlike_error(canonicalize_circuit_errors=True)) == 3
+
+    # Hirano performs one X_ab-only extraction at lattice-surgery completion:
+    # m_ab completes X0145ab and seeds the restored X_ab stream. There is no
+    # subsequent X_ab/X_cd recovery round; X_cd first occurs in full round 1.
+    assert layout.labels["surface_x_recovery"] == ("X_ab",)
+    assert "X_cd" not in layout.by_label("surface_x_recovery")
+    assert max(layout.positions["surface_x_recovery"]) + 1 == min(
+        layout.positions[transfer.POST_TRANSFER_SURFACE_Z_FAMILY]
+    )
+    assert "round1_X_cd" in layout.by_label(transfer.POST_TRANSFER_SURFACE_X_FAMILY)
+
+    qubits = helper.transfer_qubits(transfer.TRANSFER_SPEC, patch_sites=14)
+    instructions = tuple(circuit)
+    steane_demolition_index = next(
+        index
+        for index, instruction in enumerate(instructions)
+        if instruction.name == "MX"
+        and tuple(target.qubit_value for target in instruction.targets_copy())
+        == tuple(qubits[label] for label in common.HIRANO_STEANE_DATA_ORDER)
+    )
+    mab_reset_index = next(
+        index
+        for index, instruction in enumerate(
+            instructions[steane_demolition_index + 1 :],
+            start=steane_demolition_index + 1,
+        )
+        if instruction.name == "RX"
+        and tuple(target.qubit_value for target in instruction.targets_copy()) == (qubits["x_ab"],)
+    )
+    mab_measurement_index = next(
+        index
+        for index, instruction in enumerate(
+            instructions[mab_reset_index + 1 :],
+            start=mab_reset_index + 1,
+        )
+        if instruction.name == "MX"
+        and tuple(target.qubit_value for target in instruction.targets_copy()) == (qubits["x_ab"],)
+    )
+    mab_couplings = tuple(
+        tuple(target.qubit_value for target in instruction.targets_copy())
+        for instruction in instructions[mab_reset_index + 1 : mab_measurement_index]
+        if instruction.name == "CX"
+    )
+    assert mab_couplings == (
+        (qubits["x_ab"], qubits["a"]),
+        (qubits["x_ab"], qubits["b"]),
+    )
+    assert len(layout.positions[transfer.POST_TRANSFER_SURFACE_Z_FAMILY]) == (
+        expected_rounds * len(transfer.TRANSFER_SPEC.z_labels)
+    )
+    assert len(layout.positions[transfer.POST_TRANSFER_SURFACE_X_FAMILY]) == (
+        expected_rounds * len(transfer.TRANSFER_SPEC.x_labels)
+    )
+    emitted_post_transfer_x_detector_labels = tuple(
+        label
+        for label in layout.labels[transfer.POST_TRANSFER_SURFACE_X_FAMILY]
+        if label != "round1_X_cd"
+    )
+    assert "round1_X_cd" not in emitted_post_transfer_x_detector_labels
+    assert len(emitted_post_transfer_x_detector_labels) == (
+        expected_rounds * len(transfer.TRANSFER_SPEC.x_labels) - 1
+    )
+    if expected_rounds > 1:
+        assert "round2_X_cd" in emitted_post_transfer_x_detector_labels
+    assert len(layout.positions["surface_data_z"]) == len(transfer.TRANSFER_SPEC.surface_order)
+    if full_post_selection:
+        assert len(analyzer._postselection_detector_indices) == circuit.num_detectors

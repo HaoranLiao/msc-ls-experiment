@@ -28,6 +28,7 @@ from msc.noise.fault_tolerance_stim import (
 from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
+    PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
     STEANE_QED_MEASUREMENTS_PER_ROUND,
 )
 from msc.steane_code.magic_state_cultivation_stim import (
@@ -79,6 +80,7 @@ class PatchCultivationSuite:
     default_logical_x: tuple[int, ...]
     default_logical_z: tuple[int, ...]
     encoder_flag_bits: int
+    qed_measurements_per_round: int
     cultivation_measurements_per_round: int
     accepted_test_states: tuple[StimInjectedStateName, ...]
     success_rate_test_states: tuple[StimInjectedStateName, ...]
@@ -96,6 +98,7 @@ ELEVEN_SITE = PatchCultivationSuite(
     default_logical_x=PATCH_11_SITE_DEFAULT_LOGICAL_X,
     default_logical_z=PATCH_11_SITE_DEFAULT_LOGICAL_Z,
     encoder_flag_bits=len(PATCH_11_SITE_HELPER_SITES),
+    qed_measurements_per_round=STEANE_QED_MEASUREMENTS_PER_ROUND,
     cultivation_measurements_per_round=PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     accepted_test_states=("0", "1", "+", "Y+", "S"),
     success_rate_test_states=("0", "1", "+", "Y+", "S"),
@@ -115,6 +118,7 @@ FOURTEEN_SITE = PatchCultivationSuite(
     default_logical_x=PATCH_14_SITE_DEFAULT_LOGICAL_X,
     default_logical_z=PATCH_14_SITE_DEFAULT_LOGICAL_Z,
     encoder_flag_bits=len(PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES),
+    qed_measurements_per_round=PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
     cultivation_measurements_per_round=PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     accepted_test_states=("Y+", "S"),
     success_rate_test_states=("Y+", "S", "Sdg"),
@@ -184,7 +188,7 @@ def _n_postselection_bits(patch: PatchCultivationSuite, n_rounds: int) -> int:
     """Return encoder-flag, QED, and cultivation postselection bits."""
     return (
         patch.encoder_flag_bits
-        + STEANE_QED_MEASUREMENTS_PER_ROUND
+        + patch.qed_measurements_per_round
         + n_rounds * patch.cultivation_measurements_per_round
     )
 
@@ -209,20 +213,6 @@ def _postselect_and_compute_expectation(
     parities = logical_bits.sum(axis=1) % 2
     expectation = float(np.mean(1 - 2 * parities))
     return expectation, n_accepted
-
-
-def _compute_success_rate(
-    patch: PatchCultivationSuite,
-    shots: np.ndarray,
-    *,
-    n_rounds: int = 1,
-) -> float:
-    """Return the fraction passing encoder, QED, and cultivation postselection."""
-    accepted = postselect_success_shots(
-        shots,
-        postselection_bit_positions=range(_n_postselection_bits(patch, n_rounds)),
-    )
-    return float(accepted.shape[0] / shots.shape[0])
 
 
 def _sample(
@@ -276,8 +266,11 @@ class TestPostselectedLogicalExpectation:
     ) -> None:
         circuit = patch.build_circuit(state, add_qed_round=True, add_ticks=False)
         shots = _sample(circuit, shots=NUM_SHOTS)
-
-        measured_rate = _compute_success_rate(patch, shots)
+        accepted = postselect_success_shots(
+            shots,
+            postselection_bit_positions=range(_n_postselection_bits(patch, n_rounds=1)),
+        )
+        measured_rate = float(accepted.shape[0] / shots.shape[0])
         expected_rate = _expected_acceptance_probability(state)
         if expected_rate in {0.0, 1.0}:
             assert measured_rate == expected_rate
@@ -475,8 +468,8 @@ class TestCultivationFaultTolerance:
             "expected_rejected_faults",
         ),
         (
-            (False, 1206, 66, 1140),
-            (True, 1176, 64, 1112),
+            (False, 1188, 60, 1128),
+            (True, 1158, 58, 1100),
         ),
     )
     def test_11_site_all_single_faults_are_benign_or_rejected(
@@ -551,9 +544,9 @@ class TestCultivationFaultTolerance:
             analyzer=analyzer,
         )
 
-        assert result.total_single_fault_cases == 1440
-        assert result.benign_faults == 63
-        assert result.rejected_faults == 1377
+        assert result.total_single_fault_cases == 1441
+        assert result.benign_faults == 60
+        assert result.rejected_faults == 1381
         assert result.correctly_decoded_faults == 0
         assert result.malignant_faults == 0
         assert result.graphlike_distance == 3

@@ -13,6 +13,7 @@ from msc.steane_code.magic_state_cultivation_common import (
     PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     PATCH_14_SITE_FOLD_LAYERS,
     PATCH_14_SITE_FOLDED_MEASUREMENT_SITE,
+    PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
     STEANE_QED_MEASUREMENTS_PER_ROUND,
     Patch14SiteEncoderName,
     filter_11_site_patch_fold_layer,
@@ -54,10 +55,10 @@ from msc.utils.normalize import qiskit_bit_value, resolve_patch_qubits
 # =============================================================================
 
 
-def measure_in_x_basis(circuit: QuantumCircuit, qubit, classical_bit) -> None:
+def measure_in_x_basis(circuit: QuantumCircuit, qubit, bit) -> None:
     """Measure ``qubit`` in the X basis."""
     circuit.h(qubit)
-    circuit.measure(qubit, classical_bit)
+    circuit.measure(qubit, bit)
 
 
 def reset_to_plus(circuit: QuantumCircuit, qubit) -> None:
@@ -191,7 +192,7 @@ def append_11_site_patch_h_xy_projection_round(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
-    classical_bits: Sequence,
+    bits: Sequence,
     add_barriers: bool = True,
     skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
@@ -223,7 +224,7 @@ def append_11_site_patch_h_xy_projection_round(
         Circuit being modified.
     patch_qubits
         Eleven Qiskit qubits ordered by the 11-site labels.
-    classical_bits
+    bits
         Five classical bits: bit 0 = folded observable (site 7),
         bits 1-4 = helper sites 1, 2, 6, 7.
     add_barriers
@@ -239,13 +240,12 @@ def append_11_site_patch_h_xy_projection_round(
         expected_count=NUM_QUBITS_PATCH_11_SITES,
     )
 
-    if len(classical_bits) != PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND:
+    if len(bits) != PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND:
         raise ValueError(
-            "classical_bits must contain exactly "
-            f"{PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND} bits."
+            "bits must contain exactly " f"{PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND} bits."
         )
 
-    c = list(classical_bits)
+    c = list(bits)
 
     # Step 2 helper preparation.
     for helper_site in PATCH_11_SITE_HELPER_SITES:
@@ -319,7 +319,7 @@ def append_14_site_patch_h_xy_projection_round(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
-    classical_bits: Sequence,
+    bits: Sequence,
     add_barriers: bool = True,
     running_kt: bool = False,
 ) -> None:
@@ -348,12 +348,11 @@ def append_14_site_patch_h_xy_projection_round(
         patch_qubits,
         expected_count=NUM_QUBITS_PATCH_14_SITES,
     )
-    if len(classical_bits) != PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND:
+    if len(bits) != PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND:
         raise ValueError(
-            "classical_bits must contain exactly "
-            f"{PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND} bits."
+            "bits must contain exactly " f"{PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND} bits."
         )
-    classical_bits = list(classical_bits)
+    bits = list(bits)
 
     for helper_site in PATCH_14_SITE_HELPER_SITES:
         reset_to_plus(circuit, patch_qubits[helper_site])
@@ -373,7 +372,7 @@ def append_14_site_patch_h_xy_projection_round(
     measure_in_x_basis(
         circuit,
         patch_qubits[PATCH_14_SITE_FOLDED_MEASUREMENT_SITE],
-        classical_bits[0],
+        bits[0],
     )
     if add_barriers:
         circuit.barrier(label="measure folded observable")
@@ -392,7 +391,7 @@ def append_14_site_patch_h_xy_projection_round(
     )
     # Reads every helper, including H10, as an X-basis flag.
     for bit_index, helper_site in enumerate(PATCH_14_SITE_HELPER_SITES, start=1):
-        measure_in_x_basis(circuit, patch_qubits[helper_site], classical_bits[bit_index])
+        measure_in_x_basis(circuit, patch_qubits[helper_site], bits[bit_index])
     if add_barriers:
         circuit.barrier(label="measure helpers")
 
@@ -414,10 +413,10 @@ def append_11_site_patch_injection_and_cultivation(
     skip_cx_1_4: bool,
     patch_qubits: Sequence,
     injected_state: InjectedStateName = "T",
-    encoder_classical_bits: Sequence,
-    cultivation_classical_bits: Sequence[Sequence],
+    encoder_bits: Sequence,
+    cultivation_bits: Sequence[Sequence],
     cultivation_rounds: int = 1,
-    qed_classical_bits: Sequence | None = None,
+    qed_bits: Sequence | None = None,
     add_barriers: bool = True,
     skip_cx: tuple[int, int] | None = None,
 ) -> None:
@@ -437,15 +436,15 @@ def append_11_site_patch_injection_and_cultivation(
         Eleven qubits indexed by the 11-site patch labels.
     injected_state
         Physical state injected on the center data site before encoding.
-    encoder_classical_bits
+    encoder_bits
         Four classical bits for encoder-flag postselection.
-    cultivation_classical_bits
+    cultivation_bits
         Exactly ``cultivation_rounds`` 5-bit sequences, one per cultivation
         round.
     cultivation_rounds
         Number of H_XY cultivation rounds. Zero appends injection and optional
         QED without cultivation.
-    qed_classical_bits
+    qed_bits
         Six bits for the post-injection QED outcomes, ordered by
         ``post_injection_qed_stabilizer_labels``: the three X stabilizers
         followed by the three Z stabilizers. Required when
@@ -459,20 +458,17 @@ def append_11_site_patch_injection_and_cultivation(
     skip_cx
         If given, omit the specified (control, target) CX gate.
     """
-    if len(encoder_classical_bits) < 4:
-        raise ValueError("encoder_classical_bits must contain at least 4 bits.")
+    if len(encoder_bits) < 4:
+        raise ValueError("encoder_bits must contain at least 4 bits.")
     if cultivation_rounds < 0:
         raise ValueError("cultivation_rounds must be non-negative.")
-    if len(cultivation_classical_bits) != cultivation_rounds:
+    if len(cultivation_bits) != cultivation_rounds:
         raise ValueError(
-            "cultivation_classical_bits must contain exactly one 5-bit "
-            "sequence per cultivation round."
+            "cultivation_bits must contain exactly one 5-bit " "sequence per cultivation round."
         )
-    if add_qed_round and (
-        qed_classical_bits is None or len(qed_classical_bits) != STEANE_QED_MEASUREMENTS_PER_ROUND
-    ):
+    if add_qed_round and (qed_bits is None or len(qed_bits) != STEANE_QED_MEASUREMENTS_PER_ROUND):
         raise ValueError(
-            "qed_classical_bits must contain exactly "
+            "qed_bits must contain exactly "
             f"{STEANE_QED_MEASUREMENTS_PER_ROUND} bits when add_qed_round is true."
         )
 
@@ -480,18 +476,18 @@ def append_11_site_patch_injection_and_cultivation(
         circuit,
         patch_qubits=patch_qubits,
         injected_state=injected_state,
-        flag_classical_bits=encoder_classical_bits,
+        flag_bits=encoder_bits,
         add_barriers=add_barriers,
     )
     if add_barriers:
         circuit.barrier(label="state injection")
 
     if add_qed_round:
-        assert qed_classical_bits is not None
+        assert qed_bits is not None
         append_11_site_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
-            classical_bits=qed_classical_bits,
+            bits=qed_bits,
             basis="BOTH",
             add_barriers=add_barriers,
         )
@@ -502,7 +498,7 @@ def append_11_site_patch_injection_and_cultivation(
         append_11_site_patch_h_xy_projection_round(
             circuit,
             patch_qubits=patch_qubits,
-            classical_bits=cultivation_classical_bits[round_index],
+            bits=cultivation_bits[round_index],
             add_barriers=add_barriers,
             skip_cx_1_4=skip_cx_1_4,
             skip_cx=skip_cx,
@@ -514,12 +510,12 @@ def append_14_site_patch_injection_and_cultivation(
     *,
     add_qed_round: bool,
     patch_qubits: Sequence,
-    encoder_classical_bits: Sequence,
-    cultivation_classical_bits: Sequence[Sequence],
+    encoder_bits: Sequence,
+    cultivation_bits: Sequence[Sequence],
     encoder: Patch14SiteEncoderName = "abstract_routed",
     injected_state: InjectedStateName = "T",
     cultivation_rounds: int = 1,
-    qed_classical_bits: Sequence | None = None,
+    qed_bits: Sequence | None = None,
     add_barriers: bool = True,
 ) -> None:
     """Append 14-site injection, optional QED, and cultivation rounds.
@@ -527,27 +523,28 @@ def append_14_site_patch_injection_and_cultivation(
     ``encoder="abstract_routed"`` is the production default and accepts an
     arbitrary injected state. ``"abstract"`` selects the direct unrouted
     reference encoder, while ``"hirano"`` selects the specialized logical-Y
-    encoder.
+    encoder. The optional QED record contains the six Steane stabilizers
+    followed by the terminal D2' copy-detour flag; all seven are postselection
+    data and no recovery is applied.
     """
     encoder_flag_count = patch_14_site_encoder_flag_count(encoder)
-    if len(encoder_classical_bits) < encoder_flag_count:
-        raise ValueError(f"encoder_classical_bits must contain at least {encoder_flag_count} bits.")
+    if len(encoder_bits) < encoder_flag_count:
+        raise ValueError(f"encoder_bits must contain at least {encoder_flag_count} bits.")
     if cultivation_rounds < 0:
         raise ValueError("cultivation_rounds must be non-negative.")
-    if len(cultivation_classical_bits) != cultivation_rounds:
+    if len(cultivation_bits) != cultivation_rounds:
         raise ValueError(
-            "cultivation_classical_bits must contain exactly one 7-bit "
-            "sequence per cultivation round."
+            "cultivation_bits must contain exactly one 7-bit " "sequence per cultivation round."
         )
     if add_qed_round and (
-        qed_classical_bits is None or len(qed_classical_bits) != STEANE_QED_MEASUREMENTS_PER_ROUND
+        qed_bits is None or len(qed_bits) != PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND
     ):
         raise ValueError(
-            "qed_classical_bits must contain exactly "
-            f"{STEANE_QED_MEASUREMENTS_PER_ROUND} bits when add_qed_round is true."
+            "qed_bits must contain exactly "
+            f"{PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND} bits when add_qed_round is true."
         )
 
-    encoder_flags = list(encoder_classical_bits) if encoder_flag_count else None
+    encoder_flags = list(encoder_bits) if encoder_flag_count else None
     if encoder == "abstract":
         append_14_site_patch_abstract_encoder(
             circuit,
@@ -560,7 +557,7 @@ def append_14_site_patch_injection_and_cultivation(
             circuit,
             patch_qubits=patch_qubits,
             injected_state=injected_state,
-            flag_classical_bits=encoder_flags,
+            flag_bits=encoder_flags,
             add_barriers=add_barriers,
         )
     elif encoder == "hirano":
@@ -568,7 +565,7 @@ def append_14_site_patch_injection_and_cultivation(
             circuit,
             patch_qubits=patch_qubits,
             injected_state=injected_state,
-            flag_classical_bits=encoder_flags,
+            flag_bits=encoder_flags,
             add_barriers=add_barriers,
         )
     else:
@@ -577,22 +574,23 @@ def append_14_site_patch_injection_and_cultivation(
         circuit.barrier(label="state injection")
 
     if add_qed_round:
-        assert qed_classical_bits is not None
+        assert qed_bits is not None
         append_14_site_patch_superdense_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
-            classical_bits=qed_classical_bits,
+            stabilizer_bits=qed_bits[:STEANE_QED_MEASUREMENTS_PER_ROUND],
+            d2_copy_flag_bit=qed_bits[-1],
             basis="BOTH",
             add_barriers=add_barriers,
         )
         if add_barriers:
             circuit.barrier(label="post-injection QED")
 
-    for round_bits in cultivation_classical_bits:
+    for round_bits in cultivation_bits:
         append_14_site_patch_h_xy_projection_round(
             circuit,
             patch_qubits=patch_qubits,
-            classical_bits=round_bits,
+            bits=round_bits,
             add_barriers=add_barriers,
         )
 
@@ -685,10 +683,10 @@ def build_11_site_patch_injection_and_cultivation_circuit(
         circuit,
         patch_qubits=list(qreg),
         injected_state=injected_state,
-        encoder_classical_bits=list(enc_flags_creg),
-        cultivation_classical_bits=[list(cult_creg) for cult_creg in cult_cregs],
+        encoder_bits=list(enc_flags_creg),
+        cultivation_bits=[list(cult_creg) for cult_creg in cult_cregs],
         cultivation_rounds=cultivation_rounds,
-        qed_classical_bits=(list(qed_creg) if qed_creg is not None else None),
+        qed_bits=(list(qed_creg) if qed_creg is not None else None),
         add_qed_round=add_qed_round,
         add_barriers=add_barriers,
         skip_cx_1_4=skip_cx_1_4,
@@ -705,7 +703,11 @@ def build_14_site_patch_injection_and_cultivation_circuit(
     cultivation_rounds: int = 1,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
-    """Build the register-owning 14-site injection-and-cultivation circuit."""
+    """Build the register-owning 14-site injection-and-cultivation circuit.
+
+    The optional QED register has seven bits: six Steane stabilizers followed
+    by the inferred terminal D2' copy-detour flag.
+    """
     if cultivation_rounds < 0:
         raise ValueError("cultivation_rounds must be non-negative.")
 
@@ -715,7 +717,9 @@ def build_14_site_patch_injection_and_cultivation_circuit(
         ClassicalRegister(encoder_flag_count, "enc_flags") if encoder_flag_count else None
     )
     qed_creg = (
-        ClassicalRegister(STEANE_QED_MEASUREMENTS_PER_ROUND, "qed") if add_qed_round else None
+        ClassicalRegister(PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND, "qed")
+        if add_qed_round
+        else None
     )
     cult_cregs = [
         ClassicalRegister(
@@ -737,10 +741,10 @@ def build_14_site_patch_injection_and_cultivation_circuit(
         patch_qubits=list(qreg),
         encoder=encoder,
         injected_state=injected_state,
-        encoder_classical_bits=(list(enc_flags_creg) if enc_flags_creg is not None else ()),
-        cultivation_classical_bits=[list(cult_creg) for cult_creg in cult_cregs],
+        encoder_bits=(list(enc_flags_creg) if enc_flags_creg is not None else ()),
+        cultivation_bits=[list(cult_creg) for cult_creg in cult_cregs],
         cultivation_rounds=cultivation_rounds,
-        qed_classical_bits=(list(qed_creg) if qed_creg is not None else None),
+        qed_bits=(list(qed_creg) if qed_creg is not None else None),
         add_qed_round=add_qed_round,
         add_barriers=add_barriers,
     )

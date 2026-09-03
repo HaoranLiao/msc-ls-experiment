@@ -22,7 +22,6 @@ import stim
 
 from msc.steane_code.kickback_tomography_common import (
     KT_DEFAULT_QED_CYCLE_INDICES,
-    KT_STABILIZER_BITS_PER_CYCLE,
     FinalStabilizerMode,
     KickbackCultivationRoundBits,
     KickbackTomographyBitLayout,
@@ -37,6 +36,10 @@ from msc.steane_code.kickback_tomography_common import (
 from msc.steane_code.magic_state_cultivation_stim import (
     append_11_site_patch_y_projection_round,
     append_14_site_patch_y_projection_round,
+)
+from msc.steane_code.state_injection_common import (
+    PatchStabilizerBasis,
+    select_14_site_patch_superdense_measurement_layers,
 )
 from msc.steane_code.state_injection_stim import (
     DEFAULT_STIM_14_SITE_PATCH_QUBITS,
@@ -116,10 +119,8 @@ def build_kickback_tomography_experiment(
             basis="BOTH",
             add_ticks=add_ticks,
         )
-        qed_positions[index] = tuple(
-            range(record_count, record_count + KT_STABILIZER_BITS_PER_CYCLE)
-        )
-        record_count += KT_STABILIZER_BITS_PER_CYCLE
+        qed_positions[index] = tuple(range(record_count, record_count + spec.qed_measurement_count))
+        record_count += spec.qed_measurement_count
 
     def add_cultivation_round(
         *,
@@ -161,25 +162,43 @@ def build_kickback_tomography_experiment(
     final_bit_count = final_stabilizer_bit_count(final_stabilizer_basis)
     final_positions: tuple[int, ...] = ()
     final_bell_partner_positions: tuple[int, ...] = ()
-    if final_bit_count:
+    final_d2_copy_flag: int | None = None
+    if final_stabilizer_basis in ("X", "Z", "BOTH"):
         _append_patch_stabilizer_measurement(
             circuit,
             spec,
             basis=final_stabilizer_basis,
             add_ticks=add_ticks,
         )
-        final_record_width = final_bit_count
-        if spec.patch_sites == 14 and final_stabilizer_basis in ("X", "Z"):
-            final_record_width *= 2
-            requested_offset = int(final_stabilizer_basis == "Z")
+        if spec.patch_sites == 14:
+            _, readouts = select_14_site_patch_superdense_measurement_layers(
+                final_stabilizer_basis,
+                None,
+            )
             final_positions = tuple(
-                range(record_count + requested_offset, record_count + final_record_width, 2)
+                record_count + offset
+                for offset, (_, _, readout_role) in enumerate(readouts)
+                if readout_role == "STABILIZER"
             )
             final_bell_partner_positions = tuple(
-                range(record_count + 1 - requested_offset, record_count + final_record_width, 2)
+                record_count + offset
+                for offset, (_, _, readout_role) in enumerate(readouts)
+                if readout_role == "BELL_PARTNER_FLAG"
             )
-        else:
+            final_d2_copy_flag = next(
+                (
+                    record_count + offset
+                    for offset, (_, _, readout_role) in enumerate(readouts)
+                    if readout_role == "D2_COPY_FLAG"
+                ),
+                None,
+            )
+            final_record_width = len(readouts)
+        elif spec.patch_sites == 11:
+            final_record_width = final_bit_count
             final_positions = tuple(range(record_count, record_count + final_record_width))
+        else:  # pragma: no cover - resolved patch specs support only 11/14 sites.
+            raise ValueError(f"Unsupported patch size: {spec.patch_sites}.")
         record_count += final_record_width
 
     layout = KickbackTomographyBitLayout(
@@ -190,6 +209,7 @@ def build_kickback_tomography_experiment(
         qed_cycle_indices=qed_indices,
         final_stabilizers=final_positions,
         final_bell_partner_flags=final_bell_partner_positions,
+        final_d2_copy_flag=final_d2_copy_flag,
         encoder_flags=encoder_flag_positions,
     )
     if circuit.num_measurements != record_count:
@@ -232,7 +252,7 @@ def _append_patch_stabilizer_measurement(
     circuit: stim.Circuit,
     spec: KickbackTomographyPatchSpec,
     *,
-    basis: FinalStabilizerMode,
+    basis: PatchStabilizerBasis,
     add_ticks: bool,
 ) -> None:
     """Append one full-QED or final stabilizer measurement on the patch."""

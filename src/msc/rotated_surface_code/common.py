@@ -152,7 +152,7 @@ def build_full_canonical_stabilizer_schedule(
                 full_stabilizer_schedule[stabilizer_name] = (first, second, "", "")
             else:
                 raise ValueError(f"{stabilizer_name} is not on an X boundary.")
-        else:
+        elif basis == "Z":
             if first_x != second_x:
                 raise ValueError(f"{stabilizer_name} is not a vertical Z-boundary check.")
             if first_x == max_x:
@@ -161,6 +161,8 @@ def build_full_canonical_stabilizer_schedule(
                 full_stabilizer_schedule[stabilizer_name] = ("", "", first, second)
             else:
                 raise ValueError(f"{stabilizer_name} is not on a Z boundary.")
+        else:  # pragma: no cover - stabilizer labels provide only X/Z bases.
+            raise ValueError(f"Unsupported stabilizer basis: {basis!r}.")
 
     for step in range(4):
         active_labels = [

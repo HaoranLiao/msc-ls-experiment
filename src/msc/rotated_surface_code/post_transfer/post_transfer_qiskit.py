@@ -9,7 +9,7 @@ from qiskit import QuantumCircuit
 CircuitAppender = Callable[..., None]
 
 
-def append_rotated_post_transfer(
+def append_rotated_full_stabilizer_rounds(
     circuit: QuantumCircuit,
     *,
     surface_qubits: Sequence[object],
@@ -17,12 +17,12 @@ def append_rotated_post_transfer(
     x_ancillas: Sequence[object],
     z_stabilizer_names: Sequence[str],
     x_stabilizer_names: Sequence[str],
-    z_classical_bits: Sequence[object],
-    x_classical_bits: Sequence[object],
+    z_bits: Sequence[object],
+    x_bits: Sequence[object],
     stabilizer_rounds: int,
     append_scheduled_stabilizer_round: CircuitAppender,
     logical_readout_basis: str | None,
-    logical_classical_bits: Sequence[object],
+    logical_bits: Sequence[object],
     append_logical_measurement: CircuitAppender,
     add_barriers: bool = True,
 ) -> None:
@@ -35,14 +35,12 @@ def append_rotated_post_transfer(
     if stabilizer_rounds < 0:
         raise ValueError("stabilizer_rounds must be nonnegative.")
 
-    z_bits = list(z_classical_bits)
-    x_bits = list(x_classical_bits)
     required_z_bits = stabilizer_rounds * len(z_ancillas)
     required_x_bits = stabilizer_rounds * len(x_ancillas)
     if len(z_bits) < required_z_bits:
-        raise ValueError(f"z_classical_bits must contain at least {required_z_bits} bits.")
+        raise ValueError(f"z_bits must contain at least {required_z_bits} bits.")
     if len(x_bits) < required_x_bits:
-        raise ValueError(f"x_classical_bits must contain at least {required_x_bits} bits.")
+        raise ValueError(f"x_bits must contain at least {required_x_bits} bits.")
 
     for round_index in range(stabilizer_rounds):
         z_start = round_index * len(z_ancillas)
@@ -52,7 +50,7 @@ def append_rotated_post_transfer(
             surface_qubits=surface_qubits,
             selected_stabilizer_names=tuple(z_stabilizer_names) + tuple(x_stabilizer_names),
             ancillas=tuple(z_ancillas) + tuple(x_ancillas),
-            classical_bits=tuple(z_bits[z_start : z_start + len(z_ancillas)])
+            bits=tuple(z_bits[z_start : z_start + len(z_ancillas)])
             + tuple(x_bits[x_start : x_start + len(x_ancillas)]),
             round_label=f"post-transfer round {round_index + 1}",
             reset_ancillas_initially=True,
@@ -67,7 +65,7 @@ def append_rotated_post_transfer(
         circuit,
         logical_readout_basis,
         surface_qubits=surface_qubits,
-        classical_bits=logical_classical_bits,
+        bits=logical_bits,
         destructive=True,
     )
     if add_barriers:

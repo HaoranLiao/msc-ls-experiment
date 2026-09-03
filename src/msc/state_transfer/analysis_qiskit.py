@@ -16,24 +16,33 @@ def parse_transfer_measurements(
     spec: SurfaceCodeTransferSpec,
     patch_sites: SteanePatchSites = 14,
     include_cultivation: bool = True,
-    include_post_transfer_stabilizer_rounds: bool = False,
+    post_transfer_stabilizer_rounds: int = 0,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
+    full_data_readout: bool = False,
+    full_post_selection: bool = False,
 ) -> dict[str, object]:
-    """Label one count key, then derive checks, recovery, and Pauli byproducts."""
+    """Parse one count key and decode its merge and continuation histories.
+
+    Full-data X/Z readout reconstructs the compatible final stabilizers and
+    logical support from the same canonical surface-data register.
+    """
     labels = transfer_measurement_labels(
         spec,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
-        include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
+        post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,
+        full_data_readout=full_data_readout,
     )
     bits = parse_qiskit_registers(bitstring, tuple(labels.items()))
     parsed = interpret_transfer_measurements(
         bits,
         spec=spec,
         include_cultivation=include_cultivation,
-        include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
+        post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,
+        full_data_readout=full_data_readout,
+        full_post_selection=full_post_selection,
     )
     parsed["registers"] = {
         name: {

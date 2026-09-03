@@ -128,7 +128,7 @@ def build_kickback_tomography_experiment(
         else None
     )
     qed_cregs = {
-        index: ClassicalRegister(KT_STABILIZER_BITS_PER_CYCLE, f"qed_{index}")
+        index: ClassicalRegister(spec.qed_measurement_count, f"qed_{index}")
         for index in qed_indices
     }
     kt_measure_creg = ClassicalRegister(
@@ -146,6 +146,11 @@ def build_kickback_tomography_experiment(
         if spec.patch_sites == 14 and final_stabilizer_basis in ("X", "Z")
         else None
     )
+    final_d2_copy_creg = (
+        ClassicalRegister(1, "final_d2_copy_flag")
+        if spec.patch_sites == 14 and final_stabilizer_basis != "NONE"
+        else None
+    )
 
     classical_registers: list[ClassicalRegister] = []
     if encoder_flags_creg is not None:
@@ -158,6 +163,8 @@ def build_kickback_tomography_experiment(
         classical_registers.append(final_creg)
     if final_bell_partner_creg is not None:
         classical_registers.append(final_bell_partner_creg)
+    if final_d2_copy_creg is not None:
+        classical_registers.append(final_d2_copy_creg)
 
     circuit = QuantumCircuit(patch, *classical_registers)
     patch_qubits = list(patch)
@@ -168,7 +175,7 @@ def build_kickback_tomography_experiment(
         patch_qubits=patch_qubits,
         injected_state=injected_state,
         injection_azimuth_angle=injection_azimuth_angle,
-        flag_classical_bits=(list(encoder_flags_creg) if encoder_flags_creg is not None else None),
+        flag_bits=(list(encoder_flags_creg) if encoder_flags_creg is not None else None),
         add_barriers=add_barriers,
     )
 
@@ -177,7 +184,8 @@ def build_kickback_tomography_experiment(
             circuit,
             spec,
             patch_qubits=patch_qubits,
-            classical_bits=list(qed_cregs[index]),
+            stabilizer_bits=list(qed_cregs[index])[:KT_STABILIZER_BITS_PER_CYCLE],
+            d2_copy_flag_bit=(qed_cregs[index][-1] if spec.patch_sites == 14 else None),
             basis="BOTH",
             add_barriers=add_barriers,
         )
@@ -193,7 +201,7 @@ def build_kickback_tomography_experiment(
             circuit,
             spec,
             patch_qubits=patch_qubits,
-            classical_bits=list(prep_creg),
+            bits=list(prep_creg),
             add_barriers=add_barriers,
             running_kt=False,
         )
@@ -205,7 +213,7 @@ def build_kickback_tomography_experiment(
         circuit,
         spec,
         patch_qubits=patch_qubits,
-        classical_bits=list(kt_measure_creg),
+        bits=list(kt_measure_creg),
         add_barriers=add_barriers,
         running_kt=True,
     )
@@ -217,7 +225,7 @@ def build_kickback_tomography_experiment(
         circuit,
         spec,
         patch_qubits=patch_qubits,
-        classical_bits=list(kt_check_creg),
+        bits=list(kt_check_creg),
         add_barriers=add_barriers,
         running_kt=True,
     )
@@ -230,10 +238,11 @@ def build_kickback_tomography_experiment(
             circuit,
             spec,
             patch_qubits=patch_qubits,
-            classical_bits=list(final_creg),
-            bell_partner_flag_classical_bits=(
+            stabilizer_bits=list(final_creg),
+            bell_partner_flag_bits=(
                 list(final_bell_partner_creg) if final_bell_partner_creg is not None else None
             ),
+            d2_copy_flag_bit=(final_d2_copy_creg[0] if final_d2_copy_creg is not None else None),
             basis=final_stabilizer_basis,
             add_barriers=add_barriers,
         )
@@ -279,6 +288,11 @@ def build_kickback_tomography_experiment(
             if final_bell_partner_creg is not None
             else ()
         ),
+        final_d2_copy_flag=(
+            circuit.find_bit(final_d2_copy_creg[0]).index
+            if final_d2_copy_creg is not None
+            else None
+        ),
         encoder_flags=encoder_flag_positions,
     )
     circuit.metadata = {
@@ -293,6 +307,7 @@ def build_kickback_tomography_experiment(
             "qed_cycles": layout.qed_cycles,
             "final_stabilizers": layout.final_stabilizers,
             "final_bell_partner_flags": layout.final_bell_partner_flags,
+            "final_d2_copy_flag": layout.final_d2_copy_flag,
             "encoder_flags": layout.encoder_flags,
             "qed_cycle_indices": qed_indices,
             "final_stabilizer_basis": final_stabilizer_basis,
@@ -311,7 +326,7 @@ def _append_patch_encoder(
     patch_qubits: list,
     injected_state: InjectedStateName | None,
     injection_azimuth_angle: float | None,
-    flag_classical_bits: list | None,
+    flag_bits: list | None,
     add_barriers: bool,
 ) -> None:
     """Append the selected patch encoder and optional flag measurements."""
@@ -321,7 +336,7 @@ def _append_patch_encoder(
             patch_qubits=patch_qubits,
             injected_state=injected_state,
             injection_azimuth_angle=injection_azimuth_angle,
-            flag_classical_bits=flag_classical_bits,
+            flag_bits=flag_bits,
             add_barriers=add_barriers,
         )
     elif spec.patch_sites == 14:
@@ -330,7 +345,7 @@ def _append_patch_encoder(
             patch_qubits=patch_qubits,
             injected_state=injected_state,
             injection_azimuth_angle=injection_azimuth_angle,
-            flag_classical_bits=flag_classical_bits,
+            flag_bits=flag_bits,
             add_barriers=add_barriers,
         )
     else:
@@ -342,17 +357,22 @@ def _append_patch_stabilizer_measurement(
     spec: KickbackTomographyPatchSpec,
     *,
     patch_qubits: list,
-    classical_bits: list,
-    bell_partner_flag_classical_bits: list | None = None,
+    stabilizer_bits: list,
+    bell_partner_flag_bits: list | None = None,
+    d2_copy_flag_bit=None,
     basis: FinalStabilizerMode,
     add_barriers: bool,
 ) -> None:
-    """Append one full-QED or final stabilizer measurement on the patch."""
+    """Append one full-QED or final stabilizer measurement on the patch.
+
+    ``stabilizer_bits`` stores only face-parity results. The two
+    optional destinations store the 14-site Bell-partner and D2-copy flags.
+    """
     if spec.patch_sites == 11:
         append_11_site_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
-            classical_bits=classical_bits,
+            bits=stabilizer_bits,
             basis=basis,
             add_barriers=add_barriers,
         )
@@ -360,8 +380,9 @@ def _append_patch_stabilizer_measurement(
         append_14_site_patch_superdense_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
-            classical_bits=classical_bits,
-            bell_partner_flag_classical_bits=bell_partner_flag_classical_bits,
+            stabilizer_bits=stabilizer_bits,
+            bell_partner_flag_bits=bell_partner_flag_bits,
+            d2_copy_flag_bit=d2_copy_flag_bit,
             basis=basis,
             add_barriers=add_barriers,
         )
@@ -374,7 +395,7 @@ def _append_patch_projection_round(
     spec: KickbackTomographyPatchSpec,
     *,
     patch_qubits: list,
-    classical_bits: list,
+    bits: list,
     add_barriers: bool,
     running_kt: bool,
 ) -> None:
@@ -383,14 +404,14 @@ def _append_patch_projection_round(
         append_11_site_patch_h_xy_projection_round(
             circuit,
             patch_qubits=patch_qubits,
-            classical_bits=classical_bits,
+            bits=bits,
             add_barriers=add_barriers,
         )
     elif spec.patch_sites == 14:
         append_14_site_patch_h_xy_projection_round(
             circuit,
             patch_qubits=patch_qubits,
-            classical_bits=classical_bits,
+            bits=bits,
             add_barriers=add_barriers,
             running_kt=running_kt,
         )
