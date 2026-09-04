@@ -4,32 +4,31 @@ from itertools import zip_longest
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
-from msc.rotated_surface_code.post_transfer import post_transfer_qiskit
 from msc.state_transfer import common
 from msc.steane_code import magic_state_cultivation_qiskit as cultivation
 from msc.steane_code import state_injection_qiskit as steane
-from msc.utils.normalize import normalize_pauli_char
 
 
 def build_lattice_surgery_circuit(
     spec: common.SurfaceCodeTransferSpec,
     *,
     patch_sites: common.SteanePatchSites = 14,
-    injected_state: steane.InjectedStateName = "T",
+    injected_state: steane.InjectedStateName = cultivation.DEFAULT_QISKIT_CULTIVATED_STATE,
+    cultivated_state: cultivation.CultivatedStateName = (
+        cultivation.DEFAULT_QISKIT_CULTIVATED_STATE
+    ),
     include_cultivation: bool = True,
-    include_post_transfer_stabilizer_rounds: bool = False,
-    surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
-    """Build injection -> QED/cultivation -> three-round transfer -> continuation.
+    """Build injection -> QED/cultivation -> three-round transfer -> ``m_ab``.
 
     The circuit encodes the Steane input on the selected patch, performs
-    post-injection QED and optional H_XY cultivation, prepares surface
+    post-injection QED and optional H_XZ/H_XY cultivation, prepares surface
     ``|+_L>``, executes the three-row merge table, demolishes Steane in X, and
     restores the withheld top-edge surface X checks. The default 14-site path
     uses the abstract-routed encoder; the 11-site path uses Rosenfeld's encoder.
-    Optional fixed-patch syndrome rounds and destructive logical readout are
-    analysis additions.
+    Target wrappers own optional fixed-patch rounds and destructive full-data
+    readout because those phases determine the final decoder boundary.
 
     Each merge round appends interface checks, compatible surface checks, then
     its color-code verification group. Mixed-check CNOTs alternate code sides,
@@ -51,8 +50,6 @@ def build_lattice_surgery_circuit(
     distance three in the serialized schedule. Surface histories are
     spacetime-decoded into the Pauli frame.
     """
-    if surface_readout_basis is not None:
-        surface_readout_basis = normalize_pauli_char(surface_readout_basis)
     patch_spec = common.resolve_steane_transfer_patch_spec(patch_sites)
 
     # Quantum allocation uses one single-qubit register per physical site:
@@ -92,30 +89,24 @@ def build_lattice_surgery_circuit(
     #   14-site patch only;
     # - steane_x: 7 Steane demolition bits;
     # - surface_x_recovery: one bit for the X_ab completion measurement m_ab;
-    # - post_transfer_surface_z/x: distance rounds of full syndromes, if enabled
-    #   (12 Z + 12 X bits for d=3, 60 Z + 60 X bits for d=5);
-    # - surface_logical_x/y/z: one bit per measured physical qubit, if requested
-    #   (Y uses the union of the logical-X and logical-Z supports).
     measurement_labels = common.transfer_measurement_labels(
         spec,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
-        post_transfer_stabilizer_rounds=(
-            spec.distance if include_post_transfer_stabilizer_rounds else 0
-        ),
-        surface_readout_basis=surface_readout_basis,
+        surface_readout_basis=None,
     )
     cregs = {
         name: ClassicalRegister(len(labels), name) for name, labels in measurement_labels.items()
     }
     circuit = QuantumCircuit(*qregs.values(), *cregs.values())
 
-    # 1. Accepted Steane input: injection -> QED -> optional H_XY cultivation.
+    # 1. Accepted Steane input: injection -> QED -> optional magic-state cultivation.
     if patch_sites == 11:
         cultivation.append_11_site_patch_injection_and_cultivation(
             circuit,
             patch_qubits=steane_patch,
             injected_state=injected_state,
+            cultivated_state=cultivated_state,
             encoder_bits=list(cregs["enc_flags"]),
             qed_bits=list(cregs["steane_qed"]),
             cultivation_bits=[list(cregs["cult"])] if include_cultivation else [],
@@ -130,6 +121,7 @@ def build_lattice_surgery_circuit(
             circuit,
             patch_qubits=steane_patch,
             injected_state=injected_state,
+            cultivated_state=cultivated_state,
             encoder="abstract_routed",
             encoder_bits=list(cregs["enc_flags"]),
             qed_bits=list(cregs["steane_qed"]),
@@ -291,33 +283,4 @@ def build_lattice_surgery_circuit(
         add_barriers=add_barriers,
     )
 
-    # 5. Optional fixed-patch history and destructive logical-support readout.
-    post_transfer_qiskit.append_rotated_full_stabilizer_rounds(
-        circuit,
-        surface_qubits=surface_qubits,
-        z_ancillas=[qubits[name.lower()] for name in spec.z_labels],
-        x_ancillas=[qubits[name.lower()] for name in spec.x_labels],
-        z_stabilizer_names=spec.z_labels,
-        x_stabilizer_names=spec.x_labels,
-        z_bits=(
-            list(cregs["post_transfer_surface_z"])
-            if include_post_transfer_stabilizer_rounds
-            else ()
-        ),
-        x_bits=(
-            list(cregs["post_transfer_surface_x"])
-            if include_post_transfer_stabilizer_rounds
-            else ()
-        ),
-        stabilizer_rounds=spec.distance if include_post_transfer_stabilizer_rounds else 0,
-        append_scheduled_stabilizer_round=operations.append_scheduled_stabilizer_round,
-        logical_readout_basis=surface_readout_basis,
-        logical_bits=(
-            list(cregs[f"surface_logical_{surface_readout_basis.lower()}"])
-            if surface_readout_basis
-            else ()
-        ),
-        append_logical_measurement=operations.append_logical_measurement,
-        add_barriers=add_barriers,
-    )
     return circuit

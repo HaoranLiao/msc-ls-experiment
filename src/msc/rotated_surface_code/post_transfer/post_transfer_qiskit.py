@@ -1,4 +1,4 @@
-"""Optional rotated-surface stabilization and logical readout after transfer."""
+"""Append full rotated-surface stabilizer rounds in Qiskit."""
 
 from __future__ import annotations
 
@@ -21,52 +21,46 @@ def append_rotated_full_stabilizer_rounds(
     x_bits: Sequence[object],
     stabilizer_rounds: int,
     append_scheduled_stabilizer_round: CircuitAppender,
-    logical_readout_basis: str | None,
-    logical_bits: Sequence[object],
-    append_logical_measurement: CircuitAppender,
     add_barriers: bool = True,
 ) -> None:
-    """Append optional four-step scheduled stabilizer rounds and logical readout.
+    """Append full rounds into caller-owned round-major Z/X bits.
 
-    ``stabilizer_rounds=0`` preserves the transfer-only behavior. When rounds
-    are requested, every surface X and Z stabilizer is measured in each round
-    before the optional destructive logical measurement.
+    This helper owns only the repeated rotated-patch schedule. Destructive
+    readout and its classical register belong to the enclosing protocol.
     """
     if stabilizer_rounds < 0:
         raise ValueError("stabilizer_rounds must be nonnegative.")
+    if stabilizer_rounds == 0:
+        return
 
-    required_z_bits = stabilizer_rounds * len(z_ancillas)
-    required_x_bits = stabilizer_rounds * len(x_ancillas)
+    z_round_width = len(z_stabilizer_names)
+    x_round_width = len(x_stabilizer_names)
+    if len(z_ancillas) < z_round_width:
+        raise ValueError(f"z_ancillas must contain at least {z_round_width} qubits.")
+    if len(x_ancillas) < x_round_width:
+        raise ValueError(f"x_ancillas must contain at least {x_round_width} qubits.")
+    required_z_bits = stabilizer_rounds * z_round_width
+    required_x_bits = stabilizer_rounds * x_round_width
     if len(z_bits) < required_z_bits:
         raise ValueError(f"z_bits must contain at least {required_z_bits} bits.")
     if len(x_bits) < required_x_bits:
         raise ValueError(f"x_bits must contain at least {required_x_bits} bits.")
 
+    stabilizer_names = tuple(z_stabilizer_names) + tuple(x_stabilizer_names)
+    ancillas = tuple(z_ancillas[:z_round_width]) + tuple(x_ancillas[:x_round_width])
     for round_index in range(stabilizer_rounds):
-        z_start = round_index * len(z_ancillas)
-        x_start = round_index * len(x_ancillas)
+        z_start = round_index * z_round_width
+        x_start = round_index * x_round_width
         append_scheduled_stabilizer_round(
             circuit,
             surface_qubits=surface_qubits,
-            selected_stabilizer_names=tuple(z_stabilizer_names) + tuple(x_stabilizer_names),
-            ancillas=tuple(z_ancillas) + tuple(x_ancillas),
-            bits=tuple(z_bits[z_start : z_start + len(z_ancillas)])
-            + tuple(x_bits[x_start : x_start + len(x_ancillas)]),
+            selected_stabilizer_names=stabilizer_names,
+            ancillas=ancillas,
+            bits=tuple(z_bits[z_start : z_start + z_round_width])
+            + tuple(x_bits[x_start : x_start + x_round_width]),
             round_label=f"post-transfer round {round_index + 1}",
             reset_ancillas_initially=True,
             add_barriers=False,
         )
         if add_barriers:
             circuit.barrier(label=f"post-transfer scheduled stabilizer round {round_index + 1}")
-
-    if logical_readout_basis is None:
-        return
-    append_logical_measurement(
-        circuit,
-        logical_readout_basis,
-        surface_qubits=surface_qubits,
-        bits=logical_bits,
-        destructive=True,
-    )
-    if add_barriers:
-        circuit.barrier(label=f"destructive logical {logical_readout_basis}")

@@ -307,7 +307,7 @@ def test_measurements_follow_hirano_merge_table(module, build, patch_sites: int)
 @pytest.mark.slow
 @pytest.mark.parametrize(("module", "build"), TARGETS)
 @pytest.mark.parametrize("patch_sites", [11, 14])
-def test_transferred_pauli_expectation_values_without_cultivation(
+def test_clifford_state_pauli_expectation_values_without_cultivation(
     module,
     build,
     patch_sites: int,
@@ -316,15 +316,15 @@ def test_transferred_pauli_expectation_values_without_cultivation(
 
     Raw surface readout is interpreted only after the teleportation and
     spacetime-decoder byproducts have been folded into the logical Pauli frame.
-    The public d=5 path measures all 25 data qubits in X or Z, reconstructs the
-    12 compatible boundary stabilizers, and decodes that final boundary. The
-    compact d=3 path retains logical-support X/Y/Z readout.
+    Both targets use full-data X/Z readout to close the compatible syndrome
+    history. A single destructive product-basis readout cannot close both
+    histories for logical Y.
     """
     experiments = tuple(
         (state, basis, expected)
         for state, expectations in LOGICAL_EXPECTATIONS.items()
         for basis, expected in expectations.items()
-        if module is d3 or basis in ("X", "Z")
+        if basis in ("X", "Z")
     )
     circuits = []
     for state, basis, _ in experiments:
@@ -365,18 +365,17 @@ def test_transferred_pauli_expectation_values_without_cultivation(
                 include_cultivation=False,
                 surface_readout_basis=basis,
             )
-            if module is d5:
-                expected_readout_stabilizers = (
-                    d5.TRANSFER_SPEC.x_stabilizers
-                    if basis == "X"
-                    else d5.TRANSFER_SPEC.z_stabilizers
-                )
-                surface_data_readout = measurements["surface_data_readout"]
-                surface_readout_stabilizers = measurements["surface_readout_stabilizers"]
-                assert isinstance(surface_data_readout, dict)
-                assert isinstance(surface_readout_stabilizers, dict)
-                assert set(surface_data_readout) == set(d5.TRANSFER_SPEC.surface_order)
-                assert set(surface_readout_stabilizers) == set(expected_readout_stabilizers)
+            expected_readout_stabilizers = (
+                module.TRANSFER_SPEC.x_stabilizers
+                if basis == "X"
+                else module.TRANSFER_SPEC.z_stabilizers
+            )
+            surface_data_readout = measurements["surface_data_readout"]
+            surface_readout_stabilizers = measurements["surface_readout_stabilizers"]
+            assert isinstance(surface_data_readout, dict)
+            assert isinstance(surface_readout_stabilizers, dict)
+            assert set(surface_data_readout) == set(module.TRANSFER_SPEC.surface_order)
+            assert set(surface_readout_stabilizers) == set(expected_readout_stabilizers)
             if common.transfer_acceptance_succeeds(measurements):
                 logical_counts[
                     common.corrected_surface_logical_readout(measurements, basis=basis)
@@ -389,20 +388,28 @@ def test_transferred_pauli_expectation_values_without_cultivation(
 
 @pytest.mark.slow
 @pytest.mark.parametrize("patch_sites", [11, 14])
-def test_cultivated_t_state_pauli_expectation_values(patch_sites: int) -> None:
-    """Check the non-Clifford T-state Bloch vector after cultivation and transfer.
+@pytest.mark.parametrize("cultivated_state", ("T", "Ty"))
+def test_magic_state_pauli_expectation_values_with_cultivation(
+    patch_sites: int,
+    cultivated_state: str,
+) -> None:
+    """Check accessible magic-state Bloch components after cultivation and transfer.
 
     Exact Clifford-state tests above exercise d=5's full-data boundary. This
-    statistical non-Clifford check stays on d=3's public logical-support API;
-    d=5 full-data MPS sampling is prohibitively expensive and does not support
-    Y readout. Accepted H_XY cultivation must preserve the
-    ``(+X +Y) / sqrt(2)`` logical state.
+    statistical non-Clifford check stays on d=3's full-data X/Z API; d=5
+    full-data MPS sampling is prohibitively expensive. X/Z readout covers all
+    Ty components and the accessible X/Z components of T; fault-tolerant
+    logical-Y tomography is not implemented.
     """
-    expected_by_basis = {"X": 1 / math.sqrt(2), "Y": 1 / math.sqrt(2), "Z": 0.0}
+    expected_by_basis = {
+        "X": 1 / math.sqrt(2),
+        "Z": 0.0 if cultivated_state == "T" else 1 / math.sqrt(2),
+    }
     circuits = [
         d3.build_steane_to_rotated_d3_lattice_surgery_circuit(
             patch_sites=patch_sites,
-            injected_state="T",
+            injected_state=cultivated_state,
+            cultivated_state=cultivated_state,
             include_cultivation=True,
             surface_readout_basis=basis,
             add_barriers=False,
@@ -445,33 +452,33 @@ def test_cultivated_t_state_pauli_expectation_values(patch_sites: int) -> None:
 # =============================================================================
 
 
-@pytest.mark.parametrize(
-    ("full_post_selection", "expected_rounds"),
-    ((False, d5.TRANSFER_SPEC.distance), (True, 1)),
-)
+@pytest.mark.parametrize(("module", "build"), TARGETS)
+@pytest.mark.parametrize("full_post_selection", (False, True))
 @pytest.mark.parametrize("readout_basis", ("X", "Z"))
-def test_d5_post_transfer_branch_and_full_data_readout(
+def test_post_transfer_branch_and_full_data_readout(
+    module,
+    build,
     full_post_selection: bool,
-    expected_rounds: int,
     readout_basis: str,
 ) -> None:
-    """Expose both continuation lengths and measure all 25 data qubits."""
-    circuit = d5.build_steane_to_rotated_d5_lattice_surgery_circuit(
+    """Expose both continuation lengths and measure every target data qubit."""
+    circuit = build(
         injected_state="0",
         include_cultivation=False,
         surface_readout_basis=readout_basis,
         full_post_selection=full_post_selection,
         add_barriers=False,
     )
+    expected_rounds = 1 if full_post_selection else module.TRANSFER_SPEC.distance
     registers = {register.name: register for register in circuit.cregs}
     assert len(registers["post_transfer_surface_z"]) == (
-        expected_rounds * len(d5.TRANSFER_SPEC.z_labels)
+        expected_rounds * len(module.TRANSFER_SPEC.z_labels)
     )
     assert len(registers["post_transfer_surface_x"]) == (
-        expected_rounds * len(d5.TRANSFER_SPEC.x_labels)
+        expected_rounds * len(module.TRANSFER_SPEC.x_labels)
     )
     data_register = registers[f"surface_data_{readout_basis.lower()}"]
-    assert len(data_register) == len(d5.TRANSFER_SPEC.surface_order)
+    assert len(data_register) == len(module.TRANSFER_SPEC.surface_order)
 
     qubit_names = {register[0]: register.name for register in circuit.qregs}
     data_measurements = {
@@ -480,7 +487,7 @@ def test_d5_post_transfer_branch_and_full_data_readout(
         if instruction.operation.name == "measure" and instruction.clbits[0] in data_register
     }
     assert tuple(data_measurements[bit] for bit in data_register) == (
-        d5.TRANSFER_SPEC.surface_order
+        module.TRANSFER_SPEC.surface_order
     )
 
 
@@ -544,7 +551,10 @@ def test_d5_post_transfer_temporal_decoding() -> None:
         pytest.param("X", "+", "z_error_sites", id="X-readout-Z-fault"),
     ),
 )
-def test_d5_full_data_readout_boundary_is_reconstructed_and_decoded(
+@pytest.mark.parametrize(("module", "build"), TARGETS)
+def test_full_data_readout_boundary_is_reconstructed_and_decoded(
+    module,
+    build,
     readout_basis: str,
     injected_state: str,
     recovery_sites_name: str,
@@ -555,7 +565,7 @@ def test_d5_full_data_readout_boundary_is_reconstructed_and_decoded(
     X-basis readout this is after the basis-change H and is equivalent to a Z
     fault immediately before that H.
     """
-    circuit = d5.build_steane_to_rotated_d5_lattice_surgery_circuit(
+    circuit = build(
         injected_state=injected_state,
         include_cultivation=False,
         surface_readout_basis=readout_basis,
@@ -583,7 +593,7 @@ def test_d5_full_data_readout_boundary_is_reconstructed_and_decoded(
         .result()
         .get_counts()
     )
-    measurements = d5.parse_transfer_measurements(
+    measurements = module.parse_transfer_measurements(
         next(iter(counts)),
         include_cultivation=False,
         surface_readout_basis=readout_basis,

@@ -9,6 +9,10 @@ from msc.rotated_surface_code.post_transfer import post_transfer_qiskit
 from msc.state_transfer import analysis_qiskit as analysis
 from msc.state_transfer import common
 from msc.state_transfer import helper_qiskit as helper
+from msc.steane_code.magic_state_cultivation_qiskit import (
+    DEFAULT_QISKIT_CULTIVATED_STATE,
+    CultivatedStateName,
+)
 from msc.steane_code.state_injection_qiskit import InjectedStateName
 from msc.utils.normalize import normalize_pauli_char
 
@@ -37,7 +41,8 @@ TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
 def build_steane_to_rotated_d5_lattice_surgery_circuit(
     *,
     patch_sites: common.SteanePatchSites = 14,
-    injected_state: InjectedStateName = "T",
+    injected_state: InjectedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
+    cultivated_state: CultivatedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
     include_cultivation: bool = True,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,
@@ -52,7 +57,8 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     as Hirano's ``m_ab``; ``X_cd`` waits for a later complete surface round.
 
     The circuit includes injection on the selected Steane patch,
-    post-injection QED, optional logical-H_XY cultivation, both paper-defined
+    post-injection QED, optional logical-H_XZ cultivation by default (or H_XY
+    when ``cultivated_state="T"``), both paper-defined
     Steane verification groups, and every raw measurement needed for classical
     spacetime decoding. If ``surface_readout_basis`` is X or Z,
     ``full_post_selection=False`` appends five complete surface rounds before
@@ -63,6 +69,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
         TRANSFER_SPEC,
         patch_sites=patch_sites,
         injected_state=injected_state,
+        cultivated_state=cultivated_state,
         include_cultivation=include_cultivation,
         add_barriers=add_barriers,
     )
@@ -91,7 +98,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     )
     append_post_transfer_and_readout(
         circuit,
-        readout_basis=surface_readout_basis,
+        surface_readout_basis=surface_readout_basis,
         full_post_selection=full_post_selection,
         post_transfer_z_bits=post_transfer_z_register,
         post_transfer_x_bits=post_transfer_x_register,
@@ -104,7 +111,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
 def append_post_transfer_and_readout(
     circuit: QuantumCircuit,
     *,
-    readout_basis: common.SurfaceReadoutBasis,
+    surface_readout_basis: common.SurfaceReadoutBasis,
     full_post_selection: bool = False,
     post_transfer_z_bits: Sequence[object],
     post_transfer_x_bits: Sequence[object],
@@ -121,8 +128,8 @@ def append_post_transfer_and_readout(
     ``surface_data_bits`` stores the final data in canonical
     ``a..y`` order. The caller owns these classical registers.
     """
-    readout_basis = normalize_pauli_char(readout_basis)
-    if readout_basis == "Y":
+    surface_readout_basis = normalize_pauli_char(surface_readout_basis)
+    if surface_readout_basis == "Y":
         raise ValueError("full-data surface readout basis must be X or Z.")
     stabilizer_rounds = 1 if full_post_selection else TRANSFER_SPEC.distance
     qubits = {register.name: register[0] for register in circuit.qregs}
@@ -143,21 +150,16 @@ def append_post_transfer_and_readout(
         append_scheduled_stabilizer_round=(
             TRANSFER_SPEC.surface_code_operations.append_scheduled_stabilizer_round
         ),
-        logical_readout_basis=None,
-        logical_bits=(),
-        append_logical_measurement=(
-            TRANSFER_SPEC.surface_code_operations.append_logical_measurement
-        ),
         add_barriers=add_barriers,
     )
     d5.append_full_data_readout(
         circuit,
-        readout_basis,
+        surface_readout_basis,
         surface_qubits=surface_qubits,
         bits=surface_data_bits,
     )
     if add_barriers:
-        circuit.barrier(label=f"destructive full-data {readout_basis}")
+        circuit.barrier(label=f"destructive full-data {surface_readout_basis}")
 
 
 def parse_transfer_measurements(

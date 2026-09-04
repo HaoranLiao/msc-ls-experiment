@@ -31,8 +31,8 @@ from msc.steane_code.kickback_tomography_common import (
     resolve_kickback_tomography_patch_spec,
 )
 from msc.steane_code.magic_state_cultivation_qiskit import (
-    append_11_site_patch_h_xy_projection_round,
-    append_14_site_patch_h_xy_projection_round,
+    append_11_site_patch_magic_state_projection_round,
+    append_14_site_patch_magic_state_projection_round,
 )
 from msc.steane_code.state_injection_qiskit import (
     InjectedStateName,
@@ -401,17 +401,19 @@ def _append_patch_projection_round(
 ) -> None:
     """Append one cultivation-derived H_XY measurement on the patch."""
     if spec.patch_sites == 11:
-        append_11_site_patch_h_xy_projection_round(
+        append_11_site_patch_magic_state_projection_round(
             circuit,
             patch_qubits=patch_qubits,
             bits=bits,
+            cultivated_state="T",
             add_barriers=add_barriers,
         )
     elif spec.patch_sites == 14:
-        append_14_site_patch_h_xy_projection_round(
+        append_14_site_patch_magic_state_projection_round(
             circuit,
             patch_qubits=patch_qubits,
             bits=bits,
+            cultivated_state="T",
             add_barriers=add_barriers,
             running_kt=running_kt,
         )

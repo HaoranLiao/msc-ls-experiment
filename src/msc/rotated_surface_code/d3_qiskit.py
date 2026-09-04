@@ -120,6 +120,27 @@ def append_scheduled_stabilizer_round(
     )
 
 
+def append_full_data_readout(
+    circuit: QuantumCircuit,
+    basis: str,
+    *,
+    surface_qubits: Sequence[object],
+    bits: Sequence[object],
+) -> None:
+    """Destructively read all d=3 data qubits into bits ordered ``a..i``.
+
+    Qiskit callers reconstruct compatible final stabilizers from these nine
+    bits so the readout closes the corresponding spacetime-decoder history.
+    """
+    helper.append_full_data_readout(
+        circuit,
+        basis,
+        surface_qubits=surface_qubits,
+        surface_order=SURFACE_ORDER,
+        bits=bits,
+    )
+
+
 def append_logical_measurement(
     circuit: QuantumCircuit,
     basis: str = "Z",

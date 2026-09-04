@@ -1,8 +1,9 @@
-"""Qiskit H_XY cultivation on the 11-site and 14-site Steane patches."""
+"""Qiskit H_XZ/H_XY cultivation on the 11-site and 14-site Steane patches."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Literal
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
@@ -36,7 +37,11 @@ from msc.steane_code.state_injection_qiskit import (
     append_14_site_patch_hirano_encoder,
     append_14_site_patch_superdense_stabilizer_measurement,
 )
+from msc.utils.circuit_qiskit import apply_ty, apply_ty_dagger
 from msc.utils.normalize import qiskit_bit_value, resolve_patch_qubits
+
+CultivatedStateName = Literal["T", "Ty"]
+DEFAULT_QISKIT_CULTIVATED_STATE: CultivatedStateName = "Ty"
 
 # =============================================================================
 # 1. Framework-neutral layout, fold schedule, and constants
@@ -65,6 +70,26 @@ def reset_to_plus(circuit: QuantumCircuit, qubit) -> None:
     """Reset a qubit and prepare ``|+>``."""
     circuit.reset(qubit)
     circuit.h(qubit)
+
+
+def _append_transversal_cultivation_basis_rotation(
+    circuit: QuantumCircuit,
+    *,
+    data_qubits: Sequence,
+    cultivated_state: CultivatedStateName,
+    inverse: bool,
+) -> None:
+    """Rotate the selected magic-state observable onto logical X."""
+    if cultivated_state == "T":
+        operation = circuit.tdg if inverse else circuit.t
+        for data_qubit in data_qubits:
+            operation(data_qubit)
+    elif cultivated_state == "Ty":
+        operation = apply_ty_dagger if inverse else apply_ty
+        for data_qubit in data_qubits:
+            operation(circuit, data_qubit)
+    else:
+        raise ValueError("cultivated_state must be 'T' or 'Ty'.")
 
 
 def append_cnot_layer_from_site_labels(
@@ -188,23 +213,24 @@ def append_14_site_patch_unfold_network(
             circuit.barrier(label=f"unfold layer {layer_index}")
 
 
-def append_11_site_patch_h_xy_projection_round(
+def append_11_site_patch_magic_state_projection_round(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
     bits: Sequence,
+    cultivated_state: CultivatedStateName,
     add_barriers: bool = True,
     skip_cx_1_4: bool = False,
     skip_cx: tuple[int, int] | None = None,
 ) -> None:
-    """Append one H_XY projection / cultivation round.
+    """Append one H_XY or H_XZ magic-state projection round.
 
     See the 11-site layout comment in magic_state_cultivation_common.
 
     This routine implements the Google paper Fig.1 panel-C cultivation sequence:
 
     1. Prepare the four helper sites in |+>.
-    2. Apply T to all seven data sites to rotate H_XY onto X.
+    2. Rotate the chosen logical magic-state observable onto X.
     3. Apply the 4-CNOT fold layer.
     4. Apply the 3-CNOT fold layer.
     5. Apply the 2-CNOT fold layer.
@@ -216,7 +242,7 @@ def append_11_site_patch_h_xy_projection_round(
     11. Apply the inverse 3-CNOT layer.
     12. Apply the inverse 4-CNOT layer.
     13. Measure helper sites 1, 2, 6, 7 in the X basis.
-    14. Apply T^dagger to all seven data sites.
+    14. Undo the transversal basis rotation on all seven data sites.
 
     Parameters
     ----------
@@ -227,6 +253,9 @@ def append_11_site_patch_h_xy_projection_round(
     bits
         Five classical bits: bit 0 = folded observable (site 7),
         bits 1-4 = helper sites 1, 2, 6, 7.
+    cultivated_state
+        ``"T"`` projects onto the +1 eigenspace of H_XY; ``"Ty"`` projects
+        onto the +1 eigenspace of H_XZ.
     add_barriers
         Whether to insert barriers between conceptual stages.
     skip_cx_1_4
@@ -254,13 +283,16 @@ def append_11_site_patch_h_xy_projection_round(
     if add_barriers:
         circuit.barrier(label="prepare helpers")
 
-    # Step 2 data rotations. Transversal T rotates H_XY onto the folded
-    # X measurement axis; the fold CNOT network is unchanged.
-    for data_site in PATCH_11_SITE_DATA_SITES:
-        circuit.t(patch_qubits[data_site])
+    data_qubits = [patch_qubits[data_site] for data_site in PATCH_11_SITE_DATA_SITES]
+    _append_transversal_cultivation_basis_rotation(
+        circuit,
+        data_qubits=data_qubits,
+        cultivated_state=cultivated_state,
+        inverse=False,
+    )
 
     if add_barriers:
-        circuit.barrier(label="T on data")
+        circuit.barrier(label=f"{cultivated_state} basis rotation")
 
     # Steps 3--6: fold.
     append_11_site_patch_fold_network(
@@ -307,28 +339,32 @@ def append_11_site_patch_h_xy_projection_round(
     if add_barriers:
         circuit.barrier(label="measure helpers")
 
-    # Step 14: undo the single-qubit basis rotation on the data.
-    for data_site in PATCH_11_SITE_DATA_SITES:
-        circuit.tdg(patch_qubits[data_site])
+    _append_transversal_cultivation_basis_rotation(
+        circuit,
+        data_qubits=data_qubits,
+        cultivated_state=cultivated_state,
+        inverse=True,
+    )
 
     if add_barriers:
-        circuit.barrier(label="T dagger on data")
+        circuit.barrier(label=f"undo {cultivated_state} basis rotation")
 
 
-def append_14_site_patch_h_xy_projection_round(
+def append_14_site_patch_magic_state_projection_round(
     circuit: QuantumCircuit,
     *,
     patch_qubits: Sequence,
     bits: Sequence,
+    cultivated_state: CultivatedStateName,
     add_barriers: bool = True,
     running_kt: bool = False,
 ) -> None:
-    """Append one logical-H_XY projection round on the fixed 14-site patch.
+    """Append one logical magic-state projection round on the 14-site patch.
 
-    The round prepares H7-H12 in ``|+>``, applies transversal ``T`` to the data,
-    folds onto D0, measures D0 in X, unfolds, measures H7-H12 in X, then applies
-    transversal ``Tdg``. The seven output bits are the D0 result followed by
-    the H7-H12 flags, which are expected to be zero.
+    The round prepares H7-H12 in ``|+>``, rotates H_XY or H_XZ onto logical X,
+    folds onto D0, measures D0 in X, unfolds, measures H7-H12 in X, then undoes
+    the basis rotation. The seven output bits are the D0 result followed by the
+    H7-H12 flags, which are expected to be zero.
 
     Cultivation uses the default root reset and postselects the D0 result to
     zero. Although redundant in an ideal accepted shot, the reset exposes a
@@ -340,6 +376,9 @@ def append_14_site_patch_h_xy_projection_round(
 
     Parameters
     ----------
+    cultivated_state
+        ``"T"`` projects onto the +1 eigenspace of H_XY; ``"Ty"`` projects
+        onto the +1 eigenspace of H_XZ.
     running_kt
         Set to ``False`` for cultivation, which resets D0 to ``|+>``; set to
         ``True`` for KT, which restores the measured D0 branch.
@@ -359,10 +398,15 @@ def append_14_site_patch_h_xy_projection_round(
     if add_barriers:
         circuit.barrier(label="prepare helpers")
 
-    for data_site in PATCH_14_SITE_DATA_SITES:
-        circuit.t(patch_qubits[data_site])
+    data_qubits = [patch_qubits[data_site] for data_site in PATCH_14_SITE_DATA_SITES]
+    _append_transversal_cultivation_basis_rotation(
+        circuit,
+        data_qubits=data_qubits,
+        cultivated_state=cultivated_state,
+        inverse=False,
+    )
     if add_barriers:
-        circuit.barrier(label="T on data")
+        circuit.barrier(label=f"{cultivated_state} basis rotation")
 
     append_14_site_patch_fold_network(
         circuit,
@@ -395,10 +439,14 @@ def append_14_site_patch_h_xy_projection_round(
     if add_barriers:
         circuit.barrier(label="measure helpers")
 
-    for data_site in PATCH_14_SITE_DATA_SITES:
-        circuit.tdg(patch_qubits[data_site])
+    _append_transversal_cultivation_basis_rotation(
+        circuit,
+        data_qubits=data_qubits,
+        cultivated_state=cultivated_state,
+        inverse=True,
+    )
     if add_barriers:
-        circuit.barrier(label="T dagger on data")
+        circuit.barrier(label=f"undo {cultivated_state} basis rotation")
 
 
 # =============================================================================
@@ -412,7 +460,8 @@ def append_11_site_patch_injection_and_cultivation(
     add_qed_round: bool,
     skip_cx_1_4: bool,
     patch_qubits: Sequence,
-    injected_state: InjectedStateName = "T",
+    injected_state: InjectedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
+    cultivated_state: CultivatedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
     encoder_bits: Sequence,
     cultivation_bits: Sequence[Sequence],
     cultivation_rounds: int = 1,
@@ -436,14 +485,17 @@ def append_11_site_patch_injection_and_cultivation(
         Eleven qubits indexed by the 11-site patch labels.
     injected_state
         Physical state injected on the center data site before encoding.
+    cultivated_state
+        Magic state selected by each projection round. ``"T"`` measures
+        logical H_XY and ``"Ty"`` measures logical H_XZ.
     encoder_bits
         Four classical bits for encoder-flag postselection.
     cultivation_bits
         Exactly ``cultivation_rounds`` 5-bit sequences, one per cultivation
         round.
     cultivation_rounds
-        Number of H_XY cultivation rounds. Zero appends injection and optional
-        QED without cultivation.
+        Number of selected magic-state cultivation rounds. Zero appends
+        injection and optional QED without cultivation.
     qed_bits
         Six bits for the post-injection QED outcomes, ordered by
         ``post_injection_qed_stabilizer_labels``: the three X stabilizers
@@ -495,10 +547,11 @@ def append_11_site_patch_injection_and_cultivation(
             circuit.barrier(label="post-injection QED")
 
     for round_index in range(cultivation_rounds):
-        append_11_site_patch_h_xy_projection_round(
+        append_11_site_patch_magic_state_projection_round(
             circuit,
             patch_qubits=patch_qubits,
             bits=cultivation_bits[round_index],
+            cultivated_state=cultivated_state,
             add_barriers=add_barriers,
             skip_cx_1_4=skip_cx_1_4,
             skip_cx=skip_cx,
@@ -513,7 +566,8 @@ def append_14_site_patch_injection_and_cultivation(
     encoder_bits: Sequence,
     cultivation_bits: Sequence[Sequence],
     encoder: Patch14SiteEncoderName = "abstract_routed",
-    injected_state: InjectedStateName = "T",
+    injected_state: InjectedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
+    cultivated_state: CultivatedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
     cultivation_rounds: int = 1,
     qed_bits: Sequence | None = None,
     add_barriers: bool = True,
@@ -526,6 +580,9 @@ def append_14_site_patch_injection_and_cultivation(
     encoder. The optional QED record contains the six Steane stabilizers
     followed by the terminal D2' copy-detour flag; all seven are postselection
     data and no recovery is applied.
+
+    ``cultivated_state="Ty"`` is the Qiskit default and measures logical
+    H_XZ. Pass ``"T"`` to retain logical-H_XY cultivation.
     """
     encoder_flag_count = patch_14_site_encoder_flag_count(encoder)
     if len(encoder_bits) < encoder_flag_count:
@@ -587,19 +644,21 @@ def append_14_site_patch_injection_and_cultivation(
             circuit.barrier(label="post-injection QED")
 
     for round_bits in cultivation_bits:
-        append_14_site_patch_h_xy_projection_round(
+        append_14_site_patch_magic_state_projection_round(
             circuit,
             patch_qubits=patch_qubits,
             bits=round_bits,
+            cultivated_state=cultivated_state,
             add_barriers=add_barriers,
         )
 
 
 def build_11_site_patch_injection_and_cultivation_circuit(
-    injected_state: InjectedStateName = "T",
+    injected_state: InjectedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
     *,
     add_qed_round: bool,
     skip_cx_1_4: bool,
+    cultivated_state: CultivatedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
     cultivation_rounds: int = 1,
     add_barriers: bool = True,
     skip_cx: tuple[int, int] | None = None,
@@ -632,9 +691,12 @@ def build_11_site_patch_injection_and_cultivation_circuit(
     ----------
     injected_state
         Physical state injected on the center data site before encoding.
+    cultivated_state
+        Magic state selected by each projection round. The Qiskit default is
+        ``"Ty"``; pass ``"T"`` for the prior H_XY protocol.
     cultivation_rounds
-        Number of H_XY cultivation rounds. Zero appends injection and optional
-        QED without cultivation.
+        Number of selected magic-state cultivation rounds. Zero appends
+        injection and optional QED without cultivation.
     add_qed_round
         Whether to measure all six Steane stabilizers after injection and
         before cultivation.
@@ -683,6 +745,7 @@ def build_11_site_patch_injection_and_cultivation_circuit(
         circuit,
         patch_qubits=list(qreg),
         injected_state=injected_state,
+        cultivated_state=cultivated_state,
         encoder_bits=list(enc_flags_creg),
         cultivation_bits=[list(cult_creg) for cult_creg in cult_cregs],
         cultivation_rounds=cultivation_rounds,
@@ -696,10 +759,11 @@ def build_11_site_patch_injection_and_cultivation_circuit(
 
 
 def build_14_site_patch_injection_and_cultivation_circuit(
-    injected_state: InjectedStateName = "T",
+    injected_state: InjectedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
     *,
     add_qed_round: bool,
     encoder: Patch14SiteEncoderName = "abstract_routed",
+    cultivated_state: CultivatedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
     cultivation_rounds: int = 1,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
@@ -741,6 +805,7 @@ def build_14_site_patch_injection_and_cultivation_circuit(
         patch_qubits=list(qreg),
         encoder=encoder,
         injected_state=injected_state,
+        cultivated_state=cultivated_state,
         encoder_bits=(list(enc_flags_creg) if enc_flags_creg is not None else ()),
         cultivation_bits=[list(cult_creg) for cult_creg in cult_cregs],
         cultivation_rounds=cultivation_rounds,

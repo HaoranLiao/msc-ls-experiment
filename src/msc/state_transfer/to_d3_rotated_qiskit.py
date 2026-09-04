@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-from qiskit import QuantumCircuit
+from qiskit import ClassicalRegister, QuantumCircuit
 
 from msc.rotated_surface_code import d3_qiskit as d3
+from msc.rotated_surface_code.post_transfer import post_transfer_qiskit
 from msc.state_transfer import analysis_qiskit as analysis
 from msc.state_transfer import common
 from msc.state_transfer import helper_qiskit as helper
+from msc.steane_code.magic_state_cultivation_qiskit import (
+    DEFAULT_QISKIT_CULTIVATED_STATE,
+    CultivatedStateName,
+)
 from msc.steane_code.state_injection_qiskit import InjectedStateName
+from msc.utils.normalize import normalize_pauli_char
 
 TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
     name="rotated d3",
@@ -33,10 +39,12 @@ MERGED_BOUNDARY_CHECKS = TRANSFER_SPEC.merged_boundary_checks
 def build_steane_to_rotated_d3_lattice_surgery_circuit(
     *,
     patch_sites: common.SteanePatchSites = 14,
-    injected_state: InjectedStateName = "T",
+    injected_state: InjectedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
+    cultivated_state: CultivatedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
+    full_post_selection: bool = False,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
     """Build the authoritative register-owning d3 transfer circuit.
@@ -47,24 +55,80 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     and then recovered unconditionally.
 
     The circuit includes injection on the selected Steane patch,
-    post-injection QED, optional logical-H_XY cultivation, both Steane
+    post-injection QED, optional logical-H_XZ cultivation by default (or H_XY
+    when ``cultivated_state="T"``), both Steane
     verification groups, and every raw measurement needed for classical
-    spacetime decoding. Setting ``include_post_transfer_stabilizer_rounds``
-    appends three full d3 rounds. ``surface_readout_basis`` optionally appends
-    destructive X/Y/Z analysis; ``None`` ends at the transfer boundary.
+    spacetime decoding. An X/Z ``surface_readout_basis`` appends three complete
+    surface rounds before all-data readout, or one when ``full_post_selection``
+    is true. The reconstructed final stabilizers close the corresponding
+    decoder history. ``include_post_transfer_stabilizer_rounds`` retains a
+    continuation-only option when no readout is requested. ``None`` otherwise
+    ends at the transfer boundary; full-data Y readout is unsupported.
 
     This d3 geometry is a compact simulation adaptation, not the paper's
-    depicted target. The shared helper owns the full protocol-stage semantics.
+    depicted target. This wrapper owns its continuation and readout boundary.
     """
-    return helper.build_lattice_surgery_circuit(
+    circuit = helper.build_lattice_surgery_circuit(
         TRANSFER_SPEC,
         patch_sites=patch_sites,
         injected_state=injected_state,
+        cultivated_state=cultivated_state,
         include_cultivation=include_cultivation,
-        include_post_transfer_stabilizer_rounds=include_post_transfer_stabilizer_rounds,
-        surface_readout_basis=surface_readout_basis,
         add_barriers=add_barriers,
     )
+    if surface_readout_basis is None and not include_post_transfer_stabilizer_rounds:
+        return circuit
+
+    stabilizer_rounds = TRANSFER_SPEC.distance
+    if surface_readout_basis is not None:
+        surface_readout_basis = normalize_pauli_char(surface_readout_basis)
+        if surface_readout_basis == "Y":
+            raise ValueError("full-data surface readout basis must be X or Z.")
+        stabilizer_rounds = 1 if full_post_selection else TRANSFER_SPEC.distance
+    post_transfer_z_register = ClassicalRegister(
+        stabilizer_rounds * len(TRANSFER_SPEC.z_labels),
+        "post_transfer_surface_z",
+    )
+    post_transfer_x_register = ClassicalRegister(
+        stabilizer_rounds * len(TRANSFER_SPEC.x_labels),
+        "post_transfer_surface_x",
+    )
+    circuit.add_register(post_transfer_z_register, post_transfer_x_register)
+
+    qubits = {register.name: register[0] for register in circuit.qregs}
+    surface_qubits = [qubits[label] for label in TRANSFER_SPEC.surface_order]
+    post_transfer_qiskit.append_rotated_full_stabilizer_rounds(
+        circuit,
+        surface_qubits=surface_qubits,
+        z_ancillas=[qubits[label.lower()] for label in TRANSFER_SPEC.z_labels],
+        x_ancillas=[qubits[label.lower()] for label in TRANSFER_SPEC.x_labels],
+        z_stabilizer_names=TRANSFER_SPEC.z_labels,
+        x_stabilizer_names=TRANSFER_SPEC.x_labels,
+        z_bits=post_transfer_z_register[:],
+        x_bits=post_transfer_x_register[:],
+        stabilizer_rounds=stabilizer_rounds,
+        append_scheduled_stabilizer_round=(
+            TRANSFER_SPEC.surface_code_operations.append_scheduled_stabilizer_round
+        ),
+        add_barriers=add_barriers,
+    )
+    if surface_readout_basis is None:
+        return circuit
+
+    surface_data_register = ClassicalRegister(
+        len(TRANSFER_SPEC.surface_order),
+        f"surface_data_{surface_readout_basis.lower()}",
+    )
+    circuit.add_register(surface_data_register)
+    d3.append_full_data_readout(
+        circuit,
+        surface_readout_basis,
+        surface_qubits=surface_qubits,
+        bits=surface_data_register[:],
+    )
+    if add_barriers:
+        circuit.barrier(label=f"destructive full-data {surface_readout_basis}")
+    return circuit
 
 
 def parse_transfer_measurements(
@@ -74,14 +138,20 @@ def parse_transfer_measurements(
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
+    full_post_selection: bool = False,
 ) -> dict[str, object]:
+    post_transfer_stabilizer_rounds = 0
+    if surface_readout_basis is not None:
+        post_transfer_stabilizer_rounds = 1 if full_post_selection else TRANSFER_SPEC.distance
+    elif include_post_transfer_stabilizer_rounds:
+        post_transfer_stabilizer_rounds = TRANSFER_SPEC.distance
     return analysis.parse_transfer_measurements(
         bitstring,
         spec=TRANSFER_SPEC,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
-        post_transfer_stabilizer_rounds=(
-            TRANSFER_SPEC.distance if include_post_transfer_stabilizer_rounds else 0
-        ),
+        post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,
+        full_data_readout=surface_readout_basis is not None,
+        full_post_selection=full_post_selection,
     )

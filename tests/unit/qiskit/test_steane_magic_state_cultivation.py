@@ -19,6 +19,7 @@ from msc.steane_code.magic_state_cultivation_common import (
     STEANE_QED_MEASUREMENTS_PER_ROUND,
 )
 from msc.steane_code.magic_state_cultivation_qiskit import (
+    CultivatedStateName,
     build_11_site_patch_injection_and_cultivation_circuit,
     build_14_site_patch_injection_and_cultivation_circuit,
     postselect_success_counts,
@@ -47,6 +48,25 @@ from msc.utils.normalize import qiskit_bit_value
 NUM_SHOTS = 1000
 INV_SQRT2 = 1.0 / math.sqrt(2)
 NOISY_TEST_SEED = 42
+MAGIC_STATE_EXPECTATIONS: dict[CultivatedStateName, dict[str, float]] = {
+    "T": {"X": INV_SQRT2, "Y": INV_SQRT2, "Z": 0.0},
+    "Ty": {"X": INV_SQRT2, "Y": 0.0, "Z": INV_SQRT2},
+}
+INJECTED_STATE_BLOCH_VECTORS: dict[InjectedStateName, tuple[float, float, float]] = {
+    "0": (0.0, 0.0, 1.0),
+    "1": (0.0, 0.0, -1.0),
+    "+": (1.0, 0.0, 0.0),
+    "-": (-1.0, 0.0, 0.0),
+    "i": (0.0, 1.0, 0.0),
+    "-i": (0.0, -1.0, 0.0),
+    "Y+": (0.0, 1.0, 0.0),
+    "Y-": (0.0, -1.0, 0.0),
+    "S": (0.0, 1.0, 0.0),
+    "Sdg": (0.0, -1.0, 0.0),
+    "T": (INV_SQRT2, INV_SQRT2, 0.0),
+    "Tdg": (INV_SQRT2, -INV_SQRT2, 0.0),
+    "Ty": (INV_SQRT2, 0.0, INV_SQRT2),
+}
 
 
 # =============================================================================
@@ -103,9 +123,9 @@ FOURTEEN_SITE = PatchCultivationSuite(
     encoder_flag_bits=len(PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES),
     qed_measurements_per_round=PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
     cultivation_measurements_per_round=PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
-    accepted_test_states=("T",),
-    success_rate_test_states=("T",),
-    stabilizer_check_states=("T",),
+    accepted_test_states=("Ty",),
+    success_rate_test_states=("Ty",),
+    stabilizer_check_states=("Ty",),
 )
 
 PATCH_SUITES: tuple[PatchCultivationSuite, ...] = (ELEVEN_SITE, FOURTEEN_SITE)
@@ -131,11 +151,13 @@ def _build_cultivation_with_logical_measurement(
     state: InjectedStateName,
     basis: str,
     *,
+    cultivated_state: CultivatedStateName,
     n_rounds: int = 1,
 ) -> QuantumCircuit:
     """Build injection, cultivation rounds, and destructive logical readout."""
     circuit = patch.build_circuit(
         state,
+        cultivated_state=cultivated_state,
         cultivation_rounds=n_rounds,
         add_qed_round=True,
         add_barriers=False,
@@ -218,21 +240,28 @@ def _postselect_and_compute_expectation(
 
 
 class TestPostselectedLogicalExpectation:
-    """Postselection projects onto the logical H_XY +1 state."""
+    """Postselection projects onto the selected logical magic-state axis."""
 
     @pytest.mark.slow
     @pytest.mark.parametrize(
         ("patch", "state"), PATCH_ACCEPTED_STATE_CASES, ids=PATCH_ACCEPTED_STATE_IDS
     )
+    @pytest.mark.parametrize("cultivated_state", ("T", "Ty"))
     @pytest.mark.parametrize("basis", ["Z", "X", "Y"])
-    def test_expectation_matches_t_state(
+    def test_expectation_matches_cultivated_state(
         self,
         patch: PatchCultivationSuite,
         state: InjectedStateName,
+        cultivated_state: CultivatedStateName,
         basis: str,
     ) -> None:
-        """Accepted shots have the logical Pauli expectations of T|+⟩."""
-        circuit = _build_cultivation_with_logical_measurement(patch, state, basis)
+        """Accepted shots have the selected magic state's Pauli expectations."""
+        circuit = _build_cultivation_with_logical_measurement(
+            patch,
+            state,
+            basis,
+            cultivated_state=cultivated_state,
+        )
         sim = AerSimulator()
         counts = sim.run(circuit, shots=NUM_SHOTS).result().get_counts()
 
@@ -244,26 +273,29 @@ class TestPostselectedLogicalExpectation:
         ), f"No accepted shots for patch={patch.name}, state={state!r}, basis={basis}"
 
         # Statistical tolerance: ~4σ where σ = sqrt((1 - ev²) / n_accepted).
-        # For T|+⟩, ⟨Z_L⟩ = 0 and ⟨X_L⟩ = ⟨Y_L⟩ = 1/√2.
-        expected = 0.0 if basis == "Z" else INV_SQRT2
+        expected = MAGIC_STATE_EXPECTATIONS[cultivated_state][basis]
         tolerance = 4 * math.sqrt((1.0 - expected**2) / n_accepted) + 0.01
         assert expectation == pytest.approx(expected, abs=tolerance), (
             f"{patch.name} state {state!r}, basis {basis}: ⟨{basis}_L⟩ = {expectation:.4f}, "
-            f"expected {expected:.4f} after H_XY cultivation (n_accepted={n_accepted})"
+            f"expected {expected:.4f} after {cultivated_state} cultivation "
+            f"(n_accepted={n_accepted})"
         )
 
     @pytest.mark.parametrize(
         ("patch", "state"), PATCH_SUCCESS_RATE_STATE_CASES, ids=PATCH_SUCCESS_RATE_STATE_IDS
     )
+    @pytest.mark.parametrize("cultivated_state", ("T", "Ty"))
     def test_success_rate(
         self,
         patch: PatchCultivationSuite,
         state: InjectedStateName,
+        cultivated_state: CultivatedStateName,
     ) -> None:
-        """Acceptance rate matches |⟨T|ψ⟩|² for each injected state."""
+        """Acceptance rate matches overlap with the selected magic state."""
         # Use the cultivation-only circuit (no logical measurement needed)
         circuit = patch.build_circuit(
             state,
+            cultivated_state=cultivated_state,
             add_qed_round=True,
             add_barriers=False,
         )
@@ -275,31 +307,29 @@ class TestPostselectedLogicalExpectation:
         accepted_counts = postselect_success_counts(counts)
         measured_rate = sum(accepted_counts.values()) / total
 
-        # Expected P(accept) = |⟨T|ψ⟩|², where |T⟩ = T|+⟩ is the +1 eigenstate
-        # of H_XY = (X + Y) / √2.
-        cos_pi8 = math.cos(math.pi / 8)
-        sin_pi8 = math.sin(math.pi / 8)
-        expected_rates: dict[InjectedStateName, float] = {
-            "0": 0.5,
-            "1": 0.5,
-            "+": cos_pi8**2,
-            "-": sin_pi8**2,
-            "Y+": cos_pi8**2,
-            "Y-": sin_pi8**2,
-            "i": cos_pi8**2,
-            "-i": sin_pi8**2,
-            "S": cos_pi8**2,
-            "T": 1.0,
-            "Tdg": 0.5,
-            "Ty": 0.75,
-        }
-        expected_rate = expected_rates[state]
+        target_bloch_vector = tuple(
+            MAGIC_STATE_EXPECTATIONS[cultivated_state][basis] for basis in ("X", "Y", "Z")
+        )
+        injected_bloch_vector = INJECTED_STATE_BLOCH_VECTORS[state]
+        expected_rate = (
+            1.0
+            + sum(
+                target_component * injected_component
+                for target_component, injected_component in zip(
+                    target_bloch_vector,
+                    injected_bloch_vector,
+                    strict=True,
+                )
+            )
+        ) / 2.0
 
-        # For |T⟩ input, acceptance must be exactly 1.0.
-        if state == "T":
+        if state == cultivated_state:
             assert (
                 measured_rate == 1.0
-            ), f"{patch.name} T-state acceptance should be 1.0, got {measured_rate:.4f}"
+            ), (
+                f"{patch.name} {cultivated_state}-state acceptance should be 1.0, "
+                f"got {measured_rate:.4f}"
+            )
         else:
             # Statistical tolerance for binomial proportion: ~4σ
             sigma = math.sqrt(expected_rate * (1 - expected_rate) / NUM_SHOTS)
@@ -310,11 +340,18 @@ class TestPostselectedLogicalExpectation:
             )
 
     @pytest.mark.parametrize("patch", PATCH_SUITES, ids=PATCH_IDS)
+    @pytest.mark.parametrize("cultivated_state", ("T", "Ty"))
     def test_builder_allocates_every_postselection_bit(
         self,
         patch: PatchCultivationSuite,
+        cultivated_state: CultivatedStateName,
     ) -> None:
-        circuit = patch.build_circuit("T", add_qed_round=True, add_barriers=False)
+        circuit = patch.build_circuit(
+            cultivated_state,
+            cultivated_state=cultivated_state,
+            add_qed_round=True,
+            add_barriers=False,
+        )
         counts = AerSimulator().run(circuit, shots=10).result().get_counts()
 
         expected_bits = _n_postselection_bits(patch, n_rounds=1)
@@ -332,10 +369,20 @@ class TestStabilizerSyndromesAfterCultivation:
     """In noiseless setting, stabilizers remain +1 after successful cultivation."""
 
     @pytest.mark.parametrize("patch", PATCH_SUITES, ids=PATCH_IDS)
-    def test_all_stabilizers_trivial(self, patch: PatchCultivationSuite) -> None:
+    @pytest.mark.parametrize("cultivated_state", ("T", "Ty"))
+    def test_all_stabilizers_trivial(
+        self,
+        patch: PatchCultivationSuite,
+        cultivated_state: CultivatedStateName,
+    ) -> None:
         """All stabilizer results and the 14-site D2-copy flag are zero."""
         for state in patch.stabilizer_check_states:
-            circuit = patch.build_circuit(state, add_qed_round=True, add_barriers=False)
+            circuit = patch.build_circuit(
+                state,
+                cultivated_state=cultivated_state,
+                add_qed_round=True,
+                add_barriers=False,
+            )
 
             stab_creg = ClassicalRegister(patch.qed_measurements_per_round, "stab")
             circuit.add_register(stab_creg)
@@ -354,9 +401,9 @@ class TestStabilizerSyndromesAfterCultivation:
                 add_barriers=False,
             )
 
-            # A T-state input deterministically accepts; use 1 shot.
+            # A matching magic-state input deterministically accepts; use 1 shot.
             # For others, use enough shots to guarantee at least one acceptance.
-            n_shots = 1 if state == "T" else 50
+            n_shots = 1 if state == cultivated_state else 50
             counts = AerSimulator().run(circuit, shots=n_shots).result().get_counts()
 
             # Check all accepted shots have all-zero stabilizer outcomes.
@@ -389,25 +436,32 @@ class TestStabilizerSyndromesAfterCultivation:
 
 
 class TestNoisyCultivation:
-    """With depolarizing noise, postselected cultivation preserves logical |T_L⟩ fidelity.
+    """Postselected cultivation preserves the selected logical magic state.
 
     Under circuit-level depolarizing noise, the cultivation check acts as an
-    error-detection step: shots where noise flipped the logical H_XY eigenvalue
-    are preferentially rejected.
+    error-detection step: shots where noise flipped the selected logical
+    eigenvalue are preferentially rejected.
     """
 
     @pytest.mark.slow
     @pytest.mark.parametrize("patch", PATCH_SUITES, ids=PATCH_IDS)
+    @pytest.mark.parametrize("cultivated_state", ("T", "Ty"))
     @pytest.mark.parametrize("basis", ["X", "Y", "Z"])
     def test_postselected_fidelity_near_ideal(
         self,
         patch: PatchCultivationSuite,
+        cultivated_state: CultivatedStateName,
         basis: str,
     ) -> None:
-        """Check the postselected logical X, Y, and Z expectations of |T_L⟩."""
-        expected = INV_SQRT2 if basis in {"X", "Y"} else 0.0
+        """Check postselected Pauli expectations of both magic states."""
+        expected = MAGIC_STATE_EXPECTATIONS[cultivated_state][basis]
 
-        circuit = _build_cultivation_with_logical_measurement(patch, "T", basis)
+        circuit = _build_cultivation_with_logical_measurement(
+            patch,
+            cultivated_state,
+            basis,
+            cultivated_state=cultivated_state,
+        )
         noisy_simulator = build_noisy_aer_simulator(
             circuit,
             seed_simulator=NOISY_TEST_SEED,
