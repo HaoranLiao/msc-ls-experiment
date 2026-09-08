@@ -64,14 +64,14 @@ def build_ty_tomography_circuits(
     }
 
 
-def summarize_ty_tomography_counts(
+def analyze_ty_tomography_counts(
     counts_by_basis: Mapping[common.SurfaceReadoutBasis, Mapping[str, int]],
     *,
     target_distance: TomographyTargetDistance = 5,
     patch_sites: common.SteanePatchSites = 14,
     full_post_selection: bool = False,
 ) -> TyTomographySummary:
-    """Postselect and decode paired Qiskit counts into ``|Ty>`` fidelity."""
+    """Analyze paired Qiskit counts through postselection, decoding, and ``|Ty>`` fidelity."""
     if target_distance == 3:
         parse_transfer_measurements = d3.parse_transfer_measurements
     elif target_distance == 5:

@@ -16,7 +16,7 @@ from msc.steane_code.kickback_tomography_common import (
 from msc.steane_code.kickback_tomography_stim import (
     KickbackTomographyExperiment,
     build_kickback_tomography_experiment,
-    summarize_kickback_tomography_shots,
+    analyze_kickback_tomography_shots,
 )
 from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
@@ -412,7 +412,7 @@ class TestKickbackTomographyShotAnalysis:
             ],
         )
 
-        summary = summarize_kickback_tomography_shots(shots, layout)
+        summary = analyze_kickback_tomography_shots(shots, layout)
 
         assert summary == KickbackTomographySummary(
             total_shots=32,
@@ -425,7 +425,7 @@ class TestKickbackTomographyShotAnalysis:
         assert summary.logical_error_probability == pytest.approx(3 / 19)
         assert summary.fidelity_lower_bound == pytest.approx(16 / 19)
 
-        agreement_only_summary = summarize_kickback_tomography_shots(
+        agreement_only_summary = analyze_kickback_tomography_shots(
             shots,
             layout,
             retain_measure_check_disagreement=False,
@@ -455,7 +455,7 @@ class TestNoiselessKickbackTomography:
             patch_sites=patch_sites,
             add_ticks=False,
         )
-        summary = summarize_kickback_tomography_shots(
+        summary = analyze_kickback_tomography_shots(
             _sample(experiment, shots=10),
             experiment.layout,
         )
@@ -480,7 +480,7 @@ class TestNoiselessKickbackTomography:
             final_stabilizer_basis="NONE",
             add_ticks=False,
         )
-        summary = summarize_kickback_tomography_shots(
+        summary = analyze_kickback_tomography_shots(
             _sample(experiment),
             experiment.layout,
         )
@@ -509,7 +509,7 @@ class TestNoiselessKickbackTomography:
             final_stabilizer_basis="NONE",
             add_ticks=False,
         )
-        summary = summarize_kickback_tomography_shots(
+        summary = analyze_kickback_tomography_shots(
             _sample(experiment),
             experiment.layout,
         )

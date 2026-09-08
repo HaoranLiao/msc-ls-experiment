@@ -457,13 +457,13 @@ def _interpret_cultivation_round(
     return root, root_check
 
 
-def summarize_kickback_tomography_counts(
+def analyze_kickback_tomography_counts(
     counts: dict[str, int],
     layout: KickbackTomographyBitLayout,
     *,
     retain_measure_check_disagreement: bool = True,
 ) -> KickbackTomographySummary:
-    """Postselect Qiskit counts and summarize the two KT logical readouts.
+    """Analyze Qiskit counts by postselecting and classifying the two KT logical readouts.
 
     Fixed-zero detector bits reject first. For the 11-site patch, each folded
     root must also agree with its measurement-frame-corrected site-7 check;

@@ -13,8 +13,8 @@ from msc.state_transfer import common
 from msc.state_transfer import to_d5_rotated_qiskit as d5
 from msc.state_transfer.tomography_qiskit import (
     TOMOGRAPHY_BASES,
+    analyze_ty_tomography_counts,
     build_ty_tomography_circuits,
-    summarize_ty_tomography_counts,
 )
 
 
@@ -302,7 +302,7 @@ def test_noiseless_transferred_ty_tomography_has_unit_fidelity() -> None:
         shots=128,
         seed_simulator=42,
     ).result()
-    summary = summarize_ty_tomography_counts(
+    summary = analyze_ty_tomography_counts(
         {
             basis: result.get_counts(index)
             for index, basis in enumerate(TOMOGRAPHY_BASES)

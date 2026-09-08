@@ -16,7 +16,7 @@ from msc.steane_code.kickback_tomography_common import (
 from msc.steane_code.kickback_tomography_qiskit import (
     KickbackTomographyExperiment,
     build_kickback_tomography_experiment,
-    summarize_kickback_tomography_counts,
+    analyze_kickback_tomography_counts,
 )
 from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
@@ -345,7 +345,7 @@ class TestKickbackTomographyCountsAnalysis:
             rejected_detector: 11,
         }
 
-        summary = summarize_kickback_tomography_counts(counts, layout)
+        summary = analyze_kickback_tomography_counts(counts, layout)
 
         assert summary == KickbackTomographySummary(
             total_shots=32,
@@ -358,7 +358,7 @@ class TestKickbackTomographyCountsAnalysis:
         assert summary.logical_error_probability == pytest.approx(3 / 19)
         assert summary.fidelity_lower_bound == pytest.approx(16 / 19)
 
-        agreement_only_summary = summarize_kickback_tomography_counts(
+        agreement_only_summary = analyze_kickback_tomography_counts(
             counts,
             layout,
             retain_measure_check_disagreement=False,
@@ -401,7 +401,7 @@ class TestNoiselessKickbackTomography:
             .result()
             .get_counts()
         )
-        summary = summarize_kickback_tomography_counts(counts, experiment.layout)
+        summary = analyze_kickback_tomography_counts(counts, experiment.layout)
 
         if patch_sites == 14 and no_reset:
             assert summary.retained_shots > 0
@@ -435,7 +435,7 @@ class TestNoiselessKickbackTomography:
             .result()
             .get_counts()
         )
-        summary = summarize_kickback_tomography_counts(counts, experiment.layout)
+        summary = analyze_kickback_tomography_counts(counts, experiment.layout)
 
         # Expected P(-1 H_XY-axis outcome) for the named input state.
         inv_sqrt2 = 1.0 / math.sqrt(2.0)
@@ -482,7 +482,7 @@ class TestNoiselessKickbackTomography:
             add_barriers=False,
         )
         counts = AerSimulator().run(experiment.circuit, shots=NUM_SHOTS).result().get_counts()
-        summary = summarize_kickback_tomography_counts(counts, experiment.layout)
+        summary = analyze_kickback_tomography_counts(counts, experiment.layout)
 
         assert summary.retained_shots > 0
         assert summary.logical_error_probability == 0.0

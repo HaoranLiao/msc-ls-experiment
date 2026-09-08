@@ -303,13 +303,13 @@ def _append_patch_projection_round(
 # =============================================================================
 
 
-def summarize_kickback_tomography_shots(
+def analyze_kickback_tomography_shots(
     shots: np.ndarray,
     layout: KickbackTomographyBitLayout,
     *,
     retain_measure_check_disagreement: bool = True,
 ) -> KickbackTomographySummary:
-    """Postselect Stim samples and summarize the two KT logical readouts.
+    """Analyze Stim samples by postselecting and classifying the two KT logical readouts.
 
     ``shots`` is a boolean array of shape ``(num_shots, num_measurements)`` from
     ``circuit.compile_sampler().sample(...)``. Fixed-zero detector columns
