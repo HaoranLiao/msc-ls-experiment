@@ -22,7 +22,29 @@ from msc.state_transfer.tomography_qiskit import (
 def test_full_d5_ty_tomography_measurement_record_is_complete_and_semantic(
     basis: common.SurfaceReadoutBasis,
 ) -> None:
-    """Route every d5 full-circuit bit through flags, detector histories, and decoding."""
+    """Route every d5 full-circuit bit through flags, detector histories, and decoding.
+
+    This record follows Hirano's ``full_post_selection=False`` boundary
+    semantics. Product ``|+>`` fixes every surface X check to +1, but Hirano
+    still extracts one complete X/Z round before merging: its X results form a
+    known-value detector boundary, while its nondeterministic Z results form the
+    measured reference. Hirano sets persistent postselection on ``X_bcgh`` and
+    ``X_fgkl`` before that extraction and never clears it, so their initial
+    events, all three merge-round changes, and all five post-transfer changes
+    reject. The final destructive-readout boundary is decoded rather than
+    postselected. Five closing rounds likewise match Hirano: one initial closing
+    round followed by ``distance - 1`` more. During deformation ``X_ab`` and
+    ``X_cd`` are withheld; ``m_ab`` restores only the former, so the first
+    post-transfer ``X_cd`` result starts a new reference without a detector.
+
+    This is a semantic, not circuit-identical, comparison. This Qiskit workflow
+    physically injects, verifies, and cultivates the 14-site Steane state and
+    retains extra Bell-partner/D2 flags instead of using Hirano's ideal Steane
+    prefix. Its modular merge serializes interface, surface, and Steane groups
+    that Hirano interleaves. The corresponding Stim LER experiment also omits
+    Hirano's per-tick idle noise. These deliberate differences do not change the
+    false-branch measurement-boundary and postselection contract exercised here.
+    """
     circuit = build_ty_tomography_circuits(
         target_distance=5,
         patch_sites=14,
