@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from qiskit import QuantumCircuit
+from qiskit.circuit import Gate
 from qiskit.circuit.classical import expr
 from qiskit.dagcircuit import DAGCircuit
 from qiskit.transpiler import TransformationPass
@@ -372,7 +373,8 @@ def append_logical_measurement_on_indexed_qubits(
 def two_qubit_depth(circuit: QuantumCircuit) -> int:
     """Return the two-qubit gate depth of a circuit."""
     return circuit.depth(
-        filter_function=lambda inst: inst.operation.num_qubits == 2,
+        filter_function=lambda inst: isinstance(inst.operation, Gate)
+        and inst.operation.num_qubits == 2,
     )
 
 

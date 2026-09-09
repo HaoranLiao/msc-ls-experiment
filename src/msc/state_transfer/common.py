@@ -636,6 +636,64 @@ def merged_boundary_logical_zz_outcome(measurements: dict[str, object]) -> int:
     return parity(stable_boundary_bits, tuple(stable_boundary_bits))
 
 
+def transfer_rejection_stages(measurements: dict[str, object]) -> tuple[tuple[str, bool], ...]:
+    """Return transfer rejection conditions in measurement-record order."""
+    merged_delta_history = measurements["merged_surface_syndrome_delta_history"]
+    post_transfer_delta_history = measurements.get(
+        "post_transfer_surface_syndrome_delta_history", ()
+    )
+    if measurements.get("full_post_selection", False):
+        surface_init_rejects = any(measurements["surface_init_x"].values())
+        merged_surface_rejects = any(
+            bit
+            for delta_layer in merged_delta_history
+            for sector in delta_layer.values()
+            for bit in sector.values()
+        )
+        post_transfer_rejects = any(
+            bit
+            for delta_layer in post_transfer_delta_history
+            for sector in delta_layer.values()
+            for bit in sector.values()
+        )
+    else:
+        persistent_x_labels = tuple(
+            label
+            for label in PERSISTENT_POSTSELECTED_SURFACE_X_LABELS
+            if label in measurements["surface_init_x"]
+        )
+        surface_init_rejects = any(
+            measurements["surface_init_x"][label] for label in persistent_x_labels
+        )
+        merged_surface_rejects = any(
+            delta_layer["x"][label]
+            for delta_layer in merged_delta_history
+            for label in persistent_x_labels
+        )
+        post_transfer_round_count = len(measurements.get("post_transfer_surface_x_rounds", ()))
+        post_transfer_rejects = any(
+            delta_layer["x"][label]
+            for delta_layer in post_transfer_delta_history[:post_transfer_round_count]
+            for label in persistent_x_labels
+        )
+
+    return (
+        ("encoder_flags", any(measurements["enc_flags"].values())),
+        ("post_injection_qed", any(measurements["post_injection_qed"].values())),
+        ("cultivation", any(measurements.get("cultivation", {}).values())),
+        ("surface_initialization", surface_init_rejects),
+        ("merge_instability", not merged_boundary_checks_stable(measurements)),
+        ("merged_surface_checks", merged_surface_rejects),
+        ("steane_verification", any(measurements["steane_verification"].values())),
+        ("final_x_verification", any(measurements["final_x_verification_checks"].values())),
+        (
+            "bell_partner_flags",
+            any(measurements.get("steane_bell_partner_flags", {}).values()),
+        ),
+        ("post_transfer_checks", post_transfer_rejects),
+    )
+
+
 def transfer_acceptance_succeeds(measurements: dict[str, object]) -> bool:
     """Apply protocol postselection before surface-code correction.
 
@@ -649,63 +707,7 @@ def transfer_acceptance_succeeds(measurements: dict[str, object]) -> bool:
     analyzer, which owns the complete detector syndrome and matching graph.
     It cannot be derived from these parsed phase-local recovery objects.
     """
-    protocol_accepts = not any(
-        (
-            *measurements["enc_flags"].values(),
-            *measurements["post_injection_qed"].values(),
-            *measurements.get("cultivation", {}).values(),
-            *measurements["steane_verification"].values(),
-            *measurements.get("steane_bell_partner_flags", {}).values(),
-            *measurements["final_x_verification_checks"].values(),
-        )
-    ) and merged_boundary_checks_stable(measurements)
-    if not protocol_accepts:
-        return False
-
-    merged_delta_history = measurements["merged_surface_syndrome_delta_history"]
-    post_transfer_delta_history = measurements.get(
-        "post_transfer_surface_syndrome_delta_history", ()
-    )
-    if measurements.get("full_post_selection", False):
-        return not any(
-            (
-                *measurements["surface_init_x"].values(),
-                *(
-                    bit
-                    for delta_layer in merged_delta_history
-                    for sector in delta_layer.values()
-                    for bit in sector.values()
-                ),
-                *(
-                    bit
-                    for delta_layer in post_transfer_delta_history
-                    for sector in delta_layer.values()
-                    for bit in sector.values()
-                ),
-            )
-        )
-
-    post_transfer_round_count = len(measurements.get("post_transfer_surface_x_rounds", ()))
-    persistent_x_labels = tuple(
-        label
-        for label in PERSISTENT_POSTSELECTED_SURFACE_X_LABELS
-        if label in measurements["surface_init_x"]
-    )
-    return not any(
-        (
-            *(measurements["surface_init_x"][label] for label in persistent_x_labels),
-            *(
-                delta_layer["x"][label]
-                for delta_layer in merged_delta_history
-                for label in persistent_x_labels
-            ),
-            *(
-                delta_layer["x"][label]
-                for delta_layer in post_transfer_delta_history[:post_transfer_round_count]
-                for label in persistent_x_labels
-            ),
-        )
-    )
+    return not any(rejects for _, rejects in transfer_rejection_stages(measurements))
 
 
 # =============================================================================
