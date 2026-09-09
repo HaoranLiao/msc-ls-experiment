@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
@@ -16,6 +15,7 @@ from msc.steane_code.magic_state_cultivation_common import (
     PATCH_14_SITE_FOLDED_MEASUREMENT_SITE,
     PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
     STEANE_QED_MEASUREMENTS_PER_ROUND,
+    CultivatedStateName,
     Patch14SiteEncoderName,
     filter_11_site_patch_fold_layer,
     patch_14_site_encoder_flag_count,
@@ -39,9 +39,6 @@ from msc.steane_code.state_injection_qiskit import (
 )
 from msc.utils.circuit_qiskit import apply_ty, apply_ty_dagger
 from msc.utils.normalize import qiskit_bit_value, resolve_patch_qubits
-
-CultivatedStateName = Literal["T", "Ty"]
-DEFAULT_QISKIT_CULTIVATED_STATE: CultivatedStateName = "Ty"
 
 # =============================================================================
 # 1. Framework-neutral layout, fold schedule, and constants
@@ -460,8 +457,8 @@ def append_11_site_patch_injection_and_cultivation(
     add_qed_round: bool,
     skip_cx_1_4: bool,
     patch_qubits: Sequence,
-    injected_state: InjectedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
-    cultivated_state: CultivatedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
+    injected_state: InjectedStateName = "Ty",
+    cultivated_state: CultivatedStateName = "Ty",
     encoder_bits: Sequence,
     cultivation_bits: Sequence[Sequence],
     cultivation_rounds: int = 1,
@@ -566,8 +563,8 @@ def append_14_site_patch_injection_and_cultivation(
     encoder_bits: Sequence,
     cultivation_bits: Sequence[Sequence],
     encoder: Patch14SiteEncoderName = "abstract_routed",
-    injected_state: InjectedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
-    cultivated_state: CultivatedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
+    injected_state: InjectedStateName = "Ty",
+    cultivated_state: CultivatedStateName = "Ty",
     cultivation_rounds: int = 1,
     qed_bits: Sequence | None = None,
     add_barriers: bool = True,
@@ -654,11 +651,11 @@ def append_14_site_patch_injection_and_cultivation(
 
 
 def build_11_site_patch_injection_and_cultivation_circuit(
-    injected_state: InjectedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
+    injected_state: InjectedStateName = "Ty",
     *,
     add_qed_round: bool,
     skip_cx_1_4: bool,
-    cultivated_state: CultivatedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
+    cultivated_state: CultivatedStateName = "Ty",
     cultivation_rounds: int = 1,
     add_barriers: bool = True,
     skip_cx: tuple[int, int] | None = None,
@@ -759,11 +756,11 @@ def build_11_site_patch_injection_and_cultivation_circuit(
 
 
 def build_14_site_patch_injection_and_cultivation_circuit(
-    injected_state: InjectedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
+    injected_state: InjectedStateName = "Ty",
     *,
     add_qed_round: bool,
     encoder: Patch14SiteEncoderName = "abstract_routed",
-    cultivated_state: CultivatedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
+    cultivated_state: CultivatedStateName = "Ty",
     cultivation_rounds: int = 1,
     add_barriers: bool = True,
 ) -> QuantumCircuit:

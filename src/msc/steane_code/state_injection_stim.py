@@ -61,7 +61,6 @@ from msc.utils.normalize import resolve_patch_qubits
 # in place of ``"T"``.
 StimInjectedStateName = Literal["0", "1", "+", "-", "i", "-i", "Y+", "Y-", "S", "Sdg"]
 
-DEFAULT_STIM_INJECTED_STATE: StimInjectedStateName = "S"
 DEFAULT_STIM_11_SITE_PATCH_QUBITS: tuple[int, ...] = tuple(range(NUM_QUBITS_PATCH_11_SITES))
 DEFAULT_STIM_14_SITE_PATCH_QUBITS: tuple[int, ...] = tuple(range(NUM_QUBITS_PATCH_14_SITES))
 
@@ -106,7 +105,7 @@ def append_abstract_encoder(
     circuit: stim.Circuit,
     *,
     data_qubits: Sequence[int],
-    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    injected_state: StimInjectedStateName = "S",
     add_ticks: bool = True,
 ) -> stim.Circuit:
     """Append the abstract Steane encoder on seven caller-owned data qubits.
@@ -145,7 +144,7 @@ def append_11_site_patch_abstract_encoder(
     circuit: stim.Circuit,
     *,
     patch_qubits: Sequence[int] = DEFAULT_STIM_11_SITE_PATCH_QUBITS,
-    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    injected_state: StimInjectedStateName = "S",
     add_ticks: bool = True,
 ) -> stim.Circuit:
     """Append the abstract Steane encoder on the 11-site patch data sites.
@@ -172,7 +171,7 @@ def append_11_site_patch_rosenfeld_encoder(
     circuit: stim.Circuit,
     *,
     patch_qubits: Sequence[int] = DEFAULT_STIM_11_SITE_PATCH_QUBITS,
-    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    injected_state: StimInjectedStateName = "S",
     measure_flags: bool = True,
     add_ticks: bool = True,
 ) -> stim.Circuit:
@@ -378,7 +377,7 @@ def append_14_site_patch_abstract_encoder(
     circuit: stim.Circuit,
     *,
     patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
-    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    injected_state: StimInjectedStateName = "S",
     add_ticks: bool = True,
 ) -> stim.Circuit:
     """Append the abstract Steane encoder directly on the 14-site data sites.
@@ -422,7 +421,7 @@ def append_14_site_patch_abstract_routed_encoder(
     circuit: stim.Circuit,
     *,
     patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
-    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    injected_state: StimInjectedStateName = "S",
     measure_flags: bool = True,
     add_ticks: bool = True,
 ) -> stim.Circuit:
@@ -495,7 +494,7 @@ def append_14_site_patch_hirano_encoder(
     circuit: stim.Circuit,
     *,
     patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
-    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    injected_state: StimInjectedStateName = "S",
     measure_flags: bool = True,
     add_ticks: bool = True,
 ) -> stim.Circuit:

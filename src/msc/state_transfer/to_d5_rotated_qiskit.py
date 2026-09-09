@@ -9,10 +9,7 @@ from msc.rotated_surface_code.post_transfer import post_transfer_qiskit
 from msc.state_transfer import analysis_qiskit as analysis
 from msc.state_transfer import common
 from msc.state_transfer import helper_qiskit as helper
-from msc.steane_code.magic_state_cultivation_qiskit import (
-    DEFAULT_QISKIT_CULTIVATED_STATE,
-    CultivatedStateName,
-)
+from msc.steane_code.magic_state_cultivation_common import CultivatedStateName
 from msc.steane_code.state_injection_qiskit import InjectedStateName
 from msc.utils.normalize import normalize_pauli_char
 
@@ -41,8 +38,8 @@ TRANSFER_SPEC = common.SurfaceCodeTransferSpec(
 def build_steane_to_rotated_d5_lattice_surgery_circuit(
     *,
     patch_sites: common.SteanePatchSites = 14,
-    injected_state: InjectedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
-    cultivated_state: CultivatedStateName = DEFAULT_QISKIT_CULTIVATED_STATE,
+    injected_state: InjectedStateName = "Ty",
+    cultivated_state: CultivatedStateName = "Ty",
     include_cultivation: bool = True,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,

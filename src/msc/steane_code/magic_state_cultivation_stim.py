@@ -45,7 +45,6 @@ from msc.steane_code.state_injection_common import (
 from msc.steane_code.state_injection_stim import (
     DEFAULT_STIM_11_SITE_PATCH_QUBITS,
     DEFAULT_STIM_14_SITE_PATCH_QUBITS,
-    DEFAULT_STIM_INJECTED_STATE,
     StimInjectedStateName,
     append_11_site_patch_rosenfeld_encoder,
     append_11_site_patch_stabilizer_measurement,
@@ -190,11 +189,11 @@ def append_11_site_patch_y_projection_round(
 
     Stim replaces the non-Clifford transversal rotation with ``S``/``S_DAG``
     while preserving the fold network, so this is logical-Y cultivation (a
-    proxy for logical ``H_XY``). Three helper flags (sites 1, 2, 6) are always
-    postselected to zero, and the site-7 root check agrees with the folded
-    root. Cultivation also postselects the folded root to zero; kickback
-    tomography instead retains it as a logical observable. Set
-    ``running_kt=False`` for cultivation and ``True`` for KT.
+    proxy for either supported magic-state axis in KT). Three helper flags
+    (sites 1, 2, 6) are always postselected to zero, and the site-7 root check
+    agrees with the folded root. Cultivation also postselects the folded root to
+    zero; kickback tomography instead retains it as a logical observable.
+    Set ``running_kt=False`` for cultivation and ``True`` for KT.
 
     Parameters
     ----------
@@ -294,13 +293,9 @@ def append_14_site_patch_y_projection_round(
     ``S``/``S_DAG`` to the seven data sites, fold onto root data site 0,
     measure the root in the X basis, reset it to ``|+>`` for cultivation,
     unfold, then read out the six helper sites in the X basis. Hirano's literal
-    circuit fixes ``S_DAG``-before/``S``-after; this module instead lets the
-    encoder pick ``S`` or ``S_DAG`` from ``injected_state`` (see
-    :func:`append_14_site_patch_hirano_encoder`), so the round below uses the
-    mirrored ``S``-before/``S_DAG``-after order to stay self-consistent with
-    that choice -- swapping only one side would flip which ``injected_state``
-    is accepted. The helper reset also cleans up after any prior round (e.g.
-    the superdense QED round) that left the helper sites away from ``|+>``.
+    circuit fixes ``S_DAG``-before/``S``-after; this module uses the mirrored
+    order consistent with its ``|S>`` proxy input. The helper reset also cleans
+    up after any prior round that left the helper sites away from ``|+>``.
 
     After unfolding, H7-H12 are measured in X and expected to return zero; D0
     is not measured again. Cultivation rejects a root result of one and resets
@@ -381,7 +376,7 @@ def append_11_site_patch_injection_and_cultivation(
     add_qed_round: bool,
     skip_cx_1_4: bool,
     patch_qubits: Sequence[int] = DEFAULT_STIM_11_SITE_PATCH_QUBITS,
-    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    injected_state: StimInjectedStateName = "S",
     cultivation_rounds: int = 1,
     measure_encoder_flags: bool = False,
     add_ticks: bool = True,
@@ -437,7 +432,7 @@ def append_14_site_patch_injection_and_cultivation(
     *,
     add_qed_round: bool,
     patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
-    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    injected_state: StimInjectedStateName = "S",
     encoder: Patch14SiteEncoderName = "abstract_routed",
     cultivation_rounds: int = 1,
     measure_encoder_flags: bool = False,
@@ -513,7 +508,7 @@ def append_14_site_patch_injection_and_cultivation(
 
 
 def build_11_site_patch_injection_and_cultivation_circuit(
-    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    injected_state: StimInjectedStateName = "S",
     *,
     add_qed_round: bool,
     skip_cx_1_4: bool,
@@ -563,7 +558,7 @@ def build_11_site_patch_injection_and_cultivation_circuit(
 
 
 def build_14_site_patch_injection_and_cultivation_circuit(
-    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    injected_state: StimInjectedStateName = "S",
     *,
     add_qed_round: bool,
     encoder: Patch14SiteEncoderName = "abstract_routed",

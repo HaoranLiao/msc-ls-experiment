@@ -1,11 +1,9 @@
 """Stim logical-Y Steane-patch kickback tomography (KT) experiment.
 
 Clifford model of :mod:`kickback_tomography_qiskit`. The KT circuit reuses the
-Stim injection encoder and logical-Y cultivation round. Because this is
-logical-Y cultivation (proxy for logical ``H_XY``), the circuit prepares and
-verifies ``|S>`` instead of ``|T>``. All returned summaries report
-the native ``S``-state logical error rate; no conversion to a ``T``-state
-estimate is applied.
+Stim injection encoder and logical-Y cultivation round with ``|S>`` as its
+stabilizer proxy. Summaries report the native S-state logical error rate without
+conversion to a magic-state estimate.
 
 The public builders parallel their Qiskit counterparts for both the 11-site
 and 14-site patches. Shared layout and summary dataclasses store Stim
@@ -16,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 import stim
@@ -43,7 +42,6 @@ from msc.steane_code.state_injection_common import (
 )
 from msc.steane_code.state_injection_stim import (
     DEFAULT_STIM_14_SITE_PATCH_QUBITS,
-    DEFAULT_STIM_INJECTED_STATE,
     StimInjectedStateName,
     append_11_site_patch_rosenfeld_encoder,
     append_11_site_patch_stabilizer_measurement,
@@ -62,25 +60,26 @@ class KickbackTomographyExperiment:
 
 
 def build_kickback_tomography_experiment(
-    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    injected_state: StimInjectedStateName = "S",
     *,
     patch_sites: KickbackTomographyPatchSites = 14,
+    cultivated_state: Literal["S"] = "S",
     include_preparation_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     qed_cycle_indices: Iterable[int] = KT_DEFAULT_QED_CYCLE_INDICES,
     final_stabilizer_basis: FinalStabilizerMode = "X",
     add_ticks: bool = True,
 ) -> KickbackTomographyExperiment:
-    """Build a logical-Y proxy KT experiment, defaulting to 14 sites.
+    """Build a logical-Y KT experiment using the Clifford ``|S>`` proxy.
 
     The shared protocol order is
 
     ``encode -> QED1 -> [prep cultivation] -> QED2 -> KT measure -> QED3
     -> KT check -> QED4 -> final stabilizer check``.
 
-    This parallels :func:`kickback_tomography_qiskit.build_kickback_tomography_experiment`
-    with logical-Y cultivation (proxy for logical ``H_XY``).
-    Every cultivation and KT round therefore measures the logical-Y axis.
+    This parallels the Qiskit protocol schedule, but Stim uses logical Y and
+    accepts only ``cultivated_state="S"``. This is an explicit Clifford proxy,
+    not a simulation of a non-Clifford magic state.
 
     The 11-site path uses the Rosenfeld encoder, and the 14-site path uses the
     abstract-routed encoder. When ``measure_encoder_flags`` is true, their
@@ -96,6 +95,8 @@ def build_kickback_tomography_experiment(
     Z-only final block also records and postselects the three default
     Bell-partner flags.
     """
+    if cultivated_state != "S":
+        raise ValueError("cultivated_state must be 'S' in Stim.")
     spec = resolve_kickback_tomography_patch_spec(patch_sites)
     qed_indices = normalize_qed_cycle_indices(qed_cycle_indices)
 
@@ -280,7 +281,7 @@ def _append_patch_projection_round(
     add_ticks: bool,
     running_kt: bool,
 ) -> tuple[int, ...]:
-    """Append one detector-annotated cultivation-derived measurement."""
+    """Append one detector-annotated logical-Y proxy measurement."""
     if spec.patch_sites == 11:
         return append_11_site_patch_y_projection_round(
             circuit,

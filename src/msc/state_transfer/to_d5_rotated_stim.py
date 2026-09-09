@@ -31,10 +31,7 @@ from msc.rotated_surface_code.post_transfer.post_transfer_stim import (
 from msc.state_transfer import analysis_stim as analysis
 from msc.state_transfer import common
 from msc.state_transfer import helper_stim as helper
-from msc.steane_code.state_injection_stim import (
-    DEFAULT_STIM_INJECTED_STATE,
-    StimInjectedStateName,
-)
+from msc.steane_code.state_injection_stim import StimInjectedStateName
 from msc.utils.circuit_common import resolve_logical_measurement_terms
 from msc.utils.normalize import normalize_pauli_char
 
@@ -76,7 +73,7 @@ HIRANO_POSTSELECTED_SURFACE_X_LABELS = common.PERSISTENT_POSTSELECTED_SURFACE_X_
 def build_steane_to_rotated_d5_lattice_surgery_circuit(
     *,
     patch_sites: common.SteanePatchSites = 14,
-    injected_state: StimInjectedStateName = DEFAULT_STIM_INJECTED_STATE,
+    injected_state: StimInjectedStateName = "S",
     include_cultivation: bool = True,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,

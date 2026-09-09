@@ -13,10 +13,8 @@ def build_lattice_surgery_circuit(
     spec: common.SurfaceCodeTransferSpec,
     *,
     patch_sites: common.SteanePatchSites = 14,
-    injected_state: steane.InjectedStateName = cultivation.DEFAULT_QISKIT_CULTIVATED_STATE,
-    cultivated_state: cultivation.CultivatedStateName = (
-        cultivation.DEFAULT_QISKIT_CULTIVATED_STATE
-    ),
+    injected_state: steane.InjectedStateName = "Ty",
+    cultivated_state: cultivation.CultivatedStateName = "Ty",
     include_cultivation: bool = True,
     add_barriers: bool = True,
 ) -> QuantumCircuit:

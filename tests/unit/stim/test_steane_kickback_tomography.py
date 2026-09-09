@@ -106,6 +106,23 @@ class TestKickbackTomographyCircuitConstruction:
         experiment = build_kickback_tomography_experiment(add_ticks=False)
         assert experiment.circuit.num_qubits == 14
 
+    @pytest.mark.parametrize("patch_sites", [11, 14])
+    def test_s_is_the_default_cultivated_state(self, patch_sites: int) -> None:
+        default_experiment = build_kickback_tomography_experiment(
+            patch_sites=patch_sites,
+            add_ticks=False,
+        )
+        s_experiment = build_kickback_tomography_experiment(
+            patch_sites=patch_sites,
+            cultivated_state="S",
+            add_ticks=False,
+        )
+        assert default_experiment == s_experiment
+
+    def test_non_s_cultivated_state_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="cultivated_state must be 'S' in Stim"):
+            build_kickback_tomography_experiment(cultivated_state="T", add_ticks=False)
+
     @pytest.mark.parametrize(
         ("requested_indices", "expected_indices", "expected_measurement_order"),
         [
@@ -496,7 +513,10 @@ class TestNoiselessKickbackTomography:
         )
 
     @pytest.mark.parametrize("patch_sites", [11, 14])
-    def test_preparation_cultivation_projects_before_kt(self, patch_sites: int) -> None:
+    def test_preparation_cultivation_projects_before_kt(
+        self,
+        patch_sites: int,
+    ) -> None:
         """
         With preparation cultivation, the state is projected to the +1 Y-axis
         state and hence has no logical error in KT.

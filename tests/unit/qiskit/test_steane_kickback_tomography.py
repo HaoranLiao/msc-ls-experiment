@@ -22,6 +22,7 @@ from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
+    CultivatedStateName,
 )
 from msc.steane_code.state_injection_qiskit import InjectedStateName
 
@@ -52,6 +53,26 @@ class TestKickbackTomographyCircuitConstruction:
     def test_default_patch_has_14_sites(self) -> None:
         experiment = build_kickback_tomography_experiment(add_barriers=False)
         assert experiment.circuit.num_qubits == 14
+
+    @pytest.mark.parametrize("patch_sites", [11, 14])
+    def test_ty_is_the_default_cultivated_state(self, patch_sites: int) -> None:
+        default_experiment = build_kickback_tomography_experiment(
+            patch_sites=patch_sites,
+            add_barriers=False,
+        )
+        ty_experiment = build_kickback_tomography_experiment(
+            patch_sites=patch_sites,
+            cultivated_state="Ty",
+            add_barriers=False,
+        )
+        assert default_experiment == ty_experiment
+
+    def test_unsupported_cultivated_state_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="cultivated_state must be 'T' or 'Ty'"):
+            build_kickback_tomography_experiment(
+                cultivated_state="S",
+                add_barriers=False,
+            )
 
     @pytest.mark.parametrize(
         ("requested_indices", "expected_indices", "expected_measurement_order"),
@@ -379,17 +400,19 @@ class TestKickbackTomographyCountsAnalysis:
 
 
 class TestNoiselessKickbackTomography:
-    """Noiseless KT matches H_XY projective-measurement probabilities."""
+    """Noiseless KT matches the selected magic-state-axis measurements."""
 
+    @pytest.mark.parametrize("cultivated_state", ["T", "Ty"])
     @pytest.mark.parametrize("patch_sites", [11, 14])
     @pytest.mark.parametrize("no_reset", [False, True])
-    def test_cultivated_t_state_has_zero_kt_logical_error(
+    def test_cultivated_magic_state_has_zero_kt_logical_error(
         self,
+        cultivated_state: CultivatedStateName,
         patch_sites: int,
         no_reset: bool,
     ) -> None:
         experiment = build_kickback_tomography_experiment(
-            injected_state="T",
+            cultivated_state=cultivated_state,
             patch_sites=patch_sites,
             no_reset=no_reset,
             add_barriers=False,
@@ -411,17 +434,20 @@ class TestNoiselessKickbackTomography:
         assert summary.logical_error_probability == 0.0
 
     @pytest.mark.slow
+    @pytest.mark.parametrize("cultivated_state", ["T", "Ty"])
     @pytest.mark.parametrize("state", ["Ty", "+", "1", "Y+", "T"])
     @pytest.mark.parametrize("patch_sites", [11, 14])
     @pytest.mark.parametrize("no_reset", [False, True])
     def test_injection_only_kt_error_probability(
         self,
+        cultivated_state: CultivatedStateName,
         state: InjectedStateName,
         patch_sites: int,
         no_reset: bool,
     ) -> None:
         experiment = build_kickback_tomography_experiment(
             injected_state=state,
+            cultivated_state=cultivated_state,
             patch_sites=patch_sites,
             include_prep_cultivation=False,
             qed_cycle_indices=(),
@@ -437,23 +463,25 @@ class TestNoiselessKickbackTomography:
         )
         summary = analyze_kickback_tomography_counts(counts, experiment.layout)
 
-        # Expected P(-1 H_XY-axis outcome) for the named input state.
+        # Expected +1 probability on the selected H_XY or H_XZ axis.
         inv_sqrt2 = 1.0 / math.sqrt(2.0)
-        h_xy_plus_probs: dict[InjectedStateName, float] = {
-            "0": 0.5,
-            "1": 0.5,
-            "+": (1.0 + inv_sqrt2) / 2.0,
-            "-": (1.0 - inv_sqrt2) / 2.0,
-            "i": (1.0 + inv_sqrt2) / 2.0,
-            "Y+": (1.0 + inv_sqrt2) / 2.0,
-            "S": (1.0 + inv_sqrt2) / 2.0,
-            "-i": (1.0 - inv_sqrt2) / 2.0,
-            "Y-": (1.0 - inv_sqrt2) / 2.0,
-            "T": 1.0,
-            "Tdg": 0.5,
-            "Ty": 0.75,
+        plus_probabilities: dict[CultivatedStateName, dict[InjectedStateName, float]] = {
+            "T": {
+                "Ty": 0.75,
+                "+": (1.0 + inv_sqrt2) / 2.0,
+                "1": 0.5,
+                "Y+": (1.0 + inv_sqrt2) / 2.0,
+                "T": 1.0,
+            },
+            "Ty": {
+                "Ty": 1.0,
+                "+": (1.0 + inv_sqrt2) / 2.0,
+                "1": (1.0 - inv_sqrt2) / 2.0,
+                "Y+": 0.5,
+                "T": 0.75,
+            },
         }
-        expected_error = 1.0 - h_xy_plus_probs[state]
+        expected_error = 1.0 - plus_probabilities[cultivated_state][state]
         sigma = math.sqrt(expected_error * (1.0 - expected_error) / NUM_SHOTS)
         tolerance = max(4 * sigma, 0.02)
 
@@ -461,19 +489,22 @@ class TestNoiselessKickbackTomography:
         assert summary.logical_error_probability == pytest.approx(expected_error, abs=tolerance)
 
     @pytest.mark.slow
+    @pytest.mark.parametrize("cultivated_state", ["T", "Ty"])
     @pytest.mark.parametrize("patch_sites", [11, 14])
     @pytest.mark.parametrize("no_reset", [False, True])
     def test_preparation_cultivation_projects_before_kt(
         self,
+        cultivated_state: CultivatedStateName,
         patch_sites: int,
         no_reset: bool,
     ) -> None:
         """
-        With preparation cultivation, the state is projected to the +1 H_XY
-        state and hence has no logical error in KT.
+        With preparation cultivation, the state is projected to the selected
+        +1 magic-state axis and hence has no logical error in KT.
         """
         experiment = build_kickback_tomography_experiment(
             injected_state="1",
+            cultivated_state=cultivated_state,
             patch_sites=patch_sites,
             include_prep_cultivation=True,
             qed_cycle_indices=(),

@@ -210,7 +210,7 @@ def build_lattice_surgery_circuit(
     spec: common.SurfaceCodeTransferSpec,
     *,
     patch_sites: common.SteanePatchSites = 14,
-    injected_state: steane.StimInjectedStateName = steane.DEFAULT_STIM_INJECTED_STATE,
+    injected_state: steane.StimInjectedStateName = "S",
     include_cultivation: bool = True,
     add_ticks: bool = True,
 ) -> stim.Circuit:

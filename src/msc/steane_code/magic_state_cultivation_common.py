@@ -20,6 +20,7 @@ from msc.steane_code.state_injection_common import (
 )
 
 Patch14SiteEncoderName = Literal["abstract", "abstract_routed", "hirano"]
+CultivatedStateName = Literal["T", "Ty"]
 
 # =============================================================================
 # 11-site cultivation patch layout

@@ -2,9 +2,9 @@
 
 This module builds Fig. 3-style kickback tomography (KT) circuits from
 Rosenfeld et al. using the repo's 11-site and 14-site Steane patch primitives.
-The KT measurement reuses cultivation rounds as repeated logical H_XY-axis
-measurements: one optional preparation round, one tomography measurement round,
-and one consistency-check round.
+The KT measurement reuses cultivation rounds as repeated logical H_XY- or
+H_XZ-axis measurements: one optional preparation round, one tomography
+measurement round, and one consistency-check round.
 """
 
 from __future__ import annotations
@@ -27,9 +27,11 @@ from msc.steane_code.kickback_tomography_common import (
     KickbackTomographySummary,
     cultivation_round_bits_from_positions,
     final_stabilizer_bit_count,
+    normalize_kickback_tomography_state,
     normalize_qed_cycle_indices,
     resolve_kickback_tomography_patch_spec,
 )
+from msc.steane_code.magic_state_cultivation_common import CultivatedStateName
 from msc.steane_code.magic_state_cultivation_qiskit import (
     append_11_site_patch_magic_state_projection_round,
     append_14_site_patch_magic_state_projection_round,
@@ -61,6 +63,7 @@ def build_kickback_tomography_experiment(
     injected_state: InjectedStateName | None = None,
     *,
     patch_sites: KickbackTomographyPatchSites = 14,
+    cultivated_state: CultivatedStateName = "Ty",
     injection_azimuth_angle: float | None = None,
     include_prep_cultivation: bool = True,
     measure_encoder_flags: bool = False,
@@ -69,18 +72,19 @@ def build_kickback_tomography_experiment(
     no_reset: bool = False,
     add_barriers: bool = True,
 ) -> KickbackTomographyExperiment:
-    """Build an H_XY kickback-tomography experiment, defaulting to 14 sites.
+    """Build a T/Ty kickback-tomography experiment, defaulting to Ty on 14 sites.
 
     The shared protocol order is
 
     ``encode -> QED1 -> [prepare cultivation] -> QED2 -> KT measure
     -> QED3 -> KT check -> QED4 -> final stabilizer check``.
 
-    ``injected_state`` and ``injection_azimuth_angle`` are mutually exclusive.
-    A supplied angle injects the equatorial state ``Rz(angle)|+⟩`` instead of a
-    named state; ``angle=π/4`` gives ``|T⟩``. If neither is supplied, ``|T⟩`` is
-    injected. Every cultivation and KT round measures
-    ``H_XY = (X + Y) / sqrt(2)``.
+    ``cultivated_state="T"`` measures ``H_XY = (X + Y) / sqrt(2)``;
+    ``"Ty"`` measures ``H_XZ = (X + Z) / sqrt(2)``. ``injected_state`` and
+    ``injection_azimuth_angle`` are mutually exclusive. A supplied angle injects
+    the equatorial state ``Rz(angle)|+⟩`` instead of a named state;
+    ``angle=π/4`` gives ``|T⟩``. If neither is supplied, the injected state is
+    the selected ``cultivated_state``.
 
     The 11-site path uses the Rosenfeld encoder, and the 14-site path uses the
     abstract-routed encoder. When ``measure_encoder_flags`` is true, their
@@ -109,11 +113,14 @@ def build_kickback_tomography_experiment(
     place.
     """
     spec = resolve_kickback_tomography_patch_spec(patch_sites)
+    cultivated_state = normalize_kickback_tomography_state(cultivated_state)
 
     if injected_state is not None and injection_azimuth_angle is not None:
         raise ValueError(
             "injected_state and injection_azimuth_angle are mutually exclusive; supply at most one."
         )
+    if injected_state is None and injection_azimuth_angle is None:
+        injected_state = cultivated_state
     qed_indices = normalize_qed_cycle_indices(qed_cycle_indices)
 
     patch = QuantumRegister(spec.patch_sites, "patch")
@@ -202,6 +209,7 @@ def build_kickback_tomography_experiment(
             spec,
             patch_qubits=patch_qubits,
             bits=list(prep_creg),
+            cultivated_state=cultivated_state,
             add_barriers=add_barriers,
             running_kt=False,
         )
@@ -214,6 +222,7 @@ def build_kickback_tomography_experiment(
         spec,
         patch_qubits=patch_qubits,
         bits=list(kt_measure_creg),
+        cultivated_state=cultivated_state,
         add_barriers=add_barriers,
         running_kt=True,
     )
@@ -226,6 +235,7 @@ def build_kickback_tomography_experiment(
         spec,
         patch_qubits=patch_qubits,
         bits=list(kt_check_creg),
+        cultivated_state=cultivated_state,
         add_barriers=add_barriers,
         running_kt=True,
     )
@@ -310,6 +320,7 @@ def build_kickback_tomography_experiment(
             "final_d2_copy_flag": layout.final_d2_copy_flag,
             "encoder_flags": layout.encoder_flags,
             "qed_cycle_indices": qed_indices,
+            "cultivated_state": cultivated_state,
             "final_stabilizer_basis": final_stabilizer_basis,
             "no_reset": no_reset,
         },
@@ -396,16 +407,17 @@ def _append_patch_projection_round(
     *,
     patch_qubits: list,
     bits: list,
+    cultivated_state: CultivatedStateName,
     add_barriers: bool,
     running_kt: bool,
 ) -> None:
-    """Append one cultivation-derived H_XY measurement on the patch."""
+    """Append one cultivation-derived magic-state-axis measurement on the patch."""
     if spec.patch_sites == 11:
         append_11_site_patch_magic_state_projection_round(
             circuit,
             patch_qubits=patch_qubits,
             bits=bits,
-            cultivated_state="T",
+            cultivated_state=cultivated_state,
             add_barriers=add_barriers,
         )
     elif spec.patch_sites == 14:
@@ -413,7 +425,7 @@ def _append_patch_projection_round(
             circuit,
             patch_qubits=patch_qubits,
             bits=bits,
-            cultivated_state="T",
+            cultivated_state=cultivated_state,
             add_barriers=add_barriers,
             running_kt=running_kt,
         )

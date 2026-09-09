@@ -11,6 +11,7 @@ from msc.steane_code.magic_state_cultivation_common import (
     PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
     STEANE_QED_MEASUREMENTS_PER_ROUND,
+    CultivatedStateName,
 )
 from msc.steane_code.state_injection_common import (
     PATCH_11_SITE_HELPER_SITES,
@@ -23,6 +24,15 @@ KickbackTomographyPatchSites = Literal[11, 14]
 KT_STABILIZER_BITS_PER_CYCLE = STEANE_QED_MEASUREMENTS_PER_ROUND
 KT_DEFAULT_QED_CYCLE_INDICES: tuple[int, ...] = (1, 3)
 KT_FULL_QED_CYCLE_INDICES: tuple[int, ...] = (1, 2, 3, 4)
+
+
+def normalize_kickback_tomography_state(state: str) -> CultivatedStateName:
+    """Validate and return a supported KT magic-state axis."""
+    if state == "T":
+        return "T"
+    if state == "Ty":
+        return "Ty"
+    raise ValueError("cultivated_state must be 'T' or 'Ty'.")
 
 
 @dataclass(frozen=True)
