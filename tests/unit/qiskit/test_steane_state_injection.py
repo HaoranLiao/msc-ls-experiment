@@ -762,9 +762,9 @@ class TestPatchSyndromeExtraction:
         ) == _expected_patch_syndrome(patch_spec, faults)
 
 
-# ------------------------
-# Injection azimuth angles
-# ------------------------
+# --------------------------------
+# Injection azimuth / polar angles
+# --------------------------------
 
 
 @pytest.mark.parametrize(
@@ -775,30 +775,38 @@ class TestPatchSyndromeExtraction:
     ],
 )
 @pytest.mark.parametrize(
-    ("angle", "equivalent_state"),
+    ("angle_argument", "angle", "equivalent_state"),
     [
-        (0.0, "+"),
-        (math.pi / 4, "T"),
-        (math.pi / 2, "Y+"),
-        (-math.pi / 4, "Tdg"),
-        (-math.pi / 2, "Y-"),
-        (math.pi, "-"),
+        # Azimuth sweeps Rz(angle)|+> around the XY plane containing |T>.
+        ("injection_azimuth_angle", 0.0, "+"),
+        ("injection_azimuth_angle", math.pi / 4, "T"),
+        ("injection_azimuth_angle", math.pi / 2, "Y+"),
+        ("injection_azimuth_angle", -math.pi / 4, "Tdg"),
+        ("injection_azimuth_angle", -math.pi / 2, "Y-"),
+        ("injection_azimuth_angle", math.pi, "-"),
+        # Polar sweeps Ry(angle)|0> around the XZ plane containing |Ty>.
+        ("injection_polar_angle", 0.0, "0"),
+        ("injection_polar_angle", math.pi / 4, "Ty"),
+        ("injection_polar_angle", math.pi / 2, "+"),
+        ("injection_polar_angle", math.pi, "1"),
+        ("injection_polar_angle", -math.pi / 2, "-"),
     ],
 )
-def test_patch_injection_azimuth_angle_matches_named_state(
+def test_patch_injection_angle_matches_named_state(
     patch_spec: PatchTestSpec,
     encoder: str,
+    angle_argument: str,
     angle: float,
     equivalent_state: InjectedStateName,
 ) -> None:
-    """Verify equatorial-angle and named inputs encode the same patch state."""
+    """Verify each swept-angle input encodes the same patch state as its named input."""
     angle_circuit = QuantumCircuit(patch_spec.num_qubits)
     named_circuit = QuantumCircuit(patch_spec.num_qubits)
     if patch_spec.name == "11-site" and encoder == "abstract":
         encoder_function = append_11_site_patch_abstract_encoder
     elif patch_spec.name == "11-site" and encoder == "rosenfeld":
         encoder_function = append_11_site_patch_rosenfeld_encoder
-    elif encoder == "abstract":
+    elif patch_spec.name == "14-site" and encoder == "abstract":
         encoder_function = append_14_site_patch_abstract_encoder
     elif patch_spec.name == "14-site" and encoder == "abstract-routed":
         encoder_function = append_14_site_patch_abstract_routed_encoder
@@ -808,17 +816,35 @@ def test_patch_injection_azimuth_angle_matches_named_state(
         "patch_qubits": list(range(patch_spec.num_qubits)),
         "add_barriers": False,
     }
-    encoder_function(
-        angle_circuit,
-        **encoder_arguments,
-        injection_azimuth_angle=angle,
-    )
-    encoder_function(
-        named_circuit,
-        **encoder_arguments,
-        injected_state=equivalent_state,
-    )
+    encoder_function(angle_circuit, **encoder_arguments, **{angle_argument: angle})
+    encoder_function(named_circuit, **encoder_arguments, injected_state=equivalent_state)
     assert Statevector(angle_circuit).equiv(Statevector(named_circuit))
+
+
+@pytest.mark.parametrize(
+    "injection_arguments",
+    [
+        {"injected_state": "T", "injection_azimuth_angle": math.pi / 4},
+        {"injected_state": "Ty", "injection_polar_angle": math.pi / 4},
+        {"injection_azimuth_angle": math.pi / 4, "injection_polar_angle": math.pi / 4},
+    ],
+    ids=["state-azimuth", "state-polar", "azimuth-polar"],
+)
+def test_patch_injection_inputs_are_mutually_exclusive(
+    injection_arguments: dict[str, object],
+) -> None:
+    """Reject any two injection inputs, even when they name the same state.
+
+    Every arbitrary-state encoder shares one ``prepare_injection_input`` check,
+    so the production abstract-routed encoder covers all of them.
+    """
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        append_14_site_patch_abstract_routed_encoder(
+            QuantumCircuit(NUM_QUBITS_PATCH_14_SITES),
+            patch_qubits=list(range(NUM_QUBITS_PATCH_14_SITES)),
+            add_barriers=False,
+            **injection_arguments,
+        )
 
 
 # -------------------------

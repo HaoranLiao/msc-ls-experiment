@@ -113,9 +113,7 @@ def test_full_d5_ty_tomography_measurement_record_is_complete_and_semantic(
             "round3_Zde",
         ),
         "merged_surface_z": tuple(
-            f"round{round_index}_{label}"
-            for round_index in range(1, 4)
-            for label in z_labels
+            f"round{round_index}_{label}" for round_index in range(1, 4) for label in z_labels
         ),
         "merged_surface_x": tuple(
             f"round{round_index}_{label}"
@@ -143,14 +141,10 @@ def test_full_d5_ty_tomography_measurement_record_is_complete_and_semantic(
             "round2_D2_copy_flag",
         ),
         "post_transfer_surface_z": tuple(
-            f"round{round_index}_{label}"
-            for round_index in range(1, 6)
-            for label in z_labels
+            f"round{round_index}_{label}" for round_index in range(1, 6) for label in z_labels
         ),
         "post_transfer_surface_x": tuple(
-            f"round{round_index}_{label}"
-            for round_index in range(1, 6)
-            for label in x_labels
+            f"round{round_index}_{label}" for round_index in range(1, 6) for label in x_labels
         ),
         f"surface_data_{basis.lower()}": tuple("abcdefghijklmnopqrstuvwxy"),
     }
@@ -210,17 +204,12 @@ def test_full_d5_ty_tomography_measurement_record_is_complete_and_semantic(
 
     registers = cast(dict[str, dict[str, object]], measurements["registers"])
     assert set(registers) == set(expected_register_labels)
-    assert all(
-        registers[name]["bits"] == register_bits[name]
-        for name in expected_register_labels
-    )
+    assert all(registers[name]["bits"] == register_bits[name] for name in expected_register_labels)
     assert measurements["enc_flags"] == register_bits["enc_flags"]
     assert measurements["post_injection_qed"] == register_bits["steane_qed"]
     assert measurements["cultivation"] == register_bits["cult"]
     assert measurements["steane_verification"] == register_bits["steane_verify"]
-    assert measurements["steane_bell_partner_flags"] == register_bits[
-        "steane_bell_partner_flags"
-    ]
+    assert measurements["steane_bell_partner_flags"] == register_bits["steane_bell_partner_flags"]
     assert measurements["steane_x"] == register_bits["steane_x"]
     assert measurements["surface_x_recovery"] == {"X_ab": 1}
     assert measurements["interface_z_rounds"] == [
@@ -253,9 +242,7 @@ def test_full_d5_ty_tomography_measurement_record_is_complete_and_semantic(
         "X0246": 0,
         "X0145ab": 1,
     }
-    assert measurements["surface_data_readout"] == register_bits[
-        f"surface_data_{basis.lower()}"
-    ]
+    assert measurements["surface_data_readout"] == register_bits[f"surface_data_{basis.lower()}"]
     if basis == "X":
         assert measurements["surface_readout_stabilizers"] == {
             label: int(label == "X_ab") for label in x_labels
@@ -319,16 +306,17 @@ def test_noiseless_transferred_ty_tomography_has_unit_fidelity() -> None:
         target_distance=3,
         add_barriers=False,
     )
-    result = AerSimulator(method="matrix_product_state").run(
-        [circuits[basis] for basis in TOMOGRAPHY_BASES],
-        shots=128,
-        seed_simulator=42,
-    ).result()
+    result = (
+        AerSimulator(method="matrix_product_state")
+        .run(
+            [circuits[basis] for basis in TOMOGRAPHY_BASES],
+            shots=128,
+            seed_simulator=42,
+        )
+        .result()
+    )
     summary = analyze_ty_tomography_counts(
-        {
-            basis: result.get_counts(index)
-            for index, basis in enumerate(TOMOGRAPHY_BASES)
-        },
+        {basis: result.get_counts(index) for index, basis in enumerate(TOMOGRAPHY_BASES)},
         target_distance=3,
     )
 

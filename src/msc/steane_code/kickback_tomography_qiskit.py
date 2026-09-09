@@ -65,6 +65,7 @@ def build_kickback_tomography_experiment(
     patch_sites: KickbackTomographyPatchSites = 14,
     cultivated_state: CultivatedStateName = "Ty",
     injection_azimuth_angle: float | None = None,
+    injection_polar_angle: float | None = None,
     include_prep_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     qed_cycle_indices: Iterable[int] = KT_DEFAULT_QED_CYCLE_INDICES,
@@ -80,11 +81,14 @@ def build_kickback_tomography_experiment(
     -> QED3 -> KT check -> QED4 -> final stabilizer check``.
 
     ``cultivated_state="T"`` measures ``H_XY = (X + Y) / sqrt(2)``;
-    ``"Ty"`` measures ``H_XZ = (X + Z) / sqrt(2)``. ``injected_state`` and
-    ``injection_azimuth_angle`` are mutually exclusive. A supplied angle injects
-    the equatorial state ``Rz(angle)|+⟩`` instead of a named state;
-    ``angle=π/4`` gives ``|T⟩``. If neither is supplied, the injected state is
-    the selected ``cultivated_state``.
+    ``"Ty"`` measures ``H_XZ = (X + Z) / sqrt(2)``.
+
+    The three injection inputs are those of :func:`prepare_injection_input`,
+    except that all ``None`` here injects the selected ``cultivated_state``. Pair
+    each Fig. 3 angle sweep with its own axis — ``injection_azimuth_angle`` with
+    ``"T"``, ``injection_polar_angle`` with ``"Ty"`` — so the swept plane holds
+    the cultivated axis and the injection-only error runs the full
+    ``sin^2(angle / 2 - pi / 8)``.
 
     The 11-site path uses the Rosenfeld encoder, and the 14-site path uses the
     abstract-routed encoder. When ``measure_encoder_flags`` is true, their
@@ -115,11 +119,11 @@ def build_kickback_tomography_experiment(
     spec = resolve_kickback_tomography_patch_spec(patch_sites)
     cultivated_state = normalize_kickback_tomography_state(cultivated_state)
 
-    if injected_state is not None and injection_azimuth_angle is not None:
-        raise ValueError(
-            "injected_state and injection_azimuth_angle are mutually exclusive; supply at most one."
-        )
-    if injected_state is None and injection_azimuth_angle is None:
+    if (cultivated_state == "T" and injection_polar_angle is not None) or (
+        cultivated_state == "Ty" and injection_azimuth_angle is not None
+    ):
+        raise ValueError("Injection sweep angle must match the cultivated-state axis.")
+    if injected_state is None and injection_azimuth_angle is None and injection_polar_angle is None:
         injected_state = cultivated_state
     qed_indices = normalize_qed_cycle_indices(qed_cycle_indices)
 
@@ -182,6 +186,7 @@ def build_kickback_tomography_experiment(
         patch_qubits=patch_qubits,
         injected_state=injected_state,
         injection_azimuth_angle=injection_azimuth_angle,
+        injection_polar_angle=injection_polar_angle,
         flag_bits=(list(encoder_flags_creg) if encoder_flags_creg is not None else None),
         add_barriers=add_barriers,
     )
@@ -337,6 +342,7 @@ def _append_patch_encoder(
     patch_qubits: list,
     injected_state: InjectedStateName | None,
     injection_azimuth_angle: float | None,
+    injection_polar_angle: float | None,
     flag_bits: list | None,
     add_barriers: bool,
 ) -> None:
@@ -347,6 +353,7 @@ def _append_patch_encoder(
             patch_qubits=patch_qubits,
             injected_state=injected_state,
             injection_azimuth_angle=injection_azimuth_angle,
+            injection_polar_angle=injection_polar_angle,
             flag_bits=flag_bits,
             add_barriers=add_barriers,
         )
@@ -356,6 +363,7 @@ def _append_patch_encoder(
             patch_qubits=patch_qubits,
             injected_state=injected_state,
             injection_azimuth_angle=injection_azimuth_angle,
+            injection_polar_angle=injection_polar_angle,
             flag_bits=flag_bits,
             add_barriers=add_barriers,
         )

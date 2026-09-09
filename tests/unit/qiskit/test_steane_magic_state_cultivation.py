@@ -324,9 +324,7 @@ class TestPostselectedLogicalExpectation:
         ) / 2.0
 
         if state == cultivated_state:
-            assert (
-                measured_rate == 1.0
-            ), (
+            assert measured_rate == 1.0, (
                 f"{patch.name} {cultivated_state}-state acceptance should be 1.0, "
                 f"got {measured_rate:.4f}"
             )

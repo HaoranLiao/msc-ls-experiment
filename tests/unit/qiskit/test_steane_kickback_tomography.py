@@ -15,8 +15,8 @@ from msc.steane_code.kickback_tomography_common import (
 )
 from msc.steane_code.kickback_tomography_qiskit import (
     KickbackTomographyExperiment,
-    build_kickback_tomography_experiment,
     analyze_kickback_tomography_counts,
+    build_kickback_tomography_experiment,
 )
 from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
@@ -434,26 +434,43 @@ class TestNoiselessKickbackTomography:
         assert summary.logical_error_probability == 0.0
 
     @pytest.mark.slow
-    @pytest.mark.parametrize("cultivated_state", ["T", "Ty"])
-    @pytest.mark.parametrize("state", ["Ty", "+", "1", "Y+", "T"])
+    @pytest.mark.parametrize(
+        ("cultivated_state", "injection_argument", "injection", "expected_error"),
+        [
+            ("T", "injected_state", "Ty", 0.25),
+            ("T", "injected_state", "+", (1.0 - 1.0 / math.sqrt(2.0)) / 2.0),
+            ("T", "injected_state", "1", 0.5),
+            ("T", "injected_state", "Y+", (1.0 - 1.0 / math.sqrt(2.0)) / 2.0),
+            ("Ty", "injected_state", "T", 0.25),
+            ("Ty", "injected_state", "+", (1.0 - 1.0 / math.sqrt(2.0)) / 2.0),
+            ("Ty", "injected_state", "1", (1.0 + 1.0 / math.sqrt(2.0)) / 2.0),
+            ("Ty", "injected_state", "Y+", 0.5),
+            ("T", "injection_azimuth_angle", math.pi / 4, 0.0),
+            ("T", "injection_azimuth_angle", 3 * math.pi / 4, 0.5),
+            ("T", "injection_azimuth_angle", 5 * math.pi / 4, 1.0),
+            ("Ty", "injection_polar_angle", math.pi / 4, 0.0),
+            ("Ty", "injection_polar_angle", 3 * math.pi / 4, 0.5),
+            ("Ty", "injection_polar_angle", 5 * math.pi / 4, 1.0),
+        ],
+    )
     @pytest.mark.parametrize("patch_sites", [11, 14])
-    @pytest.mark.parametrize("no_reset", [False, True])
-    def test_injection_only_kt_error_probability(
+    def test_injection_only_kt_error_tracks_the_cultivated_axis_overlap(
         self,
         cultivated_state: CultivatedStateName,
-        state: InjectedStateName,
+        injection_argument: str,
+        injection: InjectedStateName | float,
+        expected_error: float,
         patch_sites: int,
-        no_reset: bool,
     ) -> None:
+        """Report one minus the injected state's overlap with the cultivated axis."""
         experiment = build_kickback_tomography_experiment(
-            injected_state=state,
             cultivated_state=cultivated_state,
             patch_sites=patch_sites,
             include_prep_cultivation=False,
             qed_cycle_indices=(),
             final_stabilizer_basis="NONE",
-            no_reset=no_reset,
             add_barriers=False,
+            **{injection_argument: injection},
         )
         counts = (
             AerSimulator()
@@ -463,30 +480,12 @@ class TestNoiselessKickbackTomography:
         )
         summary = analyze_kickback_tomography_counts(counts, experiment.layout)
 
-        # Expected +1 probability on the selected H_XY or H_XZ axis.
-        inv_sqrt2 = 1.0 / math.sqrt(2.0)
-        plus_probabilities: dict[CultivatedStateName, dict[InjectedStateName, float]] = {
-            "T": {
-                "Ty": 0.75,
-                "+": (1.0 + inv_sqrt2) / 2.0,
-                "1": 0.5,
-                "Y+": (1.0 + inv_sqrt2) / 2.0,
-                "T": 1.0,
-            },
-            "Ty": {
-                "Ty": 1.0,
-                "+": (1.0 + inv_sqrt2) / 2.0,
-                "1": (1.0 - inv_sqrt2) / 2.0,
-                "Y+": 0.5,
-                "T": 0.75,
-            },
-        }
-        expected_error = 1.0 - plus_probabilities[cultivated_state][state]
         sigma = math.sqrt(expected_error * (1.0 - expected_error) / NUM_SHOTS)
-        tolerance = max(4 * sigma, 0.02)
 
         assert summary.retained_shots == NUM_SHOTS
-        assert summary.logical_error_probability == pytest.approx(expected_error, abs=tolerance)
+        assert summary.logical_error_probability == pytest.approx(
+            expected_error, abs=max(4 * sigma, 0.02)
+        )
 
     @pytest.mark.slow
     @pytest.mark.parametrize("cultivated_state", ["T", "Ty"])

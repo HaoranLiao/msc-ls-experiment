@@ -15,8 +15,8 @@ from msc.steane_code.kickback_tomography_common import (
 )
 from msc.steane_code.kickback_tomography_stim import (
     KickbackTomographyExperiment,
-    build_kickback_tomography_experiment,
     analyze_kickback_tomography_shots,
+    build_kickback_tomography_experiment,
 )
 from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,

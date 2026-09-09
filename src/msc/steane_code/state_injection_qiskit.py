@@ -110,12 +110,48 @@ def prepare_physical_state(
     raise ValueError(f"Unknown state name: {state!r}")
 
 
+def prepare_injection_input(
+    circuit: QuantumCircuit,
+    qubit,
+    *,
+    injected_state: InjectedStateName | None,
+    injection_azimuth_angle: float | None,
+    injection_polar_angle: float | None,
+) -> None:
+    """Own the injection-input contract shared by every arbitrary-state encoder.
+
+    The three arguments are mutually exclusive and all ``None`` injects ``"T"``.
+    Each angle sweeps the plane holding one cultivation axis, reaching that axis
+    at ``angle=π/4``: ``Rz(angle)|+>`` sweeps XY through ``|T>`` (+1 eigenstate
+    of ``H_XY``), and ``Ry(angle)|0>`` sweeps XZ through ``|Ty>`` (+1 eigenstate
+    of ``H_XZ``). The polar sweep is the injected angle ``θ`` of Rosenfeld et al.
+    Figs. 2 and 3.
+    """
+    supplied = (injected_state, injection_azimuth_angle, injection_polar_angle)
+    if sum(argument is not None for argument in supplied) > 1:
+        raise ValueError(
+            "injected_state, injection_azimuth_angle, and injection_polar_angle are mutually "
+            "exclusive; supply at most one."
+        )
+
+    if injection_azimuth_angle is not None:
+        circuit.h(qubit)
+        circuit.rz(injection_azimuth_angle, qubit)
+    elif injection_polar_angle is not None:
+        circuit.ry(injection_polar_angle, qubit)
+    else:
+        prepare_physical_state(
+            circuit, qubit, injected_state if injected_state is not None else "T"
+        )
+
+
 def append_abstract_encoder(
     circuit: QuantumCircuit,
     *,
     data_qubits: Sequence,
     injected_state: InjectedStateName | None = None,
     injection_azimuth_angle: float | None = None,
+    injection_polar_angle: float | None = None,
     add_barriers: bool = True,
 ) -> None:
     """Append a Steane-code state-injection encoder to an existing circuit.
@@ -132,39 +168,25 @@ def append_abstract_encoder(
     data_qubits
         Seven qubits that will hold the encoded Steane-code state (ordered 0-6).
         The injected physical state is prepared on ``data_qubits[0]``.
-    injected_state
-        The unencoded single-qubit state to inject on qubit 0. The output is
-        the corresponding encoded state in the Steane code. This may be
-        ``None`` because it is mutually exclusive with
-        ``injection_azimuth_angle``.
-    injection_azimuth_angle
-        When set, inject ``Rz(injection_azimuth_angle)|+⟩ = (|0⟩ + e^{i·angle}|1⟩)/√2``
-        on qubit 0 instead of a named ``injected_state``.  This sweeps the
-        equatorial (XY-plane) states relevant to T-state cultivation:
-        ``angle=π/4`` reproduces ``|T⟩ = T|+⟩``, the +1 eigenstate of
-        ``H_XY = (X + Y)/√2``. This may be ``None`` because it is mutually
-        exclusive with ``injected_state``. At most one of these arguments may
-        be non-``None``; when both are ``None``, ``injected_state="T"`` is used.
+    injected_state, injection_azimuth_angle, injection_polar_angle
+        Mutually exclusive injection inputs prepared on qubit 0; see
+        :func:`prepare_injection_input`. The output is the corresponding encoded
+        state in the Steane code.
     add_barriers
         Whether to insert a barrier between preparation and encoding stages.
     """
     if len(data_qubits) < 7:
         raise ValueError("data_qubits must contain at least 7 qubits.")
-    if injected_state is not None and injection_azimuth_angle is not None:
-        raise ValueError(
-            "injected_state and injection_azimuth_angle are mutually exclusive; supply at most one."
-        )
 
     dq = list(data_qubits)
 
-    if injection_azimuth_angle is not None:
-        # Prepare Rz(angle)|+> on q0.
-        circuit.h(dq[0])
-        circuit.rz(injection_azimuth_angle, dq[0])
-    else:
-        # Prepare the unencoded state on q0.
-        state: InjectedStateName = injected_state if injected_state is not None else "T"
-        prepare_physical_state(circuit, dq[0], state)
+    prepare_injection_input(
+        circuit,
+        dq[0],
+        injected_state=injected_state,
+        injection_azimuth_angle=injection_azimuth_angle,
+        injection_polar_angle=injection_polar_angle,
+    )
 
     circuit.h(dq[1])
     circuit.h(dq[4])
@@ -198,6 +220,7 @@ def append_11_site_patch_abstract_encoder(
     patch_qubits: Sequence,
     injected_state: InjectedStateName | None = None,
     injection_azimuth_angle: float | None = None,
+    injection_polar_angle: float | None = None,
     add_barriers: bool = True,
 ) -> None:
     """Append the Steane-code state-injection encoder on the 11-site patch.
@@ -212,14 +235,9 @@ def append_11_site_patch_abstract_encoder(
         Circuit being modified.
     patch_qubits
         Eleven Qiskit qubits indexed by the 11-site patch labels.
-    injected_state
-        The physical one-qubit state to inject on site 0. This may be ``None``
-        because it is mutually exclusive with ``injection_azimuth_angle``.
-    injection_azimuth_angle
-        When set, inject ``Rz(injection_azimuth_angle)|+⟩`` on the injection
-        site instead of a named state. This may be ``None`` because it is
-        mutually exclusive with ``injected_state``. At most one argument may
-        be non-``None``; when both are ``None``, ``injected_state="T"`` is used.
+    injected_state, injection_azimuth_angle, injection_polar_angle
+        Mutually exclusive injection inputs prepared on site 0; see
+        :func:`prepare_injection_input`.
     add_barriers
         Whether to insert a barrier after the encoder.
     """
@@ -235,6 +253,7 @@ def append_11_site_patch_abstract_encoder(
         data_qubits=data_qubits,
         injected_state=injected_state,
         injection_azimuth_angle=injection_azimuth_angle,
+        injection_polar_angle=injection_polar_angle,
         add_barriers=add_barriers,
     )
     if add_barriers:
@@ -247,6 +266,7 @@ def append_11_site_patch_rosenfeld_encoder(
     patch_qubits: Sequence,
     injected_state: InjectedStateName | None = None,
     injection_azimuth_angle: float | None = None,
+    injection_polar_angle: float | None = None,
     flag_bits: Sequence | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
@@ -267,19 +287,11 @@ def append_11_site_patch_rosenfeld_encoder(
         Circuit being modified.
     patch_qubits
         Eleven Qiskit qubits indexed by the 11-site patch labels.
-    injected_state
-        The physical one-qubit state to inject on patch site 4, the center data
-        site corresponding to Hirano label ``0``. This may be ``None`` because
-        it is mutually exclusive with ``injection_azimuth_angle``.
-    injection_azimuth_angle
-        When set, inject ``Rz(injection_azimuth_angle)|+⟩ = (|0⟩ + e^{i·angle}|1⟩)/√2``
-        on the injection site instead of a named ``injected_state``.  This
-        sweeps the equatorial (XY-plane) states relevant to T-state cultivation:
-        ``angle=π/4`` reproduces ``|T⟩ = T|+⟩``, the +1 eigenstate of
-        ``H_XY = (X + Y)/√2``. Used for kickback-tomography angle scans. This
-        may be ``None`` because it is mutually exclusive with
-        ``injected_state``. At most one argument may be non-``None``; when both
-        are ``None``, ``injected_state="T"`` is used.
+    injected_state, injection_azimuth_angle, injection_polar_angle
+        Mutually exclusive injection inputs prepared on patch site 4, the center
+        data site corresponding to Hirano label ``0``; see
+        :func:`prepare_injection_input`. The angles drive kickback-tomography
+        scans.
     flag_bits
         Four classical bits for the helper-site measurements. When ``None``
         (default), the helper sites are not measured.
@@ -295,26 +307,16 @@ def append_11_site_patch_rosenfeld_encoder(
         patch_qubits,
         expected_count=NUM_QUBITS_PATCH_11_SITES,
     )
-    if injected_state is not None and injection_azimuth_angle is not None:
-        raise ValueError(
-            "injected_state and injection_azimuth_angle are mutually exclusive; supply at most one."
-        )
     if flag_bits is not None and len(flag_bits) < len(PATCH_11_SITE_HELPER_SITES):
         raise ValueError(f"flag_bits must contain at least {len(PATCH_11_SITE_HELPER_SITES)} bits.")
 
-    if injection_azimuth_angle is not None:
-        circuit.h(patch_qubits[PATCH_11_SITE_ROSENFELD_ENCODER_INJECTION_SITE])
-        circuit.rz(
-            injection_azimuth_angle,
-            patch_qubits[PATCH_11_SITE_ROSENFELD_ENCODER_INJECTION_SITE],
-        )
-    else:
-        state: InjectedStateName = injected_state if injected_state is not None else "T"
-        prepare_physical_state(
-            circuit,
-            patch_qubits[PATCH_11_SITE_ROSENFELD_ENCODER_INJECTION_SITE],
-            state,
-        )
+    prepare_injection_input(
+        circuit,
+        patch_qubits[PATCH_11_SITE_ROSENFELD_ENCODER_INJECTION_SITE],
+        injected_state=injected_state,
+        injection_azimuth_angle=injection_azimuth_angle,
+        injection_polar_angle=injection_polar_angle,
+    )
     if add_barriers:
         circuit.barrier(label="rosenfeld injection input")
 
@@ -477,6 +479,7 @@ def append_14_site_patch_abstract_encoder(
     patch_qubits: Sequence,
     injected_state: InjectedStateName | None = None,
     injection_azimuth_angle: float | None = None,
+    injection_polar_angle: float | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
     """Append the abstract Steane encoder directly on the 14-site data sites.
@@ -484,8 +487,8 @@ def append_14_site_patch_abstract_encoder(
     This is the fixed-geometry, unrouted reference encoder. Unlike Hirano's
     specialized phase-injection schedule, the abstract Steane isometry can
     encode an arbitrary injected state: all named inputs supported by
-    :func:`append_abstract_encoder`, or an arbitrary equatorial state supplied
-    by ``injection_azimuth_angle``. It maps the abstract Steane triangle onto
+    :func:`append_abstract_encoder`, or any swept equatorial or meridional state.
+    It maps the abstract Steane triangle onto
     Hirano data labels ``(6, 4, 2, 0, 1, 5, 3)`` and never uses the six helper
     sites or D2'. In particular, D1 is data site 1 at ``(1, 5)`` from the start;
     no post-injection relocation is needed::
@@ -508,13 +511,9 @@ def append_14_site_patch_abstract_encoder(
         Circuit being modified.
     patch_qubits
         Fourteen Qiskit qubits indexed by the fixed patch labels.
-    injected_state
-        Named physical state to encode on D6/A0, with no logical-Y restriction.
-        Mutually exclusive with ``injection_azimuth_angle``; both ``None``
-        selects ``"T"``.
-    injection_azimuth_angle
-        Equatorial angle for ``Rz(angle)|+>`` on D6/A0, mutually exclusive with
-        ``injected_state``.
+    injected_state, injection_azimuth_angle, injection_polar_angle
+        Mutually exclusive injection inputs prepared on D6/A0, with no logical-Y
+        restriction; see :func:`prepare_injection_input`.
     add_barriers
         Whether to retain the abstract encoder's preparation barrier and append
         a labeled completion barrier.
@@ -534,6 +533,7 @@ def append_14_site_patch_abstract_encoder(
         data_qubits=data_qubits,
         injected_state=injected_state,
         injection_azimuth_angle=injection_azimuth_angle,
+        injection_polar_angle=injection_polar_angle,
         add_barriers=add_barriers,
     )
     if add_barriers:
@@ -547,6 +547,7 @@ def append_14_site_patch_abstract_routed_encoder(
     patch_qubits: Sequence,
     injected_state: InjectedStateName | None = None,
     injection_azimuth_angle: float | None = None,
+    injection_polar_angle: float | None = None,
     flag_bits: Sequence | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
@@ -574,9 +575,9 @@ def append_14_site_patch_abstract_routed_encoder(
 
     Parameters
     ----------
-    injection_azimuth_angle
-        Equatorial angle for ``Rz(angle)|+>`` on D3, mutually exclusive with
-        ``injected_state``.
+    injected_state, injection_azimuth_angle, injection_polar_angle
+        Mutually exclusive injection inputs prepared on D3; see
+        :func:`prepare_injection_input`.
     flag_bits
         Five classical bits for optional Z-basis measurements of H8–H12.
         ``None`` skips the flag measurements.
@@ -585,10 +586,6 @@ def append_14_site_patch_abstract_routed_encoder(
         patch_qubits,
         expected_count=NUM_QUBITS_PATCH_14_SITES,
     )
-    if injected_state is not None and injection_azimuth_angle is not None:
-        raise ValueError(
-            "injected_state and injection_azimuth_angle are mutually exclusive; supply at most one."
-        )
     if flag_bits is not None and len(flag_bits) < len(
         PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES
     ):
@@ -597,13 +594,13 @@ def append_14_site_patch_abstract_routed_encoder(
             f"{len(PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES)} bits."
         )
 
-    injection_qubit = patch_qubits[PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_INJECTION_SITE]
-    if injection_azimuth_angle is not None:
-        circuit.h(injection_qubit)
-        circuit.rz(injection_azimuth_angle, injection_qubit)
-    else:
-        state: InjectedStateName = injected_state if injected_state is not None else "T"
-        prepare_physical_state(circuit, injection_qubit, state)
+    prepare_injection_input(
+        circuit,
+        patch_qubits[PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_INJECTION_SITE],
+        injected_state=injected_state,
+        injection_azimuth_angle=injection_azimuth_angle,
+        injection_polar_angle=injection_polar_angle,
+    )
 
     for tick_layer in PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_LAYERS:
         for gate_name, operands in tick_layer:

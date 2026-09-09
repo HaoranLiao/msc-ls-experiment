@@ -1,8 +1,8 @@
 """Stim tests for the abstract, 11-site, and 14-site Steane encoders.
 
 These parallel the Clifford-applicable Qiskit state-injection tests using exact
-stabilizer simulation. Non-Clifford inputs, azimuth sweeps, and IBM transpilation
-have no Stim equivalent.
+stabilizer simulation. Non-Clifford inputs, azimuth and polar sweeps, and IBM
+transpilation have no Stim equivalent.
 """
 
 from __future__ import annotations
