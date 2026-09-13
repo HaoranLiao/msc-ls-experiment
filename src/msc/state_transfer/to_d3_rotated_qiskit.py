@@ -42,6 +42,7 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,
+    post_transfer_stabilizer_rounds: int | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
     """Build the authoritative register-owning d3 transfer circuit.
@@ -55,10 +56,10 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     post-injection QED, optional logical-H_XZ cultivation by default (or H_XY
     when ``cultivated_state="T"``), both Steane
     verification groups, and every raw measurement needed for classical
-    spacetime decoding. An X/Z ``surface_readout_basis`` appends three complete
-    surface rounds before all-data readout, or one when ``full_post_selection``
-    is true. The reconstructed final stabilizers close the corresponding
-    decoder history. ``include_post_transfer_stabilizer_rounds`` retains a
+    spacetime decoding. An X/Z ``surface_readout_basis`` appends the requested
+    complete surface rounds before all-data readout. The reconstructed final
+    stabilizers close the corresponding decoder history.
+    ``include_post_transfer_stabilizer_rounds`` retains a
     continuation-only option when no readout is requested. ``None`` otherwise
     ends at the transfer boundary; full-data Y readout is unsupported.
 
@@ -76,12 +77,15 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     if surface_readout_basis is None and not include_post_transfer_stabilizer_rounds:
         return circuit
 
-    stabilizer_rounds = TRANSFER_SPEC.distance
+    stabilizer_rounds = common.resolve_post_transfer_stabilizer_rounds(
+        distance=TRANSFER_SPEC.distance,
+        full_post_selection=full_post_selection and surface_readout_basis is not None,
+        post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
+    )
     if surface_readout_basis is not None:
         surface_readout_basis = normalize_pauli_char(surface_readout_basis)
         if surface_readout_basis == "Y":
             raise ValueError("full-data surface readout basis must be X or Z.")
-        stabilizer_rounds = 1 if full_post_selection else TRANSFER_SPEC.distance
     post_transfer_z_register = ClassicalRegister(
         stabilizer_rounds * len(TRANSFER_SPEC.z_labels),
         "post_transfer_surface_z",
@@ -136,19 +140,24 @@ def parse_transfer_measurements(
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,
+    persistent_surface_x_post_selection: bool = True,
+    post_transfer_stabilizer_rounds: int | None = None,
 ) -> dict[str, object]:
-    post_transfer_stabilizer_rounds = 0
-    if surface_readout_basis is not None:
-        post_transfer_stabilizer_rounds = 1 if full_post_selection else TRANSFER_SPEC.distance
-    elif include_post_transfer_stabilizer_rounds:
-        post_transfer_stabilizer_rounds = TRANSFER_SPEC.distance
+    resolved_stabilizer_rounds = 0
+    if surface_readout_basis is not None or include_post_transfer_stabilizer_rounds:
+        resolved_stabilizer_rounds = common.resolve_post_transfer_stabilizer_rounds(
+            distance=TRANSFER_SPEC.distance,
+            full_post_selection=full_post_selection and surface_readout_basis is not None,
+            post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
+        )
     return analysis.parse_transfer_measurements(
         bitstring,
         spec=TRANSFER_SPEC,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
-        post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
+        post_transfer_stabilizer_rounds=resolved_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,
         full_data_readout=surface_readout_basis is not None,
         full_post_selection=full_post_selection,
+        persistent_surface_x_post_selection=persistent_surface_x_post_selection,
     )

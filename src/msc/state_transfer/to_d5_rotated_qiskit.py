@@ -43,6 +43,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     include_cultivation: bool = True,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,
+    post_transfer_stabilizer_rounds: int | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
     """Build the authoritative register-owning d5 transfer circuit.
@@ -57,10 +58,9 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     post-injection QED, optional logical-H_XZ cultivation by default (or H_XY
     when ``cultivated_state="T"``), both paper-defined
     Steane verification groups, and every raw measurement needed for classical
-    spacetime decoding. If ``surface_readout_basis`` is X or Z,
-    ``full_post_selection=False`` appends five complete surface rounds before
-    destructive all-data readout; ``True`` appends one. ``None`` ends at
-    ``m_ab``.
+    spacetime decoding. If ``surface_readout_basis`` is X or Z, the requested
+    complete surface rounds precede destructive all-data readout. ``None`` ends
+    at ``m_ab``.
     """
     circuit = helper.build_lattice_surgery_circuit(
         TRANSFER_SPEC,
@@ -75,7 +75,11 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     surface_readout_basis = normalize_pauli_char(surface_readout_basis)
     if surface_readout_basis == "Y":
         raise ValueError("full-data surface readout basis must be X or Z.")
-    stabilizer_rounds = 1 if full_post_selection else TRANSFER_SPEC.distance
+    stabilizer_rounds = common.resolve_post_transfer_stabilizer_rounds(
+        distance=TRANSFER_SPEC.distance,
+        full_post_selection=full_post_selection,
+        post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
+    )
     post_transfer_z_register = ClassicalRegister(
         stabilizer_rounds * len(TRANSFER_SPEC.z_labels),
         "post_transfer_surface_z",
@@ -97,6 +101,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
         circuit,
         surface_readout_basis=surface_readout_basis,
         full_post_selection=full_post_selection,
+        post_transfer_stabilizer_rounds=stabilizer_rounds,
         post_transfer_z_bits=post_transfer_z_register,
         post_transfer_x_bits=post_transfer_x_register,
         surface_data_bits=surface_data_register,
@@ -110,12 +115,13 @@ def append_post_transfer_and_readout(
     *,
     surface_readout_basis: common.SurfaceReadoutBasis,
     full_post_selection: bool = False,
+    post_transfer_stabilizer_rounds: int | None = None,
     post_transfer_z_bits: Sequence[object],
     post_transfer_x_bits: Sequence[object],
     surface_data_bits: Sequence[object],
     add_barriers: bool = True,
 ) -> None:
-    """Append one or five full d=5 rounds and destructive all-data readout.
+    """Append full d=5 rounds and destructive all-data readout.
 
     The associated parser change-detects these rounds from the transfer
     references, reconstructs the compatible final syndrome from all 25 data
@@ -128,7 +134,11 @@ def append_post_transfer_and_readout(
     surface_readout_basis = normalize_pauli_char(surface_readout_basis)
     if surface_readout_basis == "Y":
         raise ValueError("full-data surface readout basis must be X or Z.")
-    stabilizer_rounds = 1 if full_post_selection else TRANSFER_SPEC.distance
+    stabilizer_rounds = common.resolve_post_transfer_stabilizer_rounds(
+        distance=TRANSFER_SPEC.distance,
+        full_post_selection=full_post_selection,
+        post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
+    )
     qubits = {register.name: register[0] for register in circuit.qregs}
     surface_qubits = [qubits[label] for label in TRANSFER_SPEC.surface_order]
     z_ancillas = [qubits[label.lower()] for label in TRANSFER_SPEC.z_labels]
@@ -166,18 +176,25 @@ def parse_transfer_measurements(
     include_cultivation: bool = True,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,
+    persistent_surface_x_post_selection: bool = True,
+    post_transfer_stabilizer_rounds: int | None = None,
 ) -> dict[str, object]:
     """Parse and decode the transfer, continuation, and full-data boundary."""
-    post_transfer_stabilizer_rounds = 0
+    resolved_stabilizer_rounds = 0
     if surface_readout_basis is not None:
-        post_transfer_stabilizer_rounds = 1 if full_post_selection else TRANSFER_SPEC.distance
+        resolved_stabilizer_rounds = common.resolve_post_transfer_stabilizer_rounds(
+            distance=TRANSFER_SPEC.distance,
+            full_post_selection=full_post_selection,
+            post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
+        )
     return analysis.parse_transfer_measurements(
         bitstring,
         spec=TRANSFER_SPEC,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
-        post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
+        post_transfer_stabilizer_rounds=resolved_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,
         full_data_readout=surface_readout_basis is not None,
         full_post_selection=full_post_selection,
+        persistent_surface_x_post_selection=persistent_surface_x_post_selection,
     )

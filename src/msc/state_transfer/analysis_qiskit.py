@@ -20,6 +20,7 @@ def parse_transfer_measurements(
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     full_data_readout: bool = False,
     full_post_selection: bool = False,
+    persistent_surface_x_post_selection: bool = True,
 ) -> dict[str, object]:
     """Parse one count key and decode its merge and continuation histories.
 
@@ -43,6 +44,7 @@ def parse_transfer_measurements(
         surface_readout_basis=surface_readout_basis,
         full_data_readout=full_data_readout,
         full_post_selection=full_post_selection,
+        persistent_surface_x_post_selection=persistent_surface_x_post_selection,
     )
     parsed["registers"] = {
         name: {

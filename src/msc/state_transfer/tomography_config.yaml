@@ -1,0 +1,9 @@
+# Full-circuit Qiskit Ty tomography settings.
+target_distance: 5
+patch_sites: 14
+full_post_selection: false
+persistent_surface_x_post_selection: true
+# Set to null for the historical default: target_distance rounds, or one round
+# when full_post_selection is enabled.
+post_transfer_stabilizer_rounds: null
+add_barriers: true

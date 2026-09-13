@@ -306,6 +306,21 @@ class SurfaceCodeTransferSpec:
 # =============================================================================
 
 
+def resolve_post_transfer_stabilizer_rounds(
+    *,
+    distance: int,
+    full_post_selection: bool,
+    post_transfer_stabilizer_rounds: int | None,
+) -> int:
+    """Resolve and validate the number of surface-code continuation rounds."""
+    rounds = post_transfer_stabilizer_rounds
+    if rounds is None:
+        rounds = 1 if full_post_selection else distance
+    if rounds < 1:
+        raise ValueError("post_transfer_stabilizer_rounds must be positive.")
+    return rounds
+
+
 def parity(bits: Mapping[str, int], labels: Sequence[str]) -> int:
     """Return the mod-2 parity over selected entries of a labeled bit mapping."""
     return sum(bits[label] for label in labels) % 2
@@ -391,6 +406,7 @@ def interpret_transfer_measurements(
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     full_data_readout: bool = False,
     full_post_selection: bool = False,
+    persistent_surface_x_post_selection: bool = True,
 ) -> dict[str, object]:
     """Interpret one labeled shot and derive all shared protocol state.
 
@@ -422,6 +438,7 @@ def interpret_transfer_measurements(
         "merged_surface_z_rounds": merged_surface_z_rounds,
         "merged_surface_x_rounds": merged_surface_x_rounds,
         "full_post_selection": full_post_selection,
+        "persistent_surface_x_post_selection": persistent_surface_x_post_selection,
     }
     if "steane_bell_partner_flags" in bits:
         parsed["steane_bell_partner_flags"] = bits["steane_bell_partner_flags"]
@@ -656,7 +673,7 @@ def transfer_rejection_stages(measurements: dict[str, object]) -> tuple[tuple[st
             for sector in delta_layer.values()
             for bit in sector.values()
         )
-    else:
+    elif measurements.get("persistent_surface_x_post_selection", True):
         persistent_x_labels = tuple(
             label
             for label in PERSISTENT_POSTSELECTED_SURFACE_X_LABELS
@@ -676,6 +693,8 @@ def transfer_rejection_stages(measurements: dict[str, object]) -> tuple[tuple[st
             for delta_layer in post_transfer_delta_history[:post_transfer_round_count]
             for label in persistent_x_labels
         )
+    else:
+        surface_init_rejects = merged_surface_rejects = post_transfer_rejects = False
 
     return (
         ("encoder_flags", any(measurements["enc_flags"].values())),
@@ -700,7 +719,7 @@ def transfer_acceptance_succeeds(measurements: dict[str, object]) -> bool:
     Encoder flags, post-injection QED, optional cultivation, color-code
     verification and its 14-site Bell-partner flags, final demolition checks,
     and interface changes always cause rejection. Full postselection also
-    rejects every surface event. Otherwise only the persistent
+    rejects every surface event. Otherwise the optional persistent
     ``X_bcgh``/``X_fgkl`` streams reject; all other surface events are decoded.
 
     Complementary-gap postselection belongs to the global circuit-level Stim
