@@ -8,7 +8,9 @@ from typing import Literal
 
 from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
+    PATCH_11_SITE_CULTIVATION_ROOT_CHECK_INDEX,
     PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
+    PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX,
     PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
     STEANE_QED_MEASUREMENTS_PER_ROUND,
     CultivatedStateName,
@@ -55,7 +57,7 @@ def resolve_kickback_tomography_patch_spec(
             patch_sites=11,
             encoder_flag_count=len(PATCH_11_SITE_HELPER_SITES),
             cultivation_measurement_count=PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
-            cultivation_root_check_index=4,
+            cultivation_root_check_index=PATCH_11_SITE_CULTIVATION_ROOT_CHECK_INDEX,
             qed_measurement_count=STEANE_QED_MEASUREMENTS_PER_ROUND,
         )
     elif patch_sites == 14:
@@ -63,7 +65,7 @@ def resolve_kickback_tomography_patch_spec(
             patch_sites=14,
             encoder_flag_count=len(PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES),
             cultivation_measurement_count=PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
-            cultivation_root_check_index=None,
+            cultivation_root_check_index=PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX,
             qed_measurement_count=PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
         )
     else:
@@ -156,8 +158,9 @@ def cultivation_round_bits_from_positions(
 ) -> KickbackCultivationRoundBits:
     """Partition one patch record into its logical root, flags, and optional root check.
 
-    The 11-site schedule repeats site 7 at index four to check its root. The
-    14-site schedule has no repeated root; every post-root outcome is a flag.
+    The 11-site schedule repeats site 7 at index four. The 14-site schedule
+    records H8-H12 in site order after the root, so repeated H10 is at index
+    three and the other four helper outcomes are fixed-zero checks.
     """
     positions = tuple(positions)
     if not positions:

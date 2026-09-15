@@ -11,12 +11,14 @@ eigenstate.
 Each 11-site round appends five measurements to Stim's record in this order:
 
 1. folded root at site 7;
-2. helper sites 1, 2, 6, and 7.
+2. helper sites 1, 2, 6, and 7, where site 7 is the repeated-root check and
+   the other three are fixed-zero checks.
 
-Each 14-site round appends seven measurements in this order:
+Each 14-site round appends six measurements in this order:
 
-1. folded root at site 0;
-2. helper sites 7-12.
+1. folded root at site 10;
+2. helper sites 8-12, where site 10 is the repeated-root check and the other
+   four are fixed-zero checks.
 """
 
 from __future__ import annotations
@@ -27,8 +29,10 @@ import numpy as np
 import stim
 
 from msc.steane_code.magic_state_cultivation_common import (
+    PATCH_11_SITE_CULTIVATION_ROOT_CHECK_INDEX,
     PATCH_11_SITE_FOLD_LAYERS,
     PATCH_11_SITE_FOLDED_MEASUREMENT_SITE,
+    PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX,
     PATCH_14_SITE_FOLD_LAYERS,
     PATCH_14_SITE_FOLDED_MEASUREMENT_SITE,
     Patch14SiteEncoderName,
@@ -146,10 +150,9 @@ def append_14_site_patch_fold_network(
     *,
     add_ticks: bool = True,
 ) -> None:
-    """Append the forward 6-3-2-1 fold network for the 14-site Hirano patch.
+    """Append the forward 4-4-2-1 H10-root fold network.
 
-    Ports the fold half of Hirano's ``check_generator``: the six helper
-    ancillas (7-12) fold the seven data sites onto root data site 0.
+    The active helper ancillas H8-H12 fold the seven data sites onto H10.
     ``patch_qubits`` must index at least sites 0-12; site 13 (D2') is unused.
     """
     for layer in PATCH_14_SITE_FOLD_LAYERS:
@@ -267,14 +270,19 @@ def append_11_site_patch_y_projection_round(
     # record. Reading it at the top and again here brackets exactly the
     # measurements this call contributed, in append order.
     measurement_positions = tuple(range(first_projection_position, circuit.num_measurements))
-    folded_root, *flag_positions, double_check = measurement_positions
+    folded_root = measurement_positions[0]
+    root_check = measurement_positions[PATCH_11_SITE_CULTIVATION_ROOT_CHECK_INDEX]
+    flag_positions = (
+        measurement_positions[1:PATCH_11_SITE_CULTIVATION_ROOT_CHECK_INDEX]
+        + measurement_positions[PATCH_11_SITE_CULTIVATION_ROOT_CHECK_INDEX + 1 :]
+    )
     if not running_kt:
         circuit_stim.append_detector(circuit, measurement_positions=(folded_root,))
     for position in flag_positions:
         circuit_stim.append_detector(circuit, measurement_positions=(position,))
     circuit_stim.append_detector(
         circuit,
-        measurement_positions=(folded_root, double_check),
+        measurement_positions=(folded_root, root_check),
     )
     return measurement_positions
 
@@ -288,29 +296,26 @@ def append_14_site_patch_y_projection_round(
 ) -> tuple[int, ...]:
     """Append one detector-annotated logical-Y cultivation round on the 14-site patch.
 
-    Ports the fold-measure-unfold-measure structure of Hirano's
-    ``check_generator``: reset the six helper sites (7-12) to ``|+>``, apply
-    ``S``/``S_DAG`` to the seven data sites, fold onto root data site 0,
-    measure the root in the X basis, reset it to ``|+>`` for cultivation,
-    unfold, then read out the six helper sites in the X basis. Hirano's literal
-    circuit fixes ``S_DAG``-before/``S``-after; this module uses the mirrored
-    order consistent with its ``|S>`` proxy input. The helper reset also cleans
-    up after any prior round that left the helper sites away from ``|+>``.
-
-    After unfolding, H7-H12 are measured in X and expected to return zero; D0
-    is not measured again. Cultivation rejects a root result of one and resets
-    D0 to ``|+>``. The reset changes nothing in an ideal accepted shot, but if
-    the reported result is zero while D0 is physically ``|->``, it makes H10
-    fire. Omitting it lowers the Stim graphlike distance from three to two.
-    KT does not reset D0 because root one is a result it must retain; resetting
-    that branch would fire H10 and wrongly reject it. Set
-    ``running_kt=False`` for cultivation and ``True`` for KT.
+    Reset the active helpers H8-H12 to ``|+>``, apply ``S``/``S_DAG`` to the
+    seven data sites, fold onto H10, measure and reset H10 in the X basis,
+    unfold, then read out H8-H12 in site order. H7 is unused. H10's second
+    result must agree with the folded root; the other four results are fixed-+1
+    checks. The root-agreement detector applies to cultivation and KT, while
+    only cultivation adds a detector that pins the folded root to +1.
 
     Parameters
     ----------
     running_kt
-        Set to ``False`` for cultivation, which postselects the root and resets
-        D0 to ``|+>``; set to ``True`` for KT, which preserves both outcomes.
+        Whether to retain both folded-root branches for KT. The root is reset
+        and checked after unfolding in either mode, but Stim's detector
+        annotations differ: cultivation pins the folded root to +1, whereas KT
+        omits that detector and retains both root outcomes.
+
+    Returns
+    -------
+    tuple[int, ...]
+        Absolute record positions for the folded H10 root followed by helper
+        readouts H8, H9, H10, H11, and H12. The H10 readout is the root check.
     """
     patch_qubits = resolve_patch_qubits(
         patch_qubits,
@@ -318,7 +323,7 @@ def append_14_site_patch_y_projection_round(
     )
     first_projection_position = circuit.num_measurements
 
-    for helper_site in PATCH_14_SITE_HELPER_SITES:
+    for helper_site in PATCH_14_SITE_HELPER_SITES[1:]:
         reset_to_plus(circuit, patch_qubits[helper_site])
     if add_ticks:
         circuit.append("TICK", [])
@@ -333,15 +338,13 @@ def append_14_site_patch_y_projection_round(
     if add_ticks:
         circuit.append("TICK", [])
 
-    if not running_kt:
-        reset_to_plus(circuit, patch_qubits[PATCH_14_SITE_FOLDED_MEASUREMENT_SITE])
-        if add_ticks:
-            circuit.append("TICK", [])
+    reset_to_plus(circuit, patch_qubits[PATCH_14_SITE_FOLDED_MEASUREMENT_SITE])
+    if add_ticks:
+        circuit.append("TICK", [])
 
     append_14_site_patch_unfold_network(circuit, patch_qubits, add_ticks=add_ticks)
 
-    # Reads every helper, including H10, as an X-basis flag.
-    for helper_site in PATCH_14_SITE_HELPER_SITES:
+    for helper_site in PATCH_14_SITE_HELPER_SITES[1:]:
         measure_in_x_basis(circuit, patch_qubits[helper_site])
     if add_ticks:
         circuit.append("TICK", [])
@@ -357,11 +360,20 @@ def append_14_site_patch_y_projection_round(
     # record. Reading it at the top and again here brackets exactly the
     # measurements this call contributed, in append order.
     measurement_positions = tuple(range(first_projection_position, circuit.num_measurements))
-    folded_root, *flag_positions = measurement_positions
+    folded_root = measurement_positions[0]
+    root_check = measurement_positions[PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX]
+    flag_positions = (
+        measurement_positions[1:PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX]
+        + measurement_positions[PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX + 1 :]
+    )
     if not running_kt:
         circuit_stim.append_detector(circuit, measurement_positions=(folded_root,))
     for position in flag_positions:
         circuit_stim.append_detector(circuit, measurement_positions=(position,))
+    circuit_stim.append_detector(
+        circuit,
+        measurement_positions=(folded_root, root_check),
+    )
     return measurement_positions
 
 
@@ -448,8 +460,9 @@ def append_14_site_patch_injection_and_cultivation(
     ``measure_encoder_flags`` is true, the record order starts with the
     selected encoder's flags (five for abstract-routed, six for Hirano),
     then seven QED outcomes (six stabilizers plus the terminal D2' flag),
-    then seven outcomes per cultivation round
-    (the folded root plus its six helper flags). Set ``cultivation_rounds=0``
+    then six outcomes per cultivation round (the folded H10 root followed by
+    helper readouts H8-H12, with H10 serving as the root check). Set
+    ``cultivation_rounds=0``
     to stop after injection and optional QED. Every measured encoder-flag,
     QED, and cultivation outcome -- including every helper flag -- is
     annotated as a postselection detector.
@@ -575,9 +588,9 @@ def build_14_site_patch_injection_and_cultivation_circuit(
 
     Measurement-record layout: the selected encoder's flag entries, then (if
     ``add_qed_round``) seven Steane QED entries (six stabilizers plus the
-    terminal D2' flag), then seven entries per
-    cultivation round (the folded root plus its six helper flags). Every
-    entry is emitted as a postselection detector.
+    terminal D2' flag), then six entries per cultivation round (the folded H10
+    root followed by helper readouts H8-H12, with H10 serving as the root
+    check). Every entry is emitted as a postselection detector.
 
     Returns
     -------
@@ -593,7 +606,7 @@ def build_14_site_patch_injection_and_cultivation_circuit(
     # Measurement-record layout:
     # - selected encoder's flag entries;
     # - 7 post-injection Steane QED entries, when enabled;
-    # - 7 entries for each cultivation round.
+    # - 6 entries for each cultivation round.
     append_14_site_patch_injection_and_cultivation(
         circuit,
         patch_qubits=DEFAULT_STIM_14_SITE_PATCH_QUBITS,

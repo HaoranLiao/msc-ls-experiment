@@ -109,12 +109,8 @@ def build_kickback_tomography_experiment(
     Bell-partner flags.
 
     When ``no_reset`` is true, a final transpiler pass removes every reset for
-    hardware without reset support. For the 11-site patch, postprocessing uses
-    a measurement frame to compare the repeated site-7 check with its root.
-    This capability switch does not control the 14-site KT root: that root is
-    always preserved, even when ``no_reset`` is false, because both outcomes
-    are tomography data. Setting false merely leaves other protocol resets in
-    place.
+    hardware without reset support. Postprocessing uses a measurement frame to
+    compare each repeated helper-root check with its folded-root result.
     """
     spec = resolve_kickback_tomography_patch_spec(patch_sites)
     cultivated_state = normalize_kickback_tomography_state(cultivated_state)
@@ -207,8 +203,6 @@ def build_kickback_tomography_experiment(
 
     if include_prep_cultivation:
         assert prep_creg is not None
-        # running_kt=False: its folded-root result must be postselected to 0
-        # for preparation projection.
         _append_patch_projection_round(
             circuit,
             spec,
@@ -216,7 +210,6 @@ def build_kickback_tomography_experiment(
             bits=list(prep_creg),
             cultivated_state=cultivated_state,
             add_barriers=add_barriers,
-            running_kt=False,
         )
 
     if 2 in qed_cregs:
@@ -229,7 +222,6 @@ def build_kickback_tomography_experiment(
         bits=list(kt_measure_creg),
         cultivated_state=cultivated_state,
         add_barriers=add_barriers,
-        running_kt=True,
     )
 
     if 3 in qed_cregs:
@@ -242,7 +234,6 @@ def build_kickback_tomography_experiment(
         bits=list(kt_check_creg),
         cultivated_state=cultivated_state,
         add_barriers=add_barriers,
-        running_kt=True,
     )
 
     if 4 in qed_cregs:
@@ -269,7 +260,7 @@ def build_kickback_tomography_experiment(
         cultivation_round_bits_from_positions(
             tuple(circuit.find_bit(bit).index for bit in prep_creg),
             root_check_index=spec.cultivation_root_check_index,
-            reset_before_root_check=spec.patch_sites == 11 and not no_reset,
+            reset_before_root_check=not no_reset,
         )
         if prep_creg is not None
         else None
@@ -284,12 +275,12 @@ def build_kickback_tomography_experiment(
         tomography_measure_round=cultivation_round_bits_from_positions(
             tuple(circuit.find_bit(bit).index for bit in kt_measure_creg),
             root_check_index=spec.cultivation_root_check_index,
-            reset_before_root_check=spec.patch_sites == 11 and not no_reset,
+            reset_before_root_check=not no_reset,
         ),
         tomography_check_round=cultivation_round_bits_from_positions(
             tuple(circuit.find_bit(bit).index for bit in kt_check_creg),
             root_check_index=spec.cultivation_root_check_index,
-            reset_before_root_check=spec.patch_sites == 11 and not no_reset,
+            reset_before_root_check=not no_reset,
         ),
         qed_cycles=qed_positions,
         qed_cycle_indices=qed_indices,
@@ -417,7 +408,6 @@ def _append_patch_projection_round(
     bits: list,
     cultivated_state: CultivatedStateName,
     add_barriers: bool,
-    running_kt: bool,
 ) -> None:
     """Append one cultivation-derived magic-state-axis measurement on the patch."""
     if spec.patch_sites == 11:
@@ -435,7 +425,6 @@ def _append_patch_projection_round(
             bits=bits,
             cultivated_state=cultivated_state,
             add_barriers=add_barriers,
-            running_kt=running_kt,
         )
     else:
         raise ValueError(f"Unsupported KT patch_sites: {spec.patch_sites}.")
@@ -446,7 +435,7 @@ def _append_patch_projection_round(
 # =============================================================================
 
 
-_KT_FOLDED_MEASUREMENT_QUBIT = "folded_measurement_site_7"
+_KT_FOLDED_MEASUREMENT_QUBIT = "folded_measurement_site"
 
 
 def _interpret_cultivation_round(
@@ -455,10 +444,9 @@ def _interpret_cultivation_round(
 ) -> tuple[int, int | None]:
     """Return one round's root and its optional measurement-frame-corrected check.
 
-    The 14-site round has no root check. For 11 sites, a reset makes the raw
-    repeated site-7 result report the root; without reset, ``MeasurementFrame``
-    converts its raw result to the same semantic value. Each round starts a
-    fresh frame.
+    A reset makes the raw repeated helper-root result report the root; without
+    reset, ``MeasurementFrame`` converts its raw result to the same semantic
+    value. Each round starts a fresh frame.
     """
     measurement_frame = MeasurementFrame()
     root = measurement_frame.advance(
@@ -485,11 +473,10 @@ def analyze_kickback_tomography_counts(
 ) -> KickbackTomographySummary:
     """Analyze Qiskit counts by postselecting and classifying the two KT logical readouts.
 
-    Fixed-zero detector bits reject first. For the 11-site patch, each folded
-    root must also agree with its measurement-frame-corrected site-7 check;
-    the 14-site patch has no root check. Shots whose two roots disagree are
-    retained by default and reported separately. Agreement at zero is a
-    logical success; agreement at one is a logical error.
+    Fixed-zero detector bits reject first. Each folded root must also agree
+    with its measurement-frame-corrected helper-root check. Shots whose two
+    roots disagree are retained by default and reported separately. Agreement
+    at zero is a logical success; agreement at one is a logical error.
     """
 
     total_shots = sum(counts.values())
@@ -504,9 +491,7 @@ def analyze_kickback_tomography_counts(
         if any(qiskit_bit_value(bitstring, position) for position in layout.detector_positions):
             continue
 
-        # The 11-site repeated-root checks have different raw behavior when
-        # resets are removed, so compare their semantic frame values. The
-        # 14-site round has no repeated-root measurement.
+        # Reset-free repeated-root checks require semantic frame comparison.
         measurement_root, measurement_root_check = _interpret_cultivation_round(
             bitstring,
             layout.tomography_measure_round,

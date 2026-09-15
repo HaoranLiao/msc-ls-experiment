@@ -17,6 +17,9 @@ from msc.decoding.pauli_frame import PauliFrame
 from msc.decoding.stabilizer_frame import StabilizerFrame
 from msc.rotated_surface_code import common as surface_common
 from msc.rotated_surface_code.decoding.decoder import SpaceTimeRotatedDecoder
+from msc.steane_code.magic_state_cultivation_common import (
+    PATCH_14_SITE_FOLDED_MEASUREMENT_SITE,
+)
 from msc.steane_code.state_injection_common import (
     NUM_QUBITS_PATCH_11_SITES,
     NUM_QUBITS_PATCH_14_SITES,
@@ -233,7 +236,12 @@ def resolve_steane_transfer_patch_spec(
             ),
             cultivation_labels=(
                 "root_x",
-                *(f"cult_f{site}" for site in PATCH_14_SITE_HELPER_SITES),
+                *(
+                    "root_x_check"
+                    if site == PATCH_14_SITE_FOLDED_MEASUREMENT_SITE
+                    else f"cult_f{site}"
+                    for site in PATCH_14_SITE_HELPER_SITES[1:]
+                ),
             ),
             merge_verification_stabilizer_indices=(
                 STEANE_14_SITE_MERGE_VERIFICATION_STABILIZER_INDICES

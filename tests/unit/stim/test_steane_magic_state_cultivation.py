@@ -544,9 +544,9 @@ class TestCultivationFaultTolerance:
             analyzer=analyzer,
         )
 
-        assert result.total_single_fault_cases == 1441
-        assert result.benign_faults == 60
-        assert result.rejected_faults == 1381
+        assert result.total_single_fault_cases == 1410
+        assert result.benign_faults == 59
+        assert result.rejected_faults == 1351
         assert result.correctly_decoded_faults == 0
         assert result.malignant_faults == 0
         assert result.graphlike_distance == 3

@@ -205,8 +205,14 @@ class TestKickbackTomographyCountsAnalysis:
     """Counts analysis separates detector rejection and KT root outcomes."""
 
     @pytest.mark.parametrize(
-        ("patch_sites", "encoder_flag_count", "round_bit_count", "round_flag_count"),
-        [(11, 4, 5, 3), (14, 5, 7, 6)],
+        (
+            "patch_sites",
+            "encoder_flag_count",
+            "round_bit_count",
+            "round_flag_count",
+            "root_check_index",
+        ),
+        [(11, 4, 5, 3, 4), (14, 5, 6, 4, 3)],
     )
     def test_bitstring_layout_partitions_every_output(
         self,
@@ -214,6 +220,7 @@ class TestKickbackTomographyCountsAnalysis:
         encoder_flag_count: int,
         round_bit_count: int,
         round_flag_count: int,
+        root_check_index: int,
     ) -> None:
         experiment = build_kickback_tomography_experiment(
             "T",
@@ -254,12 +261,10 @@ class TestKickbackTomographyCountsAnalysis:
         assert len(layout.tomography_measure_round.all_positions) == round_bit_count
         assert len(layout.tomography_check_round.all_positions) == round_bit_count
         assert len(layout.tomography_measure_round.flag_positions) == round_flag_count
-        if patch_sites == 14:
-            assert layout.tomography_measure_round.folded_root_check is None
-            assert (
-                layout.tomography_measure_round.all_positions[4]
-                == layout.tomography_measure_round.flag_positions[3]
-            )
+        assert (
+            layout.tomography_measure_round.all_positions[root_check_index]
+            == layout.tomography_measure_round.folded_root_check
+        )
         assert layout.qed_cycle_indices == KT_FULL_QED_CYCLE_INDICES
         qed_measurement_count = (
             PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND
@@ -285,8 +290,8 @@ class TestKickbackTomographyCountsAnalysis:
 
         - Rejects any shot with a nonzero detector bit (encoder flags, prep,
           QED syndromes, KT flags, final stabilizer).
-        - (11-site only) Rejects shots where a folded root disagrees with its
-          repeated site-7 root-check bit. The 14-site patch has no root check.
+        - Rejects shots where a folded root disagrees with its repeated
+          helper-root check.
         - Of the survivors: if the two roots disagree, it's a measure/check
           disagreement (retained-but-diagnostic by default, or rejected if
           ``retain_measure_check_disagreement=False``); if they agree at 0 →

@@ -85,9 +85,9 @@ def build_kickback_tomography_experiment(
     abstract-routed encoder. When ``measure_encoder_flags`` is true, their
     available flags are measured after encoding and postselected to zero.
 
-    Both 14-site KT rounds preserve the measured D0 branch instead of resetting
-    it: ``-1`` is a logical outcome being estimated, and resetting it would
-    make H10 fire and remove those shots from the estimate.
+    Both patches reset and remeasure their helper root after unfolding. The
+    repeated-root detector accepts either logical branch when the two results
+    agree.
 
     ``qed_cycle_indices`` uses the paper's one-based numbering and defaults to
     ``(1, 3)``. An empty tuple omits the QED cycles. The final stabilizer basis
@@ -137,7 +137,7 @@ def build_kickback_tomography_experiment(
         bits = cultivation_round_bits_from_positions(
             positions,
             root_check_index=spec.cultivation_root_check_index,
-            reset_before_root_check=spec.patch_sites == 11,
+            reset_before_root_check=True,
         )
         record_count += spec.cultivation_measurement_count
         return bits
@@ -314,10 +314,10 @@ def analyze_kickback_tomography_shots(
 
     ``shots`` is a boolean array of shape ``(num_shots, num_measurements)`` from
     ``circuit.compile_sampler().sample(...)``. Fixed-zero detector columns
-    reject first. The 11-site roots must also agree with their repeated site-7
-    checks; the 14-site round has no root check. Inter-round root disagreements
-    are retained by default and reported separately; agreeing roots classify
-    logical success (zero) or logical error (one).
+    reject first. Each folded root must agree with its repeated helper-root
+    check. Inter-round root disagreements are retained by default and reported
+    separately; agreeing roots classify logical success (zero) or logical
+    error (one).
     """
     shots = np.asarray(shots, dtype=bool)
     if shots.ndim != 2:
@@ -340,8 +340,7 @@ def analyze_kickback_tomography_shots(
     if layout.detector_positions:
         retained &= ~shots[:, layout.detector_positions].any(axis=1)
 
-    # The 11-site repeated-root check must match its round's logical root. All
-    # six 14-site helper measurements are fixed-zero flags handled above.
+    # Each repeated helper-root check must match its round's logical root.
     measurement_root = shots[:, measurement_round.folded_root]
     check_root = shots[:, check_round.folded_root]
     if measurement_round.folded_root_check is not None:

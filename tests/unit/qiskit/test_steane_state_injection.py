@@ -1074,3 +1074,68 @@ def test_14_site_hirano_encoder_rejects_non_y_states(
             patch_qubits=list(range(NUM_QUBITS_PATCH_14_SITES)),
             injected_state=state,
         )
+
+
+def test_14_site_encoder_two_qubit_depths() -> None:
+    """The Hirano and abstract-routed encoders retain their optimized CX depths."""
+    hirano = QuantumCircuit(NUM_QUBITS_PATCH_14_SITES)
+    append_14_site_patch_hirano_encoder(
+        hirano,
+        patch_qubits=list(range(NUM_QUBITS_PATCH_14_SITES)),
+        injected_state="S",
+        add_barriers=False,
+    )
+    abstract_routed = QuantumCircuit(NUM_QUBITS_PATCH_14_SITES)
+    append_14_site_patch_abstract_routed_encoder(
+        abstract_routed,
+        patch_qubits=list(range(NUM_QUBITS_PATCH_14_SITES)),
+        injected_state="S",
+        add_barriers=False,
+    )
+
+    assert two_qubit_depth(hirano) == 11
+    assert two_qubit_depth(abstract_routed) == 14
+    assert hirano.count_ops()["cx"] == 25
+    assert abstract_routed.count_ops()["cx"] == 33
+
+
+# ----------------------------------------------------
+# Superdense stabilizer measurement for 14-site patch
+# ----------------------------------------------------
+
+
+def test_14_site_superdense_qed_matches_hirano_cx_depth_with_two_fewer_gates() -> None:
+    """Both QED circuits have CX depth eight after collapsing disjoint gates."""
+    hirano_qed = QuantumCircuit(15)
+    # Remapped into our site labels from Hirano's
+    # ``xz_syndrome_extraction_after_injection_generator`` in
+    # ``references/hirano_code/src/steane_code.py``.
+    hirano_qed_cx_layers = (
+        ((14, 1), (7, 8), (11, 12), (9, 10), (13, 2)),
+        ((8, 5), (1, 14), (11, 3), (12, 2), (9, 6), (10, 0)),
+        ((8, 1), (11, 0), (9, 4), (2, 13)),
+        ((7, 4), (8, 0), (11, 5), (10, 13)),
+        ((4, 7), (0, 8), (5, 11), (13, 10)),
+        ((5, 8), (0, 11), (6, 9), (13, 2)),
+        ((1, 8), (3, 11), (2, 12), (4, 9), (0, 10)),
+        ((7, 8), (11, 12), (9, 10), (2, 13)),
+    )
+    for layer in hirano_qed_cx_layers:
+        for control, target in layer:
+            hirano_qed.cx(control, target)
+
+    fixed_patch_qed = QuantumCircuit(NUM_QUBITS_PATCH_14_SITES, 7)
+    append_14_site_patch_superdense_stabilizer_measurement(
+        fixed_patch_qed,
+        patch_qubits=list(range(NUM_QUBITS_PATCH_14_SITES)),
+        stabilizer_bits=list(range(6)),
+        d2_copy_flag_bit=6,
+        add_barriers=False,
+    )
+
+    assert two_qubit_depth(hirano_qed) == 8
+    assert two_qubit_depth(fixed_patch_qed) == 8
+    assert hirano_qed.count_ops()["cx"] == 36
+    # The fixed-patch encoder already places D1 at its final site, saving the
+    # two CXs that Hirano's QED uses to relocate D1 from its injection-stage site.
+    assert fixed_patch_qed.count_ops()["cx"] == 34

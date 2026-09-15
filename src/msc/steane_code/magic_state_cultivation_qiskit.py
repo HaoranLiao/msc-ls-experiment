@@ -190,7 +190,7 @@ def append_14_site_patch_fold_network(
     *,
     add_barriers: bool = True,
 ) -> None:
-    """Append the forward 6-3-2-1 fold network for the 14-site patch."""
+    """Append the forward 4-4-2-1 H10-root fold network."""
     for layer_index, layer in enumerate(PATCH_14_SITE_FOLD_LAYERS, start=1):
         append_cnot_layer_from_site_labels(circuit, patch_qubits, layer)
         if add_barriers:
@@ -354,31 +354,23 @@ def append_14_site_patch_magic_state_projection_round(
     bits: Sequence,
     cultivated_state: CultivatedStateName,
     add_barriers: bool = True,
-    running_kt: bool = False,
 ) -> None:
     """Append one logical magic-state projection round on the 14-site patch.
 
-    The round prepares H7-H12 in ``|+>``, rotates H_XY or H_XZ onto logical X,
-    folds onto D0, measures D0 in X, unfolds, measures H7-H12 in X, then undoes
-    the basis rotation. The seven output bits are the D0 result followed by the
-    H7-H12 flags, which are expected to be zero.
+    The round prepares H8-H12 in ``|+>``, rotates H_XY or H_XZ onto logical X,
+    folds onto H10, measures and resets H10, unfolds, measures H8-H12 in X,
+    then undoes the basis rotation. The six output bits are the folded H10 root
+    followed by H8, H9, H10, H11, and H12. The second H10 result is a root
+    check; the other four helper results are fixed-zero checks. H7 is unused.
 
-    Cultivation uses the default root reset and postselects the D0 result to
-    zero. Although redundant in an ideal accepted shot, the reset exposes a
-    reported-zero/physical-``|->`` mismatch through H10; omitting it lowers the
-    corresponding Stim graphlike distance from three to two. KT preserves D0
-    because both root results are data, and resetting root one would fire H10
-    and reject that outcome. Set ``running_kt=False`` for cultivation and
-    ``True`` for KT.
+    Cultivation postselects the folded root to zero. KT retains either root
+    branch and requires the repeated H10 result to agree with it.
 
     Parameters
     ----------
     cultivated_state
         ``"T"`` projects onto the +1 eigenspace of H_XY; ``"Ty"`` projects
         onto the +1 eigenspace of H_XZ.
-    running_kt
-        Set to ``False`` for cultivation, which resets D0 to ``|+>``; set to
-        ``True`` for KT, which restores the measured D0 branch.
     """
     patch_qubits = resolve_patch_qubits(
         patch_qubits,
@@ -390,7 +382,7 @@ def append_14_site_patch_magic_state_projection_round(
         )
     bits = list(bits)
 
-    for helper_site in PATCH_14_SITE_HELPER_SITES:
+    for helper_site in PATCH_14_SITE_HELPER_SITES[1:]:
         reset_to_plus(circuit, patch_qubits[helper_site])
     if add_barriers:
         circuit.barrier(label="prepare helpers")
@@ -418,10 +410,7 @@ def append_14_site_patch_magic_state_projection_round(
     if add_barriers:
         circuit.barrier(label="measure folded observable")
 
-    if running_kt:
-        circuit.h(patch_qubits[PATCH_14_SITE_FOLDED_MEASUREMENT_SITE])
-    else:
-        reset_to_plus(circuit, patch_qubits[PATCH_14_SITE_FOLDED_MEASUREMENT_SITE])
+    reset_to_plus(circuit, patch_qubits[PATCH_14_SITE_FOLDED_MEASUREMENT_SITE])
     if add_barriers:
         circuit.barrier(label="restore folded site")
 
@@ -430,8 +419,7 @@ def append_14_site_patch_magic_state_projection_round(
         patch_qubits,
         add_barriers=add_barriers,
     )
-    # Reads every helper, including H10, as an X-basis flag.
-    for bit_index, helper_site in enumerate(PATCH_14_SITE_HELPER_SITES, start=1):
+    for bit_index, helper_site in enumerate(PATCH_14_SITE_HELPER_SITES[1:], start=1):
         measure_in_x_basis(circuit, patch_qubits[helper_site], bits[bit_index])
     if add_barriers:
         circuit.barrier(label="measure helpers")
@@ -588,7 +576,9 @@ def append_14_site_patch_injection_and_cultivation(
         raise ValueError("cultivation_rounds must be non-negative.")
     if len(cultivation_bits) != cultivation_rounds:
         raise ValueError(
-            "cultivation_bits must contain exactly one 7-bit " "sequence per cultivation round."
+            "cultivation_bits must contain exactly one "
+            f"{PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND}-bit sequence per "
+            "cultivation round."
         )
     if add_qed_round and (
         qed_bits is None or len(qed_bits) != PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND

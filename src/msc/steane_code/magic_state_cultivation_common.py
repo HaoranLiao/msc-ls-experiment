@@ -67,11 +67,16 @@ CultivatedStateName = Literal["T", "Ty"]
 # Step 6:
 #     CX 7 -> 4
 #
-# The folded observable is then measured on site 7 in the X basis.
+# The folded observable is then measured on site 7 in the X basis. After the
+# folded root, ``PATCH_11_SITE_HELPER_SITES`` is measured in its established
+# order; site 7's second measurement is the root check.
 #
 # The unfold is the exact inverse of the above CNOT schedule.
 
 PATCH_11_SITE_FOLDED_MEASUREMENT_SITE: int = 7
+PATCH_11_SITE_CULTIVATION_ROOT_CHECK_INDEX: int = 1 + PATCH_11_SITE_HELPER_SITES.index(
+    PATCH_11_SITE_FOLDED_MEASUREMENT_SITE
+)
 PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND: int = 1 + len(PATCH_11_SITE_HELPER_SITES)
 STEANE_QED_MEASUREMENTS_PER_ROUND: int = len(
     post_injection_qed_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES)
@@ -99,37 +104,41 @@ PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND: int = STEANE_QED_MEASUREMENTS_PER_ROUN
 #    y=4                  H8            H11
 #    y=5           D1            D5            D3
 #
-# The fold is a 6-3-2-1 CNOT schedule:
+# The fold is a 4-4-2-1 CNOT schedule:
 #
 # Layer 1:
 #     CX 9 -> 6
-#     CX 10 -> 0
 #     CX 12 -> 2
-#     CX 11 -> 3
-#     CX 7 -> 4
 #     CX 8 -> 1
+#     CX 11 -> 3
 #
 # Layer 2:
-#     CX 4 -> 9
-#     CX 11 -> 12
+#     CX 10 -> 12
+#     CX 9 -> 4
 #     CX 0 -> 8
-#
-# Layer 3:
-#     CX 0 -> 4
 #     CX 11 -> 5
 #
-# Layer 4:
+# Layer 3:
+#     CX 10 -> 9
 #     CX 0 -> 11
+#
+# Layer 4:
+#     CX 10 -> 0
 #
 # The unfold is the exact inverse of the above CNOT schedule.
 #
 # The site layout, data/helper sites, and encoder schedule live in
 # state_injection_common.py (``PATCH_14_SITE_COORDS`` and neighbours).
-# Cultivation folds the seven data sites onto root data site 0 (see
-# ``PATCH_14_SITE_FOLD_LAYERS`` below) and reads out the six helper sites
-# (7-12) in the X basis as flags. Site 13 (D2') is untouched by cultivation.
-PATCH_14_SITE_FOLDED_MEASUREMENT_SITE: int = 0
-PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND: int = 1 + len(PATCH_14_SITE_HELPER_SITES)
+# Cultivation folds the seven data sites onto helper root H10 (site 10), resets
+# and remeasures H10 after unfolding, and reads H8, H9, H11, and H12 as four
+# fixed-zero helper checks. H7 and site 13 (D2') are untouched by cultivation.
+# After the folded root, the H8-H12 suffix of ``PATCH_14_SITE_HELPER_SITES`` is
+# measured in its established order; H10's second measurement is the root check.
+PATCH_14_SITE_FOLDED_MEASUREMENT_SITE: int = 10
+PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX: int = 1 + PATCH_14_SITE_HELPER_SITES[1:].index(
+    PATCH_14_SITE_FOLDED_MEASUREMENT_SITE
+)
+PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND: int = 1 + len(PATCH_14_SITE_HELPER_SITES[1:])
 
 
 # =============================================================================
@@ -161,34 +170,31 @@ PATCH_11_SITE_FOLD_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
     ((7, 4),),
 )
 
-# 14-site patch fold network ported from Hirano's ``check_generator`` in
-# references/hirano_code/src/steane_code.py.  The six helper ancillas
-# (7, 8, 9, 10, 11, 12) fold the seven data sites (0-6) onto root data site 0
-# in a 6-3-2-1 CNOT schedule; site 13 (D2') is untouched by cultivation. Every
-# ``(control_site, target_site)`` pair is a diagonally local CX.
+# Four-layer 14-site fold network rooted at helper H10 (site 10). The network
+# folds all seven data sites (0-6) without using H7; site 13 (D2') is untouched.
+# Every ``(control_site, target_site)`` pair is a diagonally local CX.
 PATCH_14_SITE_FOLD_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
-    # Layer 1: six CNOTs, each ancilla onto its neighboring data site.
+    # Layer 1: four CNOTs.
     (
         (9, 6),
-        (10, 0),
         (12, 2),
-        (11, 3),
-        (7, 4),
         (8, 1),
+        (11, 3),
     ),
-    # Layer 2: three CNOTs.
+    # Layer 2: four CNOTs.
     (
-        (4, 9),
-        (11, 12),
+        (10, 12),
+        (9, 4),
         (0, 8),
+        (11, 5),
     ),
     # Layer 3: two CNOTs.
     (
-        (0, 4),
-        (11, 5),
+        (10, 9),
+        (0, 11),
     ),
     # Layer 4: one CNOT onto the root.
-    ((0, 11),),
+    ((10, 0),),
 )
 
 

@@ -622,13 +622,14 @@ def test_d5_qiskit_measurements_match_stim_acceptance_detector_accounting() -> N
         +=======+=====+=====+======+=============+================+================+
         | 11    | 4   | 6   | 5    | 4           | 0              | 4 off / 8 on   |
         +-------+-----+-----+------+-------------+----------------+----------------+
-        | 14    | 5   | 7   | 7    | 6           | 6              | 12 off / 18 on |
+        | 14    | 5   | 7   | 6    | 4           | 6              | 12 off / 16 on |
         +-------+-----+-----+------+-------------+----------------+----------------+
 
     ``Enc``, ``QED``, and ``Cult`` each map one Qiskit bit to one Stim
     detector. Strict flags count encoder flags, the 14-site QED D2-copy flag,
-    cultivation helper flags, and transfer Bell-partner/D2-copy flags; they do
-    not count QED stabilizers or the cultivation root projection.
+    cultivation fixed-zero helper flags, and transfer Bell-partner/D2-copy
+    flags; they do not count QED stabilizers, the cultivation root projection,
+    or its relational repeated-root check.
 
     Shared d=5 phase accounting::
 
@@ -662,15 +663,15 @@ def test_d5_qiskit_measurements_match_stim_acceptance_detector_accounting() -> N
         +-----------------------------------------+--------+-------+--------+-------+
         | Quantity                                | 11/off | 11/on | 14/off | 14/on |
         +=========================================+========+=======+========+=======+
-        | Physical known-zero flag bits           | 4      | 8     | 12     | 18    |
+        | Physical known-zero flag bits           | 4      | 8     | 12     | 16    |
         +-----------------------------------------+--------+-------+--------+-------+
-        | Always-postselected protocol detectors | 27     | 32    | 35     | 42    |
+        | Always-postselected protocol detectors | 27     | 32    | 35     | 41    |
         +-----------------------------------------+--------+-------+--------+-------+
-        | Correction postselected detectors      | 45     | 50    | 53     | 60    |
+        | Correction postselected detectors      | 45     | 50    | 53     | 59    |
         +-----------------------------------------+--------+-------+--------+-------+
         | Correction decoded surface detectors   | 191    | 191   | 191    | 191   |
         +-----------------------------------------+--------+-------+--------+-------+
-        | Full-postselection rejected detectors  | 140    | 145   | 148    | 155   |
+        | Full-postselection rejected detectors  | 140    | 145   | 148    | 154   |
         +-----------------------------------------+--------+-------+--------+-------+
 
     Aggregate circuit sizes::
@@ -678,13 +679,13 @@ def test_d5_qiskit_measurements_match_stim_acceptance_detector_accounting() -> N
         +---------------------------------------+--------+-------+--------+-------+
         | Quantity                              | 11/off | 11/on | 14/off | 14/on |
         +=======================================+========+=======+========+=======+
-        | Correction raw measurement bits       | 270    | 275   | 278    | 285   |
+        | Correction raw measurement bits       | 270    | 275   | 278    | 284   |
         +---------------------------------------+--------+-------+--------+-------+
-        | Correction total Stim detectors       | 236    | 241   | 244    | 251   |
+        | Correction total Stim detectors       | 236    | 241   | 244    | 250   |
         +---------------------------------------+--------+-------+--------+-------+
-        | Full-postselection raw measurement bits| 174    | 179   | 182    | 189   |
+        | Full-postselection raw measurement bits| 174    | 179   | 182    | 188   |
         +---------------------------------------+--------+-------+--------+-------+
-        | Full-postselection total Stim detectors| 140    | 145   | 148    | 155   |
+        | Full-postselection total Stim detectors| 140    | 145   | 148    | 154   |
         +---------------------------------------+--------+-------+--------+-------+
 
     The correction branch postselects the protocol detectors plus the 18
@@ -726,8 +727,8 @@ def test_d5_qiskit_measurements_match_stim_acceptance_detector_accounting() -> N
         14: {
             "encoder": 5,
             "qed": 7,
-            "cultivation": 7,
-            "cultivation_helper_flags": 6,
+            "cultivation": 6,
+            "cultivation_helper_flags": 4,
             "transfer_flags": 6,
             "strict_flags_without_cultivation": 12,
             "transfer_bits_without_cultivation": 133,

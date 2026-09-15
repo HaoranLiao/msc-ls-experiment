@@ -92,10 +92,9 @@ def test_full_d5_ty_tomography_measurement_record_is_complete_and_semantic(
         ),
         "cult": (
             "root_x",
-            "cult_f7",
             "cult_f8",
             "cult_f9",
-            "cult_f10",
+            "root_x_check",
             "cult_f11",
             "cult_f12",
         ),
@@ -152,7 +151,7 @@ def test_full_d5_ty_tomography_measurement_record_is_complete_and_semantic(
     assert tuple(len(register) for register in circuit.cregs) == tuple(
         len(labels) for labels in expected_register_labels.values()
     )
-    assert circuit.num_clbits == 285
+    assert circuit.num_clbits == 284
     measured_bits = [
         instruction.clbits[0]
         for instruction in circuit.data
@@ -166,7 +165,7 @@ def test_full_d5_ty_tomography_measurement_record_is_complete_and_semantic(
     }
     register_bits["enc_flags"].update(enc_h8=1, enc_h10=1, enc_h11=1)
     register_bits["steane_qed"].update(X_0145=1, Z_0235=1, X_0246=1, D2_copy_flag=1)
-    register_bits["cult"].update(root_x=1, cult_f8=1, cult_f10=1, cult_f12=1)
+    register_bits["cult"].update(root_x=1, cult_f8=1, root_x_check=1, cult_f12=1)
     register_bits["surface_init_x"]["X_xy"] = 1
     register_bits["steane_verify"].update(
         round1_Z0145=1,
