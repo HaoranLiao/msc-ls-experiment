@@ -5,11 +5,12 @@ from collections import Counter
 import numpy as np
 import pytest
 
-from examples.state_transfer.stim_logical_error_rate import (
+from examples.state_transfer.lattice_surgery_only_ler.stim_logical_error_rate import (
     LATTICE_SURGERY_EXPERIMENTS,
     LatticeSurgeryOnlyShotAnalyzer,
     build_lattice_surgery_only_circuit,
 )
+from msc.noise.fault_tolerance_stim import assess_fully_postselected_circuit_fault_distance
 from msc.state_transfer import common
 from msc.state_transfer import helper_stim as helper
 from msc.state_transfer import to_d5_rotated_stim as transfer
@@ -317,26 +318,21 @@ def test_transferred_pauli_expectation_values(patch_sites: int) -> None:
 
 
 # =============================================================================
-# Detector policy and graphlike distance
+# Detector policy and physical fault distance
 # =============================================================================
 
 
 @pytest.mark.parametrize("experiment", LATTICE_SURGERY_EXPERIMENTS)
 @pytest.mark.parametrize("patch_sites", [11, 14])
-def test_postselected_color_interface_and_decoded_surface_graphlike_distance(
+def test_postselected_color_interface_detector_policy(
     experiment,
     patch_sites: int,
 ) -> None:
-    """Verify the selective detector mask and full-protocol distance three.
-
-    The distance is computed from the complete noisy circuit, from surface
-    initialization through all three merge rounds, five post-transfer rounds,
-    and destructive readout. Explicit DEM-range checks guard against silently
-    dropping either the merge or post-transfer phase before measuring distance.
+    """Verify the selective detector mask across the complete noisy circuit.
 
     Protocol checks and the persistent ``X_bcgh``/``X_fgkl`` streams reject;
     other surface detectors are decoded. The 14-site Bell-partner flags retain
-    distance three by exposing an otherwise-hidden two-fault X-readout path.
+    visibility of an otherwise-hidden X-readout path.
     """
     circuit, layout = build_lattice_surgery_only_circuit(
         1e-3,
@@ -450,23 +446,43 @@ def test_postselected_color_interface_and_decoded_surface_graphlike_distance(
         assert len(analyzer._postselection_detector_indices) == 41
         assert circuit.num_detectors - ideal_input_detector_count == 232
 
-    # Confirm that the one full DEM used below contains error mechanisms in
-    # both the merge and post-transfer/readout detector ranges.
-    dem_error_detector_indices = {
-        target.val
-        for instruction in circuit.detector_error_model(decompose_errors=True).flattened()
-        if instruction.type == "error"
-        for target in instruction.targets_copy()
-        if target.is_relative_detector_id()
-    }
-    assert dem_error_detector_indices & set(
-        range(merged_surface_detector_start, post_transfer_z_detector_start)
+
+@pytest.mark.parametrize("experiment", LATTICE_SURGERY_EXPERIMENTS)
+@pytest.mark.parametrize("patch_sites", [11, 14])
+def test_fully_postselected_lattice_surgery_has_fault_distance_three(
+    experiment,
+    patch_sites: int,
+) -> None:
+    """Certify physical fault distance three under full postselection.
+
+    The direct-parity audit applies only when every detector rejects. It does not
+    certify the decoded ``full_post_selection=False`` branch, which requires a
+    decoder-aware combination search; changing this flag alone would be insufficient.
+    """
+    circuit, _ = build_lattice_surgery_only_circuit(
+        1e-3,
+        experiment=experiment,
+        patch_sites=patch_sites,
+        full_post_selection=True,
     )
-    assert dem_error_detector_indices & set(
-        range(post_transfer_z_detector_start, circuit.num_detectors)
+    assessment = assess_fully_postselected_circuit_fault_distance(
+        experiment_name=f"{patch_sites}-site {experiment.name}",
+        circuit=circuit,
+        max_exhaustive_weight=2,
+        find_witness_weight=3,
     )
-    full_protocol_logical_error = circuit.shortest_graphlike_error(canonicalize_circuit_errors=True)
-    assert len(full_protocol_logical_error) == 3
+
+    assert not assessment.malignant_single_faults
+    assert assessment.malignant_pair_count == 0
+    assert assessment.first_malignant_pair is None
+    assert assessment.first_malignant_triple is not None
+    assert assessment.certified_distance == 3
+
+    witness = assessment.first_malignant_triple
+    assert witness.weight == 3
+    assert len({fault.location_key for fault in witness.faults}) == 3
+    assert witness.combined_detector_mask == 0
+    assert witness.combined_observable_mask == 1
 
 
 # =============================================================================

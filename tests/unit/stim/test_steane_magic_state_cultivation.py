@@ -21,10 +21,7 @@ import pytest
 import stim
 
 from msc.noise.fault_injection_stim import add_circuit_depolarizing_noise
-from msc.noise.fault_tolerance_stim import (
-    DetectorErrorModelShotAnalyzer,
-    assess_circuit_single_fault_tolerance,
-)
+from msc.noise.fault_tolerance_stim import assess_fully_postselected_circuit_fault_distance
 from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
@@ -449,108 +446,103 @@ class TestNoisyCultivationWithRounds:
 
 
 # =============================================================================
-# Test Set 4: Circuit-level single-fault tolerance
+# Test Set 4: Circuit-level physical fault distance
 # =============================================================================
 
 
 class TestCultivationFaultTolerance:
-    """Fault-tolerance is specialized per patch.
+    """Injection, QED, and cultivation have physical fault distance three.
 
     Only the 11-site patch has a ``skip_cx_1_4`` variant, so it keeps its own
-    parametrized cases; the 14-site patch gets one default-schedule case.
+    parametrized test; the 14-site patch has one default-schedule test.
     """
 
-    @pytest.mark.parametrize(
-        (
-            "skip_cx_1_4",
-            "expected_total_single_fault_cases",
-            "expected_benign_faults",
-            "expected_rejected_faults",
-        ),
-        (
-            (False, 1188, 60, 1128),
-            (True, 1158, 58, 1100),
-        ),
-    )
-    def test_11_site_all_single_faults_are_benign_or_rejected(
+    @pytest.mark.parametrize("skip_cx_1_4", [False, True])
+    def test_11_site_injection_qed_cultivation_has_fault_distance_three(
         self,
         skip_cx_1_4: bool,
-        expected_total_single_fault_cases: int,
-        expected_benign_faults: int,
-        expected_rejected_faults: int,
     ) -> None:
-        protocol_circuit = build_11_site_patch_injection_and_cultivation_circuit(
-            "S",
-            cultivation_rounds=1,
-            add_qed_round=True,
-            add_ticks=True,
-            skip_cx_1_4=skip_cx_1_4,
-        )
         circuit = add_circuit_depolarizing_noise(
-            protocol_circuit,
+            build_11_site_patch_injection_and_cultivation_circuit(
+                "S",
+                cultivation_rounds=1,
+                add_qed_round=True,
+                add_ticks=True,
+                skip_cx_1_4=skip_cx_1_4,
+            ),
             p=1e-3,
         )
-        append_11_site_patch_stabilizer_measurement(circuit, basis="BOTH", add_ticks=True)
+        append_11_site_patch_stabilizer_measurement(
+            circuit,
+            basis="BOTH",
+            add_ticks=True,
+        )
         append_11_site_patch_logical_measurement(
             circuit,
             "Y",
             destructive=True,
             observable_index=0,
         )
-        analyzer = DetectorErrorModelShotAnalyzer(
+        assessment = assess_fully_postselected_circuit_fault_distance(
+            experiment_name="steane_11_site_injection_qed_cultivation",
+            circuit=circuit,
+            max_exhaustive_weight=2,
+            find_witness_weight=3,
+        )
+
+        assert not assessment.malignant_single_faults
+        assert assessment.malignant_pair_count == 0
+        assert assessment.first_malignant_pair is None
+        assert assessment.first_malignant_triple is not None
+        assert assessment.certified_distance == 3
+
+        witness = assessment.first_malignant_triple
+        assert witness.weight == 3
+        assert len({fault.location_key for fault in witness.faults}) == 3
+        assert witness.combined_detector_mask == 0
+        assert witness.combined_observable_mask == 1
+
+    def test_14_site_injection_qed_cultivation_has_fault_distance_three(
+        self,
+    ) -> None:
+        circuit = add_circuit_depolarizing_noise(
+            build_14_site_patch_injection_and_cultivation_circuit(
+                "S",
+                encoder="abstract_routed",
+                cultivation_rounds=1,
+                add_qed_round=True,
+                add_ticks=True,
+            )
+        )
+        append_14_site_patch_superdense_stabilizer_measurement(
             circuit,
-            postselection_detector_indices=range(circuit.num_detectors),
-        )
-
-        result = assess_circuit_single_fault_tolerance(
-            experiment_name="steane_11_site_injection_and_cultivation",
-            analyzer=analyzer,
-        )
-
-        assert result.total_single_fault_cases == expected_total_single_fault_cases
-        assert result.benign_faults == expected_benign_faults
-        assert result.rejected_faults == expected_rejected_faults
-        assert result.correctly_decoded_faults == 0
-        assert result.malignant_faults == 0
-        assert result.graphlike_distance == 3
-        assert result.passes_single_fault_check
-
-    def test_14_site_all_single_faults_are_benign_or_rejected(self) -> None:
-        protocol_circuit = build_14_site_patch_injection_and_cultivation_circuit(
-            "S",
-            cultivation_rounds=1,
-            add_qed_round=True,
+            basis="BOTH",
             add_ticks=True,
         )
-        circuit = add_circuit_depolarizing_noise(
-            protocol_circuit,
-            p=1e-3,
-        )
-        append_14_site_patch_superdense_stabilizer_measurement(circuit, add_ticks=True)
         append_14_site_patch_logical_measurement(
             circuit,
             "Y",
-            support=PATCH_14_SITE_DEFAULT_LOGICAL_X,
             destructive=True,
             observable_index=0,
         )
-        analyzer = DetectorErrorModelShotAnalyzer(
-            circuit,
-            postselection_detector_indices=range(circuit.num_detectors),
+        assessment = assess_fully_postselected_circuit_fault_distance(
+            experiment_name="steane_14_site_injection_qed_cultivation",
+            circuit=circuit,
+            max_exhaustive_weight=2,
+            find_witness_weight=3,
         )
 
-        result = assess_circuit_single_fault_tolerance(
-            experiment_name="steane_14_site_injection_and_cultivation",
-            analyzer=analyzer,
-        )
+        assert not assessment.malignant_single_faults
+        assert assessment.malignant_pair_count == 0
+        assert assessment.first_malignant_pair is None
+        assert assessment.first_malignant_triple is not None
+        assert assessment.certified_distance == 3
 
-        assert result.total_single_fault_cases == 1410
-        assert result.benign_faults == 59
-        assert result.rejected_faults == 1351
-        assert result.correctly_decoded_faults == 0
-        assert result.malignant_faults == 0
-        assert result.graphlike_distance == 3
-        assert result.passes_single_fault_check
+        witness = assessment.first_malignant_triple
+        assert witness.weight == 3
+        assert len({fault.location_key for fault in witness.faults}) == 3
+        assert witness.combined_detector_mask == 0
+        assert witness.combined_observable_mask == 1
 
 
 # =============================================================================
@@ -562,9 +554,8 @@ class TestShotAndDetectorPostselectionAgree:
     """Shot-based and detector-based postselection must read the same bits.
 
     ``postselect_success_shots`` (used throughout this file) rejects on raw
-    ``compile_sampler`` bits; ``DetectorErrorModelShotAnalyzer`` (used by the
-    fault-tolerance test set) instead rejects on ``DETECTOR`` records via
-    ``compile_detector_sampler``. Every encoder-flag, QED, and
+    ``compile_sampler`` bits; detector-based postselection instead rejects on
+    ``DETECTOR`` records via ``compile_detector_sampler``. Every encoder-flag, QED, and
     cultivation-round bit -- including every cultivation flag -- has exactly
     one single-measurement ``DETECTOR`` wrapping it (see
     ``test_builder_annotates_every_postselection_measurement``), so on the

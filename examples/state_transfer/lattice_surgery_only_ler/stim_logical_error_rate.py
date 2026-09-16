@@ -21,17 +21,14 @@ from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
+import numpy as np
 import stim
 
 from msc.noise.fault_injection_stim import add_circuit_depolarizing_noise
 from msc.noise.fault_tolerance_stim import (
     DetectorErrorModelShotAnalyzer,
     LogicalErrorEstimate,
-    assess_circuit_single_fault_tolerance,
     sample_detector_logical_error_probability,
-)
-from msc.noise.fault_tolerance_stim import (
-    SingleFaultAssessmentResult as CircuitSingleFaultAssessmentResult,
 )
 from msc.state_transfer import common
 from msc.state_transfer import helper_stim as transfer_helper
@@ -355,51 +352,9 @@ class LatticeSurgeryOnlyShotAnalyzer(DetectorErrorModelShotAnalyzer):
         )
 
 
-@dataclass(frozen=True)
-class SingleFaultAssessmentResult(CircuitSingleFaultAssessmentResult):
-    """Single-fault classification together with its postselection policy."""
-
-    full_post_selection: bool
-
-
 # =============================================================================
-# Exact checks and Monte Carlo sampling
+# Monte Carlo sampling
 # =============================================================================
-
-
-def assess_lattice_surgery_single_fault_tolerance(
-    *,
-    experiment: LogicalErrorExperiment,
-    patch_sites: common.SteanePatchSites = 14,
-    full_post_selection: bool = False,
-    decoder_error_probability: float = 1e-3,
-) -> SingleFaultAssessmentResult:
-    """Classify every elementary fault and report graphlike distance.
-
-    Stim supplies exact detector/observable effects for each single fault;
-    PyMatching classifies accepted effects. ``decoder_error_probability`` only
-    gives those detector-model edges nonzero weights.
-    """
-    if not 0 < decoder_error_probability < 1:
-        raise ValueError("decoder_error_probability must be strictly between 0 and 1.")
-    circuit, layout = build_lattice_surgery_only_circuit(
-        decoder_error_probability,
-        experiment=experiment,
-        patch_sites=patch_sites,
-        full_post_selection=full_post_selection,
-    )
-    result = assess_circuit_single_fault_tolerance(
-        experiment_name=experiment.name,
-        analyzer=LatticeSurgeryOnlyShotAnalyzer(
-            circuit,
-            layout=layout,
-            full_post_selection=full_post_selection,
-        ),
-    )
-    return SingleFaultAssessmentResult(
-        **vars(result),
-        full_post_selection=full_post_selection,
-    )
 
 
 def estimate_lattice_surgery_logical_error_probability(

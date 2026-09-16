@@ -6,19 +6,27 @@ Call structure::
     ├── sample_detector_logical_error_probability(analyzer=analyzer, ...)
     │   ├── analyzer.postselect_and_decode_samples(sampled detector records)
     │   └── LogicalErrorEstimate
-    ├── analyzer.decode_complementary_gap_samples(...)
-    └── assess_circuit_single_fault_tolerance(..., analyzer=analyzer)
-        ├── count represented single-fault cases
-        └── SingleFaultAssessmentResult
+    └── analyzer.decode_complementary_gap_samples(...)
 
     fit_power_law(sequence[LogicalErrorEstimate])
     └── (coefficient, exponent)
+
+    enumerate_circuit_physical_fault_signatures(circuit)
+    └── CircuitPhysicalFaultInventory
+
+    assess_fully_postselected_circuit_fault_distance(circuit=circuit, ...)
+    ├── enumerate_circuit_physical_fault_signatures(circuit)
+    ├── exhaustive weight-1 and weight-2 search
+    ├── weight-3 witness search
+    └── PhysicalFaultDistanceAssessment
+
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections import Counter, defaultdict
+from collections.abc import Hashable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -455,148 +463,392 @@ def fit_power_law(estimates: Sequence[LogicalErrorEstimate]) -> tuple[float, flo
 
 
 # ---------------------------------------------------------------------------
-# Exhaustive single-fault assessment
+# Shared physical-fault-signature inventory
 # ---------------------------------------------------------------------------
 
 
-def assess_circuit_single_fault_tolerance(
-    *,
-    experiment_name: str,
-    analyzer: DetectorErrorModelShotAnalyzer,
-) -> SingleFaultAssessmentResult:
-    """Assess single-fault coverage and classify every represented fault case.
+def enumerate_circuit_physical_fault_signatures(
+    circuit: stim.Circuit,
+) -> CircuitPhysicalFaultInventory:
+    """Inventory physical Pauli faults by detector and observable signature.
 
-    The total case count makes the coverage auditable: it detects whether any
-    fault mechanism was omitted from the benign, rejected, correctly decoded,
-    and malignant classifications. Each active ``DEPOLARIZE1`` contributes
-    three cases per qubit, each ``DEPOLARIZE2`` contributes 15 per qubit pair,
-    and each noisy measurement contributes one result-flip case. This total is
-    not the number of faults sampled in one stochastic shot or the number of
-    logical errors. Faults absent from Stim's detector model are benign.
+    One pass counts every elementary alternative in the supported noise model.
+    Stim then maps each nonzero ``(detector, observable)`` effect back to its
+    physical location. Unsupported active noise fails explicitly.
+
+    Stim omits zero-effect faults. The inventory counts them as benign instead
+    of storing them because they cannot affect a combination's signature.
 
     Call structure::
 
-        assess_circuit_single_fault_tolerance(analyzer=analyzer, ...)
-        ├── scan circuit instructions to count all single-fault cases
+        enumerate_circuit_physical_fault_signatures(circuit)
+        ├── count elementary alternatives in supported noisy instructions
         ├── circuit.explain_detector_error_model_errors()
-        │   └── analyzer.postselect_and_decode_samples(each fault effect)
-        ├── validate exhaustive fault classification
-        ├── circuit.shortest_graphlike_error()
-        └── SingleFaultAssessmentResult
+        └── CircuitPhysicalFaultInventory
     """
-    circuit = analyzer._circuit
-
-    # Count every elementary fault represented by the supported noise channels.
-    # Repeat blocks are traversed without flattening the circuit.
-    total_single_fault_cases = 0
+    total_elementary_fault_cases = 0
+    total_physical_locations = 0
     pending_circuit_blocks = [(1, circuit)]
     while pending_circuit_blocks:
         repeat_multiplicity, circuit_block = pending_circuit_blocks.pop()
         for instruction in circuit_block:
             if isinstance(instruction, stim.CircuitRepeatBlock):
                 pending_circuit_blocks.append(
-                    (
-                        repeat_multiplicity * instruction.repeat_count,
-                        instruction.body_copy(),
-                    )
+                    (repeat_multiplicity * instruction.repeat_count, instruction.body_copy())
                 )
                 continue
-
-            targets = instruction.targets_copy()
+            gate = stim.gate_data(instruction.name)
+            if not gate.is_noisy_gate:
+                continue
             probabilities = instruction.gate_args_copy()
-            active_noise_channel = bool(probabilities) and probabilities[0] > 0
+            if not (probabilities and probabilities[0] > 0):
+                continue
+            targets = instruction.targets_copy()
             if instruction.name == "DEPOLARIZE1":
-                if active_noise_channel:
-                    total_single_fault_cases += repeat_multiplicity * 3 * len(targets)
+                total_elementary_fault_cases += repeat_multiplicity * 3 * len(targets)
+                total_physical_locations += repeat_multiplicity * len(targets)
             elif instruction.name == "DEPOLARIZE2":
                 if len(targets) % 2:
                     raise ValueError("DEPOLARIZE2 targets must form qubit pairs.")
-                if active_noise_channel:
-                    target_pair_count = len(targets) // 2
-                    total_single_fault_cases += repeat_multiplicity * 15 * target_pair_count
-            elif stim.gate_data(instruction.name).produces_measurements and active_noise_channel:
-                total_single_fault_cases += repeat_multiplicity * instruction.num_measurements
+                target_pair_count = len(targets) // 2
+                total_elementary_fault_cases += repeat_multiplicity * 15 * target_pair_count
+                total_physical_locations += repeat_multiplicity * target_pair_count
+            elif instruction.name in ("X_ERROR", "Y_ERROR", "Z_ERROR"):
+                total_elementary_fault_cases += repeat_multiplicity * len(targets)
+                total_physical_locations += repeat_multiplicity * len(targets)
+            elif gate.produces_measurements:
+                total_elementary_fault_cases += repeat_multiplicity * instruction.num_measurements
+                total_physical_locations += repeat_multiplicity * instruction.num_measurements
+            else:
+                raise NotImplementedError(
+                    f"Unsupported physical fault channel: {instruction.name}"
+                )
 
-    # Classify every fault with a nontrivial detector or observable effect.
-    explained_fault_cases = 0
-    rejected_faults = 0
-    correctly_decoded_faults = 0
-    malignant_fault_locations: list[str] = []
-
+    effectful_faults: list[PhysicalFaultCase] = []
     for explained_error in circuit.explain_detector_error_model_errors():
-        locations = explained_error.circuit_error_locations
-        if not locations:
-            continue
-        detection_events = np.zeros((1, circuit.num_detectors), dtype=bool)
-        observable_flips = np.zeros((1, circuit.num_observables), dtype=bool)
+        detector_mask = 0
+        observable_mask = 0
         for term in explained_error.dem_error_terms:
             target = term.dem_target
             if target.is_relative_detector_id():
-                detection_events[0, target.val] ^= True
+                detector_mask ^= 1 << target.val
             elif target.is_logical_observable_id():
-                observable_flips[0, target.val] ^= True
+                observable_mask ^= 1 << target.val
             elif not target.is_separator():
                 raise ValueError(f"unsupported detector-error-model target {target}.")
-        acceptance_mask, logical_error_mask = analyzer.postselect_and_decode_samples(
-            detection_events,
-            observable_flips,
-        )
-        location_count = len(locations)
-        explained_fault_cases += location_count
-        if not acceptance_mask[0]:
-            rejected_faults += location_count
-        elif logical_error_mask[0]:
-            malignant_fault_locations.extend(str(location) for location in locations)
-        else:
-            correctly_decoded_faults += location_count
+        for location in explained_error.circuit_error_locations:
+            effectful_faults.append(
+                PhysicalFaultCase(
+                    location_key=_physical_fault_location_key(location),
+                    location_description=_describe_physical_fault_location(location),
+                    pauli_description=_describe_pauli_alternative(location),
+                    detector_mask=detector_mask,
+                    observable_mask=observable_mask,
+                )
+            )
 
-    # Infer benign faults and check that the classification is exhaustive.
-    classified_effectful_fault_cases = (
-        rejected_faults + correctly_decoded_faults + len(malignant_fault_locations)
-    )
-    if classified_effectful_fault_cases != explained_fault_cases:
-        raise RuntimeError("single-fault classification missed an effectful fault.")
-    if explained_fault_cases > total_single_fault_cases:
+    if len(effectful_faults) > total_elementary_fault_cases:
         raise RuntimeError("Stim explained more circuit faults than the noise model enumerates.")
-    benign_faults = total_single_fault_cases - explained_fault_cases
-
-    # Report the classification together with Stim's detector-model distance.
-    return SingleFaultAssessmentResult(
-        experiment_name=experiment_name,
-        total_single_fault_cases=total_single_fault_cases,
-        benign_faults=benign_faults,
-        rejected_faults=rejected_faults,
-        correctly_decoded_faults=correctly_decoded_faults,
-        graphlike_distance=len(circuit.shortest_graphlike_error()),
-        malignant_fault_locations=tuple(malignant_fault_locations),
+    return CircuitPhysicalFaultInventory(
+        effectful_faults=tuple(effectful_faults),
+        total_elementary_fault_cases=total_elementary_fault_cases,
+        total_physical_locations=total_physical_locations,
     )
 
 
 @dataclass(frozen=True)
-class SingleFaultAssessmentResult:
-    """Classification of every single-fault case in the circuit noise model.
+class PhysicalFaultCase:
+    """One Pauli alternative and its packed detector/observable effect.
 
-    ``total_single_fault_cases`` is useful as a coverage check: it must equal
-    benign + rejected + correctly decoded + malignant, proving that every fault
-    case represented by the stochastic noise channels was classified. It does
-    not count logical errors, sampled fault occurrences, or deterministic faults
-    appended by ``append_pauli_faults``.
+    ``location_key`` excludes the Pauli alternative, preventing alternatives at
+    one circuit location from being counted as simultaneous faults.
+    """
+
+    location_key: Hashable
+    location_description: str
+    pauli_description: str
+    detector_mask: int
+    observable_mask: int
+
+
+@dataclass(frozen=True)
+class CircuitPhysicalFaultInventory:
+    """Stored nonzero fault signatures and complete noise-model counts."""
+
+    effectful_faults: tuple[PhysicalFaultCase, ...]
+    total_elementary_fault_cases: int
+    total_physical_locations: int
+
+    @property
+    def benign_fault_cases(self) -> int:
+        """Return alternatives omitted by Stim because their effect is zero."""
+        return self.total_elementary_fault_cases - len(self.effectful_faults)
+
+
+def _physical_fault_location_key(location: stim.CircuitErrorLocation) -> Hashable:
+    """Identify a circuit location independently of its Pauli alternative."""
+    stack_frames = tuple(
+        (frame.instruction_offset, frame.iteration_index) for frame in location.stack_frames
+    )
+    instruction_targets = location.instruction_targets
+    return (
+        stack_frames,
+        instruction_targets.target_range_start,
+        instruction_targets.target_range_end,
+    )
+
+
+def _describe_physical_fault_location(location: stim.CircuitErrorLocation) -> str:
+    """Return a concise tick/instruction/qubit description."""
+    instruction_targets = location.instruction_targets
+    qubits = [target.gate_target.qubit_value for target in instruction_targets.targets_in_range]
+    stack_frame = location.stack_frames[0]
+    return (
+        f"tick {location.tick_offset}, {instruction_targets.gate} on qubit(s) {qubits} "
+        f"(instruction {stack_frame.instruction_offset}, iteration {stack_frame.iteration_index})"
+    )
+
+
+def _describe_pauli_alternative(location: stim.CircuitErrorLocation) -> str:
+    """Describe the Pauli alternative or measurement flip."""
+    flipped_measurement = location.flipped_measurement
+    if flipped_measurement is not None and flipped_measurement.record_index is not None:
+        return f"measurement result flip (record {flipped_measurement.record_index})"
+    return "*".join(
+        f"{target.gate_target.pauli_type}{target.gate_target.qubit_value}"
+        for target in location.flipped_pauli_product
+    )
+
+
+# ---------------------------------------------------------------------------
+# Physical-fault-distance assessment
+# ---------------------------------------------------------------------------
+
+
+def assess_fully_postselected_circuit_fault_distance(
+    *,
+    experiment_name: str,
+    circuit: stim.Circuit,
+    max_exhaustive_weight: int = 2,
+    find_witness_weight: int = 3,
+) -> PhysicalFaultDistanceAssessment:
+    """Certify physical fault distance when every detector is postselected.
+
+    A combination is malignant exactly when its detector mask is zero and its
+    observable mask is nonzero. Singles and distinct-location pairs are
+    exhausted; if both pass, a meet-in-the-middle search finds a triple witness.
+
+    Call structure::
+
+        assess_fully_postselected_circuit_fault_distance(circuit=circuit, ...)
+        ├── enumerate_circuit_physical_fault_signatures(circuit)
+        ├── classify single faults
+        ├── _summarize_malignant_pairs(...)             (exhaustive weight 2)
+        ├── _find_malignant_triple_by_signature(...)    (weight-3 witness)
+        └── PhysicalFaultDistanceAssessment
+    """
+    if max_exhaustive_weight not in (1, 2):
+        raise NotImplementedError("exhaustive search is implemented for weight 1 and 2 only.")
+    if find_witness_weight not in (0, 3):
+        raise NotImplementedError("malignant-witness search is implemented for weight 3 only.")
+    if circuit.num_observables != 1:
+        raise ValueError("physical-fault-distance certification requires exactly one observable.")
+    inventory = enumerate_circuit_physical_fault_signatures(circuit)
+    faults = inventory.effectful_faults
+
+    malignant_single_faults = tuple(
+        FaultCombinationWitness((fault,))
+        for fault in faults
+        if fault.detector_mask == 0 and fault.observable_mask != 0
+    )
+    rejected_single_faults = sum(fault.detector_mask != 0 for fault in faults)
+    benign_single_faults = inventory.benign_fault_cases + sum(
+        fault.detector_mask == 0 and fault.observable_mask == 0 for fault in faults
+    )
+    if (
+        benign_single_faults + rejected_single_faults + len(malignant_single_faults)
+        != inventory.total_elementary_fault_cases
+    ):
+        raise RuntimeError("single-fault accounting is not exhaustive.")
+
+    malignant_pair_count = 0
+    first_malignant_pair: FaultCombinationWitness | None = None
+    pairs_exhaustively_checked = False
+    if not malignant_single_faults and max_exhaustive_weight >= 2:
+        malignant_pair_count, first_malignant_pair = _summarize_malignant_pairs(faults)
+        pairs_exhaustively_checked = True
+
+    first_malignant_triple: FaultCombinationWitness | None = None
+    if pairs_exhaustively_checked and malignant_pair_count == 0 and find_witness_weight == 3:
+        first_malignant_triple = _find_malignant_triple_by_signature(faults)
+
+    return PhysicalFaultDistanceAssessment(
+        experiment_name=experiment_name,
+        total_elementary_fault_cases=inventory.total_elementary_fault_cases,
+        total_physical_locations=inventory.total_physical_locations,
+        malignant_single_faults=malignant_single_faults,
+        malignant_pair_count=malignant_pair_count,
+        first_malignant_pair=first_malignant_pair,
+        first_malignant_triple=first_malignant_triple,
+    )
+
+
+def _summarize_malignant_pairs(
+    faults: Sequence[PhysicalFaultCase],
+) -> tuple[int, FaultCombinationWitness | None]:
+    """Count distinct-location malignant pairs and return the first.
+
+    Equal detector masks cancel. For one observable, the pair is then malignant
+    exactly when its observable masks differ. Grouping by detector mask reduces
+    the exhaustive search to those candidate pairs.
+    """
+    faults_by_detector_mask: dict[int, list[PhysicalFaultCase]] = defaultdict(list)
+    for fault in faults:
+        faults_by_detector_mask[fault.detector_mask].append(fault)
+
+    malignant_pair_count = 0
+    first_malignant_pair: FaultCombinationWitness | None = None
+    for grouped_faults in faults_by_detector_mask.values():
+        observable_silent = [fault for fault in grouped_faults if fault.observable_mask == 0]
+        observable_flipping = [fault for fault in grouped_faults if fault.observable_mask != 0]
+        if not observable_silent or not observable_flipping:
+            continue
+        silent_location_counts = Counter(fault.location_key for fault in observable_silent)
+        same_location_pairs = sum(
+            silent_location_counts[fault.location_key] for fault in observable_flipping
+        )
+        malignant_pair_count += (
+            len(observable_silent) * len(observable_flipping) - same_location_pairs
+        )
+        if first_malignant_pair is None:
+            first_malignant_pair = next(
+                (
+                    FaultCombinationWitness((silent_fault, flipping_fault))
+                    for silent_fault in observable_silent
+                    for flipping_fault in observable_flipping
+                    if silent_fault.location_key != flipping_fault.location_key
+                ),
+                None,
+            )
+    return malignant_pair_count, first_malignant_pair
+
+
+def _find_malignant_triple_by_signature(
+    faults: Sequence[PhysicalFaultCase],
+) -> FaultCombinationWitness | None:
+    """Find a malignant triple by a meet-in-the-middle signature search.
+
+    A witness has combined signature ``(D, L) = (0, 1)``. For third fault ``c``,
+    the other two must have ``(D_c, L_c XOR 1)``. Only required pair signatures
+    are stored, and all three locations must differ.
+    """
+    detector_masks = [fault.detector_mask for fault in faults]
+    observable_masks = [fault.observable_mask for fault in faults]
+    location_keys = [fault.location_key for fault in faults]
+    fault_count = len(faults)
+
+    required_pair_signatures = {
+        (detector_masks[index], observable_masks[index] ^ 1)
+        for index in range(fault_count)
+    }
+    pairs_by_signature: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
+    for left_index in range(fault_count):
+        for right_index in range(left_index + 1, fault_count):
+            if location_keys[left_index] == location_keys[right_index]:
+                continue
+            signature = (
+                detector_masks[left_index] ^ detector_masks[right_index],
+                observable_masks[left_index] ^ observable_masks[right_index],
+            )
+            if signature in required_pair_signatures:
+                pairs_by_signature[signature].append((left_index, right_index))
+
+    for third_index in range(fault_count):
+        required_signature = (
+            detector_masks[third_index],
+            observable_masks[third_index] ^ 1,
+        )
+        for left_index, right_index in pairs_by_signature.get(required_signature, ()):
+            if len(
+                {
+                    location_keys[left_index],
+                    location_keys[right_index],
+                    location_keys[third_index],
+                }
+            ) == 3:
+                return FaultCombinationWitness(
+                    (faults[left_index], faults[right_index], faults[third_index])
+                )
+    return None
+
+
+@dataclass(frozen=True)
+class FaultCombinationWitness:
+    """Distinct-location physical faults and their combined signature."""
+
+    faults: tuple[PhysicalFaultCase, ...]
+
+    @property
+    def weight(self) -> int:
+        """Return the number of fault locations."""
+        return len(self.faults)
+
+    @property
+    def combined_detector_mask(self) -> int:
+        """Return the XOR of all detector masks."""
+        combined_mask = 0
+        for fault in self.faults:
+            combined_mask ^= fault.detector_mask
+        return combined_mask
+
+    @property
+    def combined_observable_mask(self) -> int:
+        """Return the XOR of all observable masks."""
+        combined_mask = 0
+        for fault in self.faults:
+            combined_mask ^= fault.observable_mask
+        return combined_mask
+
+    def to_dataframe(self):
+        """Return the witness as a pandas ``DataFrame``."""
+        import pandas as pd
+
+        return pd.DataFrame(
+            {
+                "fault": index,
+                "location": fault.location_description,
+                "pauli_alternative": fault.pauli_description,
+                "detector_mask": fault.detector_mask,
+                "observable_mask": fault.observable_mask,
+            }
+            for index, fault in enumerate(self.faults, start=1)
+        )
+
+
+@dataclass(frozen=True)
+class PhysicalFaultDistanceAssessment:
+    """Result of an exact physical-fault-distance assessment.
+
+    ``certified_distance`` is the first malignant weight found, or ``None`` in
+    the requested search. A distance-3 certificate exhausts singles and pairs
+    and includes ``first_malignant_triple``.
     """
 
     experiment_name: str
-    total_single_fault_cases: int
-    benign_faults: int
-    rejected_faults: int
-    correctly_decoded_faults: int
-    graphlike_distance: int
-    malignant_fault_locations: tuple[str, ...]
+    total_elementary_fault_cases: int
+    total_physical_locations: int
+    malignant_single_faults: tuple[FaultCombinationWitness, ...]
+    malignant_pair_count: int
+    first_malignant_pair: FaultCombinationWitness | None
+    first_malignant_triple: FaultCombinationWitness | None
 
     @property
-    def malignant_faults(self) -> int:
-        """Count accepted single faults that produce a logical failure."""
-        return len(self.malignant_fault_locations)
-
-    @property
-    def passes_single_fault_check(self) -> bool:
-        """Return whether no represented single fault is malignant."""
-        return self.malignant_faults == 0
+    def certified_distance(self) -> int | None:
+        """Return the first malignant weight found by the requested search."""
+        if self.malignant_single_faults:
+            return 1
+        if self.malignant_pair_count:
+            return 2
+        if self.first_malignant_triple is not None:
+            return 3
+        return None

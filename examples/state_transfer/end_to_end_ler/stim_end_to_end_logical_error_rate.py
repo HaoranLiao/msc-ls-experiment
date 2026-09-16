@@ -15,7 +15,7 @@ from collections.abc import Iterable
 import numpy as np
 import stim
 
-from examples.state_transfer.stim_logical_error_rate import (
+from examples.state_transfer.lattice_surgery_only_ler.stim_logical_error_rate import (
     LatticeSurgeryOnlyShotAnalyzer,
 )
 from msc.noise.fault_injection_stim import add_circuit_depolarizing_noise

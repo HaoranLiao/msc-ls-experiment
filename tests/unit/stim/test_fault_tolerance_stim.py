@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import stim
 from scipy.optimize import curve_fit
 
-from msc.noise.fault_tolerance_stim import LogicalErrorEstimate, fit_power_law
+from msc.noise.fault_tolerance_stim import (
+    LogicalErrorEstimate,
+    PhysicalFaultDistanceAssessment,
+    assess_fully_postselected_circuit_fault_distance,
+    enumerate_circuit_physical_fault_signatures,
+    fit_power_law,
+)
 
 
 def test_fit_power_law_matches_hirano_curve_fit_reference() -> None:
@@ -65,3 +72,189 @@ def test_fit_power_law_matches_hirano_curve_fit_reference() -> None:
 
     assert coefficient == pytest.approx(reference_fit[0], rel=1e-7)
     assert exponent == pytest.approx(reference_fit[1], rel=1e-7)
+
+
+# =============================================================================
+# Exact physical-fault-distance certification
+# =============================================================================
+#
+# These circuits control each elementary fault's (detector, observable)
+# signature directly so the certified distance is known by construction. Formal
+# failure is defined by detector parity under full postselection, not decoding:
+# a fault combination is malignant exactly when its combined detector mask is
+# zero while its combined observable mask is nonzero.
+
+
+def _certify(circuit: stim.Circuit) -> PhysicalFaultDistanceAssessment:
+    """Audit a fully postselected single-observable circuit's fault distance."""
+    return assess_fully_postselected_circuit_fault_distance(
+        experiment_name="synthetic",
+        circuit=circuit,
+    )
+
+
+def test_distance_one_logical_only_single_fault_is_certified() -> None:
+    """A single fault flipping only the observable certifies distance 1."""
+    circuit = stim.Circuit("""
+        R 0
+        X_ERROR(0.001) 0
+        M 0
+        OBSERVABLE_INCLUDE(0) rec[-1]
+    """)
+
+    assessment = _certify(circuit)
+
+    assert len(assessment.malignant_single_faults) == 1
+    assert assessment.certified_distance == 1
+    single_witness = assessment.malignant_single_faults[0]
+    assert single_witness.combined_detector_mask == 0
+    assert single_witness.combined_observable_mask == 1
+
+
+def test_distance_two_detector_canceling_pair_is_certified() -> None:
+    """Two faults whose detector effects cancel while one flips L0 give d=2.
+
+    ``X_ERROR 0`` flips ``M0`` (detector only); ``X_ERROR 1`` flips ``M1``
+    (detector and observable). The shared detector ``M0 xor M1`` cancels under
+    combination while the observable ``M1`` survives.
+    """
+    circuit = stim.Circuit("""
+        R 0 1
+        X_ERROR(0.001) 0
+        X_ERROR(0.001) 1
+        M 0 1
+        DETECTOR rec[-2] rec[-1]
+        OBSERVABLE_INCLUDE(0) rec[-1]
+    """)
+
+    assessment = _certify(circuit)
+
+    assert not assessment.malignant_single_faults
+    assert assessment.malignant_pair_count > 0
+    assert assessment.first_malignant_pair is not None
+    assert assessment.first_malignant_pair.combined_detector_mask == 0
+    assert assessment.first_malignant_pair.combined_observable_mask == 1
+    assert assessment.certified_distance == 2
+
+
+def test_distance_three_triple_witness_is_certified() -> None:
+    """Three faults combine to L0 while every single and pair is detected.
+
+    Each fault flips one measurement; the three detectors ``M0^M2``, ``M0^M1``,
+    ``M1^M2`` make each single a two-detector event and each pair a nonzero
+    detector event, so only the weight-three combination cancels detectors.
+    """
+    circuit = stim.Circuit("""
+        R 0 1 2
+        X_ERROR(0.001) 0
+        X_ERROR(0.001) 1
+        X_ERROR(0.001) 2
+        M 0 1 2
+        DETECTOR rec[-3] rec[-1]
+        DETECTOR rec[-3] rec[-2]
+        DETECTOR rec[-2] rec[-1]
+        OBSERVABLE_INCLUDE(0) rec[-3]
+    """)
+
+    assessment = _certify(circuit)
+
+    assert not assessment.malignant_single_faults
+    assert assessment.malignant_pair_count == 0
+    assert assessment.first_malignant_triple is not None
+    assert assessment.certified_distance == 3
+
+    witness = assessment.first_malignant_triple
+    assert witness.weight == 3
+    assert len({fault.location_key for fault in witness.faults}) == 3
+    assert witness.combined_detector_mask == 0
+    assert witness.combined_observable_mask == 1
+
+
+def test_same_location_pauli_alternatives_share_one_location_key() -> None:
+    """Every Pauli alternative of one ``DEPOLARIZE2`` shares one location key.
+
+    Because pair and triple searches require distinct ``location_key`` values,
+    grouping all 15 alternatives of a physical two-qubit gate under one key is
+    what prevents two alternatives of the same location from being combined as a
+    two-fault event. A batched two-pair ``DEPOLARIZE2`` still yields one key per
+    pair, so distinct physical pairs stay separable.
+    """
+    circuit = stim.Circuit("""
+        R 0 1 2 3
+        DEPOLARIZE2(0.001) 0 1 2 3
+        M 0 1 2 3
+        DETECTOR rec[-4]
+        DETECTOR rec[-3]
+        DETECTOR rec[-2]
+        DETECTOR rec[-1]
+        OBSERVABLE_INCLUDE(0) rec[-1]
+    """)
+
+    inventory = enumerate_circuit_physical_fault_signatures(circuit)
+    alternatives_per_location: dict[object, set[str]] = {}
+    for fault in inventory.effectful_faults:
+        alternatives_per_location.setdefault(fault.location_key, set()).add(fault.pauli_description)
+
+    assert len(alternatives_per_location) == 2
+    for pauli_alternatives in alternatives_per_location.values():
+        assert len(pauli_alternatives) > 1
+
+
+def test_hyperedge_pair_is_certified() -> None:
+    """A malignant pair built from detector hyperedges is certified d=2.
+
+    Each single fault triggers three coincident detectors. The physical signature
+    enumerator combines the two faults into a detector-canceling,
+    observable-flipping pair.
+    """
+    circuit = stim.Circuit("""
+        R 0 1
+        X_ERROR(0.001) 0
+        X_ERROR(0.001) 1
+        M 0 1
+        DETECTOR rec[-2] rec[-1]
+        DETECTOR rec[-2] rec[-1]
+        DETECTOR rec[-2] rec[-1]
+        OBSERVABLE_INCLUDE(0) rec[-1]
+    """)
+
+    assessment = _certify(circuit)
+
+    assert assessment.malignant_pair_count >= 1
+    assert assessment.certified_distance == 2
+
+
+def test_noise_channel_coverage_counts_every_elementary_alternative() -> None:
+    """Every supported stochastic channel contributes its exact case count.
+
+    ``DEPOLARIZE1`` gives 3 alternatives, ``DEPOLARIZE2`` gives 15,
+    ``X_ERROR`` / ``Z_ERROR`` give 1 each (reset and ``MPP`` faults use these),
+    and a noisy measurement gives one result flip per measurement.
+    """
+    circuit = stim.Circuit("""
+        R 0 1 2
+        DEPOLARIZE1(0.001) 0
+        DEPOLARIZE2(0.001) 0 1
+        X_ERROR(0.001) 2
+        Z_ERROR(0.001) 0
+        M(0.001) 0 1 2
+    """)
+
+    inventory = enumerate_circuit_physical_fault_signatures(circuit)
+
+    assert inventory.total_elementary_fault_cases == 3 + 15 + 1 + 1 + 3
+    assert inventory.total_physical_locations == 1 + 1 + 1 + 1 + 3
+    # No detectors or observables, so every alternative is a benign (0, 0) case.
+    assert inventory.effectful_faults == ()
+    assert inventory.benign_fault_cases == inventory.total_elementary_fault_cases
+
+
+def test_unsupported_noise_channel_raises_rather_than_undercounting() -> None:
+    """An active unsupported noise channel fails loudly, never silently skipped."""
+    circuit = stim.Circuit()
+    circuit.append("R", [0])
+    circuit.append("PAULI_CHANNEL_1", [0], [0.001, 0.001, 0.001])
+    circuit.append("M", [0])
+
+    with pytest.raises(NotImplementedError, match="Unsupported physical fault channel"):
+        enumerate_circuit_physical_fault_signatures(circuit)
