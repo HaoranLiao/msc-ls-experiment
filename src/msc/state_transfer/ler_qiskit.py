@@ -115,7 +115,7 @@ def build_ty_logical_error_rate_circuits(
     tomography = config.tomography
     return {
         round_count: build_ty_tomography_circuits(
-            config_path=TY_TOMOGRAPHY_CONFIG_PATH,
+            circuit_config_path=TY_TOMOGRAPHY_CONFIG_PATH,
             target_distance=tomography.target_distance,
             patch_sites=tomography.patch_sites,
             full_post_selection=tomography.full_post_selection,
@@ -150,7 +150,7 @@ def analyze_ty_logical_error_rate_counts(
             post_transfer_stabilizer_rounds=round_count,
             tomography=analyze_ty_tomography_counts(
                 counts_by_round[round_count],
-                config_path=TY_TOMOGRAPHY_CONFIG_PATH,
+                circuit_config_path=TY_TOMOGRAPHY_CONFIG_PATH,
                 target_distance=tomography.target_distance,
                 patch_sites=tomography.patch_sites,
                 full_post_selection=tomography.full_post_selection,

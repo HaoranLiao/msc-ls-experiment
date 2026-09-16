@@ -66,28 +66,28 @@ class TyTomographySummary:
 
 
 def load_ty_tomography_config(
-    config_path: str | Path = TY_TOMOGRAPHY_CONFIG_PATH,
+    circuit_config_path: str | Path = TY_TOMOGRAPHY_CONFIG_PATH,
 ) -> TyTomographyConfig:
     """Load and validate one full-circuit tomography YAML configuration."""
-    config_path = Path(config_path)
+    circuit_config_path = Path(circuit_config_path)
     try:
-        raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        raw_config = yaml.safe_load(circuit_config_path.read_text(encoding="utf-8"))
     except yaml.YAMLError as error:
-        raise ValueError(f"invalid tomography YAML in {config_path}") from error
+        raise ValueError(f"invalid tomography YAML in {circuit_config_path}") from error
     if not isinstance(raw_config, dict):
-        raise ValueError(f"tomography config {config_path} must contain a mapping.")
+        raise ValueError(f"tomography config {circuit_config_path} must contain a mapping.")
 
     expected_fields = set(TyTomographyConfig.__annotations__)
     if set(raw_config) != expected_fields:
         raise ValueError(
-            f"tomography config {config_path} fields must be {sorted(expected_fields)}."
+            f"tomography config {circuit_config_path} fields must be {sorted(expected_fields)}."
         )
     return TyTomographyConfig(**raw_config)
 
 
 def resolve_ty_tomography_config(
     *,
-    config_path: str | Path = TY_TOMOGRAPHY_CONFIG_PATH,
+    circuit_config_path: str | Path = TY_TOMOGRAPHY_CONFIG_PATH,
     target_distance: TomographyTargetDistance | None = None,
     patch_sites: common.SteanePatchSites | None = None,
     full_post_selection: bool | None = None,
@@ -95,8 +95,8 @@ def resolve_ty_tomography_config(
     post_transfer_stabilizer_rounds: int | None = None,
     add_barriers: bool | None = None,
 ) -> TyTomographyConfig:
-    """Load YAML and apply backward-compatible per-call overrides."""
-    config = load_ty_tomography_config(config_path)
+    """Load the circuit-construction YAML and apply per-call overrides."""
+    config = load_ty_tomography_config(circuit_config_path)
     overrides = {
         name: value
         for name, value in (
@@ -114,7 +114,7 @@ def resolve_ty_tomography_config(
 
 def build_ty_tomography_circuits(
     *,
-    config_path: str | Path = TY_TOMOGRAPHY_CONFIG_PATH,
+    circuit_config_path: str | Path = TY_TOMOGRAPHY_CONFIG_PATH,
     target_distance: TomographyTargetDistance | None = None,
     patch_sites: common.SteanePatchSites | None = None,
     full_post_selection: bool | None = None,
@@ -131,7 +131,7 @@ def build_ty_tomography_circuits(
     overrides for compatibility.
     """
     config = resolve_ty_tomography_config(
-        config_path=config_path,
+        circuit_config_path=circuit_config_path,
         target_distance=target_distance,
         patch_sites=patch_sites,
         full_post_selection=full_post_selection,
@@ -164,7 +164,7 @@ def build_ty_tomography_circuits(
 def analyze_ty_tomography_counts(
     counts_by_basis: Mapping[common.SurfaceReadoutBasis, Mapping[str, int]],
     *,
-    config_path: str | Path = TY_TOMOGRAPHY_CONFIG_PATH,
+    circuit_config_path: str | Path = TY_TOMOGRAPHY_CONFIG_PATH,
     target_distance: TomographyTargetDistance | None = None,
     patch_sites: common.SteanePatchSites | None = None,
     full_post_selection: bool | None = None,
@@ -173,7 +173,7 @@ def analyze_ty_tomography_counts(
 ) -> TyTomographySummary:
     """Analyze paired counts using the same YAML config as construction."""
     config = resolve_ty_tomography_config(
-        config_path=config_path,
+        circuit_config_path=circuit_config_path,
         target_distance=target_distance,
         patch_sites=patch_sites,
         full_post_selection=full_post_selection,

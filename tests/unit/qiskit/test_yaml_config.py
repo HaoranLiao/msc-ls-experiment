@@ -65,7 +65,7 @@ def test_tomography_yaml_matches_constructed_circuits_and_analysis(
         add_barriers=add_barriers,
     )
 
-    circuits = build_ty_tomography_circuits(config_path=config_path)
+    circuits = build_ty_tomography_circuits(circuit_config_path=config_path)
 
     expected_data_qubits = target_distance**2
     expected_stabilizers_per_basis = (expected_data_qubits - 1) // 2
@@ -86,7 +86,7 @@ def test_tomography_yaml_matches_constructed_circuits_and_analysis(
             "X": {"0" * circuits["X"].num_clbits: 4},
             "Z": {"0" * circuits["Z"].num_clbits: 4},
         },
-        config_path=config_path,
+        circuit_config_path=config_path,
     )
     assert summary.accepted_x_shots == summary.accepted_z_shots == 4
 
@@ -106,7 +106,7 @@ def test_postselection_yaml_controls_acceptance(
         full_post_selection=full_post_selection,
         persistent_surface_x_post_selection=persistent_surface_x_post_selection,
     )
-    circuit = build_ty_tomography_circuits(config_path=config_path)["X"]
+    circuit = build_ty_tomography_circuits(circuit_config_path=config_path)["X"]
     registers = {register.name: register for register in circuit.cregs}
     encoder_flag = circuit.find_bit(registers["enc_flags"][0]).index
     persistent_surface_x = circuit.find_bit(registers["post_transfer_surface_x"][2]).index
@@ -119,7 +119,7 @@ def test_postselection_yaml_controls_acceptance(
     breakdown = ty_tomography_retainment_breakdown(
         counts,
         basis="X",
-        config_path=config_path,
+        circuit_config_path=config_path,
     )
 
     assert breakdown.retained_shots == retained_shots
