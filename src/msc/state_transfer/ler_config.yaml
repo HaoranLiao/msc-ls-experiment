@@ -1,6 +1,8 @@
 # Qiskit Ty-state grafted-code memory experiment (Supplementary Fig. S22).
 target_distance: 5
 patch_sites: 14
+# Supported schedules: hirano, minimal_z_only.
+merge_schedule: hirano
 full_post_selection: false
 persistent_surface_x_post_selection: true
 # Fit sqrt(<X_L>^2 + <Z_L>^2) over these post-transfer QEC round counts.

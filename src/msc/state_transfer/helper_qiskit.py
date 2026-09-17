@@ -13,6 +13,7 @@ def build_lattice_surgery_circuit(
     spec: common.SurfaceCodeTransferSpec,
     *,
     patch_sites: common.SteanePatchSites = 14,
+    merge_schedule: common.MergeSchedule = "hirano",
     injected_state: steane.InjectedStateName = "Ty",
     cultivated_state: cultivation.CultivatedStateName = "Ty",
     include_cultivation: bool = True,
@@ -48,7 +49,10 @@ def build_lattice_surgery_circuit(
     distance three in the serialized schedule. Surface histories are
     spacetime-decoded into the Pauli frame.
     """
-    patch_spec = common.resolve_steane_transfer_patch_spec(patch_sites)
+    patch_spec = common.resolve_steane_transfer_patch_spec(
+        patch_sites,
+        merge_schedule=merge_schedule,
+    )
 
     # Quantum allocation uses one single-qubit register per physical site:
     # - one register per site of the selected Steane patch;
@@ -91,6 +95,7 @@ def build_lattice_surgery_circuit(
         spec,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
+        merge_schedule=merge_schedule,
         surface_readout_basis=None,
     )
     cregs = {
@@ -208,7 +213,7 @@ def build_lattice_surgery_circuit(
             reset_ancillas_initially=True,
             add_barriers=False,
         )
-        verification_checks = common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]
+        verification_checks = patch_spec.merge_verification_rounds[round_index]
         if patch_sites == 11:
             for check_name in verification_checks:
                 steane.append_11_site_patch_stabilizer_measurement(

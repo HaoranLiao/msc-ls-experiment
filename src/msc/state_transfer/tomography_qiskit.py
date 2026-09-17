@@ -25,6 +25,7 @@ class TyTomographyConfig:
 
     target_distance: TomographyTargetDistance
     patch_sites: common.SteanePatchSites
+    merge_schedule: common.MergeSchedule
     full_post_selection: bool
     persistent_surface_x_post_selection: bool
     post_transfer_stabilizer_rounds: int | None
@@ -35,6 +36,8 @@ class TyTomographyConfig:
             raise ValueError("target_distance must be 3 or 5.")
         if type(self.patch_sites) is not int or self.patch_sites not in (11, 14):
             raise ValueError("patch_sites must be 11 or 14.")
+        if self.merge_schedule not in ("hirano", "minimal_z_only"):
+            raise ValueError("merge_schedule must be 'hirano' or 'minimal_z_only'.")
         for name in ("full_post_selection", "persistent_surface_x_post_selection", "add_barriers"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"{name} must be true or false.")
@@ -90,6 +93,7 @@ def resolve_ty_tomography_config(
     circuit_config_path: str | Path = TY_TOMOGRAPHY_CONFIG_PATH,
     target_distance: TomographyTargetDistance | None = None,
     patch_sites: common.SteanePatchSites | None = None,
+    merge_schedule: common.MergeSchedule | None = None,
     full_post_selection: bool | None = None,
     persistent_surface_x_post_selection: bool | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
@@ -102,6 +106,7 @@ def resolve_ty_tomography_config(
         for name, value in (
             ("target_distance", target_distance),
             ("patch_sites", patch_sites),
+            ("merge_schedule", merge_schedule),
             ("full_post_selection", full_post_selection),
             ("persistent_surface_x_post_selection", persistent_surface_x_post_selection),
             ("post_transfer_stabilizer_rounds", post_transfer_stabilizer_rounds),
@@ -117,6 +122,7 @@ def build_ty_tomography_circuits(
     circuit_config_path: str | Path = TY_TOMOGRAPHY_CONFIG_PATH,
     target_distance: TomographyTargetDistance | None = None,
     patch_sites: common.SteanePatchSites | None = None,
+    merge_schedule: common.MergeSchedule | None = None,
     full_post_selection: bool | None = None,
     persistent_surface_x_post_selection: bool | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
@@ -134,6 +140,7 @@ def build_ty_tomography_circuits(
         circuit_config_path=circuit_config_path,
         target_distance=target_distance,
         patch_sites=patch_sites,
+        merge_schedule=merge_schedule,
         full_post_selection=full_post_selection,
         persistent_surface_x_post_selection=persistent_surface_x_post_selection,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
@@ -149,6 +156,7 @@ def build_ty_tomography_circuits(
     return {
         basis: build_transfer_circuit(
             patch_sites=config.patch_sites,
+            merge_schedule=config.merge_schedule,
             injected_state="Ty",
             cultivated_state="Ty",
             include_cultivation=True,
@@ -167,6 +175,7 @@ def analyze_ty_tomography_counts(
     circuit_config_path: str | Path = TY_TOMOGRAPHY_CONFIG_PATH,
     target_distance: TomographyTargetDistance | None = None,
     patch_sites: common.SteanePatchSites | None = None,
+    merge_schedule: common.MergeSchedule | None = None,
     full_post_selection: bool | None = None,
     persistent_surface_x_post_selection: bool | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
@@ -176,6 +185,7 @@ def analyze_ty_tomography_counts(
         circuit_config_path=circuit_config_path,
         target_distance=target_distance,
         patch_sites=patch_sites,
+        merge_schedule=merge_schedule,
         full_post_selection=full_post_selection,
         persistent_surface_x_post_selection=persistent_surface_x_post_selection,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
@@ -202,6 +212,7 @@ def analyze_ty_tomography_counts(
             measurements = parse_transfer_measurements(
                 bitstring,
                 patch_sites=config.patch_sites,
+                merge_schedule=config.merge_schedule,
                 include_cultivation=True,
                 surface_readout_basis=basis,
                 full_post_selection=config.full_post_selection,

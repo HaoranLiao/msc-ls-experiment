@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from msc.state_transfer.common import (
+    MergeSchedule,
     SteanePatchSites,
     SurfaceCodeTransferSpec,
     SurfaceReadoutBasis,
@@ -15,6 +16,7 @@ def parse_transfer_measurements(
     *,
     spec: SurfaceCodeTransferSpec,
     patch_sites: SteanePatchSites = 14,
+    merge_schedule: MergeSchedule = "hirano",
     include_cultivation: bool = True,
     post_transfer_stabilizer_rounds: int = 0,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
@@ -31,6 +33,7 @@ def parse_transfer_measurements(
         spec,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
+        merge_schedule=merge_schedule,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,
         full_data_readout=full_data_readout,

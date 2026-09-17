@@ -118,6 +118,7 @@ def build_ty_logical_error_rate_circuits(
             circuit_config_path=TY_TOMOGRAPHY_CONFIG_PATH,
             target_distance=tomography.target_distance,
             patch_sites=tomography.patch_sites,
+            merge_schedule=tomography.merge_schedule,
             full_post_selection=tomography.full_post_selection,
             persistent_surface_x_post_selection=tomography.persistent_surface_x_post_selection,
             post_transfer_stabilizer_rounds=round_count,
@@ -153,6 +154,7 @@ def analyze_ty_logical_error_rate_counts(
                 circuit_config_path=TY_TOMOGRAPHY_CONFIG_PATH,
                 target_distance=tomography.target_distance,
                 patch_sites=tomography.patch_sites,
+                merge_schedule=tomography.merge_schedule,
                 full_post_selection=tomography.full_post_selection,
                 persistent_surface_x_post_selection=(
                     tomography.persistent_surface_x_post_selection

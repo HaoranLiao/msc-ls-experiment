@@ -75,6 +75,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     patch_sites: common.SteanePatchSites = 14,
     injected_state: StimInjectedStateName = "S",
     include_cultivation: bool = True,
+    merge_schedule: common.MergeSchedule = "hirano",
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,
     add_ticks: bool = True,
@@ -86,12 +87,17 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     ``full_post_selection=False`` appends five complete surface rounds before
     full-data readout; ``True`` appends one. ``surface_readout_basis=None`` ends
     at ``m_ab``. Hirano's full-data boundary supports X or Z readout, not Y.
+
+    ``minimal_z_only`` requires the 14-site feeder: verify Z0145/Z0235 in
+    merge round 1 and all three source Z checks in round 2, retaining Bell
+    and copy flags. Both schedules demolish all seven source qubits at the end.
     """
     circuit = helper.build_lattice_surgery_circuit(
         TRANSFER_SPEC,
         patch_sites=patch_sites,
         injected_state=injected_state,
         include_cultivation=include_cultivation,
+        merge_schedule=merge_schedule,
         add_ticks=add_ticks,
     )
     if surface_readout_basis is None:
@@ -103,6 +109,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
         TRANSFER_SPEC,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
+        merge_schedule=merge_schedule,
     )
     append_post_transfer_and_readout(
         circuit,
@@ -437,6 +444,7 @@ def parse_transfer_measurements(
     *,
     patch_sites: common.SteanePatchSites = 14,
     include_cultivation: bool = True,
+    merge_schedule: common.MergeSchedule = "hirano",
 ) -> dict[str, object]:
     """Parse a circuit ending at the ``m_ab`` transfer boundary."""
     return analysis.parse_transfer_measurements(
@@ -444,4 +452,5 @@ def parse_transfer_measurements(
         spec=TRANSFER_SPEC,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
+        merge_schedule=merge_schedule,
     )

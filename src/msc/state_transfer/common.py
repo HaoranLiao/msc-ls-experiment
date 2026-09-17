@@ -33,6 +33,7 @@ from msc.utils.normalize import normalize_pauli_char
 SurfaceReadoutBasis = Literal["X", "Y", "Z"]
 SteanePatchSites = Literal[11, 14]
 SteaneVerificationBasis = Literal["X", "Z", "BOTH"]
+MergeSchedule = Literal["hirano", "minimal_z_only"]
 LATTICE_SURGERY_ROUNDS = 3
 MergedBoundaryCheck = tuple[str, tuple[str, ...], tuple[str, ...]]
 CircuitAppender = Callable[..., None]
@@ -77,6 +78,11 @@ STEANE_MERGE_VERIFICATION_LABELS: tuple[str, ...] = tuple(
     f"round{round_index + 1}_{check_name}"
     for round_index, round_checks in enumerate(STEANE_MERGE_VERIFICATION_ROUNDS)
     for check_name in round_checks
+)
+MINIMAL_Z_ONLY_MERGE_VERIFICATION_ROUNDS: tuple[tuple[str, ...], ...] = (
+    ("Z0145", "Z0235"),
+    ("Z0145", "Z0235", "Z0246"),
+    (),
 )
 STEANE_14_SITE_MERGE_BELL_PARTNER_FLAG_LABELS: tuple[str, ...] = (
     "round1_Z0145_bell_partner_flag",
@@ -189,14 +195,32 @@ class SteaneTransferPatchSpec:
     encoder_flag_labels: tuple[str, ...]
     qed_labels: tuple[str, ...]
     cultivation_labels: tuple[str, ...]
+    merge_verification_rounds: tuple[tuple[str, ...], ...]
     merge_verification_stabilizer_indices: Mapping[str, int]
     merge_bell_partner_flag_labels: tuple[str, ...]
 
 
 def resolve_steane_transfer_patch_spec(
     patch_sites: SteanePatchSites,
+    *,
+    merge_schedule: MergeSchedule = "hirano",
 ) -> SteaneTransferPatchSpec:
-    """Resolve every transfer contract that differs between Steane patches."""
+    """Resolve patch geometry and the selected source-verification record contract."""
+    if merge_schedule == "hirano":
+        verification_rounds = STEANE_MERGE_VERIFICATION_ROUNDS
+        bell_partner_flags = STEANE_14_SITE_MERGE_BELL_PARTNER_FLAG_LABELS
+    elif merge_schedule == "minimal_z_only":
+        verification_rounds = MINIMAL_Z_ONLY_MERGE_VERIFICATION_ROUNDS
+        bell_partner_flags = tuple(
+            label
+            for round_index, checks in enumerate(verification_rounds, 1)
+            for label in (
+                *(f"round{round_index}_{check}_bell_partner_flag" for check in checks),
+                *((f"round{round_index}_D2_copy_flag",) if "Z0246" in checks else ()),
+            )
+        )
+    else:
+        raise ValueError("merge_schedule must be 'hirano' or 'minimal_z_only'.")
     if patch_sites == NUM_QUBITS_PATCH_11_SITES:
         return SteaneTransferPatchSpec(
             site_labels=tuple(
@@ -214,6 +238,7 @@ def resolve_steane_transfer_patch_spec(
                 "cult_f6",
                 "cult_f7",
             ),
+            merge_verification_rounds=verification_rounds,
             merge_verification_stabilizer_indices=(
                 STEANE_11_SITE_MERGE_VERIFICATION_STABILIZER_INDICES
             ),
@@ -243,10 +268,11 @@ def resolve_steane_transfer_patch_spec(
                     for site in PATCH_14_SITE_HELPER_SITES[1:]
                 ),
             ),
+            merge_verification_rounds=verification_rounds,
             merge_verification_stabilizer_indices=(
                 STEANE_14_SITE_MERGE_VERIFICATION_STABILIZER_INDICES
             ),
-            merge_bell_partner_flag_labels=(STEANE_14_SITE_MERGE_BELL_PARTNER_FLAG_LABELS),
+            merge_bell_partner_flag_labels=bell_partner_flags,
         )
     raise ValueError("patch_sites must be 11 or 14.")
 
@@ -339,6 +365,7 @@ def transfer_measurement_labels(
     *,
     patch_sites: SteanePatchSites = 14,
     include_cultivation: bool,
+    merge_schedule: MergeSchedule = "hirano",
     surface_readout_basis: SurfaceReadoutBasis | None,
     post_transfer_stabilizer_rounds: int = 0,
     full_data_readout: bool = False,
@@ -350,7 +377,7 @@ def transfer_measurement_labels(
     positions because physical append order interleaves families within every
     merged round.
     """
-    patch_spec = resolve_steane_transfer_patch_spec(patch_sites)
+    patch_spec = resolve_steane_transfer_patch_spec(patch_sites, merge_schedule=merge_schedule)
     if post_transfer_stabilizer_rounds < 0:
         raise ValueError("post_transfer_stabilizer_rounds must be nonnegative.")
     labels = {
@@ -372,7 +399,11 @@ def transfer_measurement_labels(
         merged_surface_x=surface_common.repeated_round_labels(
             spec.merged_x_labels, rounds=LATTICE_SURGERY_ROUNDS
         ),
-        steane_verify=STEANE_MERGE_VERIFICATION_LABELS,
+        steane_verify=tuple(
+            f"round{round_index}_{check}"
+            for round_index, checks in enumerate(patch_spec.merge_verification_rounds, 1)
+            for check in checks
+        ),
         steane_x=HIRANO_STEANE_DATA_ORDER,
         surface_x_recovery=SURFACE_RECOVERY_X_LABELS,
     )

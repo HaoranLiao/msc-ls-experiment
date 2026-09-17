@@ -18,6 +18,12 @@ TARGETS = (
     pytest.param(d3, d3.build_steane_to_rotated_d3_lattice_surgery_circuit, id="d3"),
     pytest.param(d5, d5.build_steane_to_rotated_d5_lattice_surgery_circuit, id="d5"),
 )
+PATCH_SCHEDULE_CASES = (
+    (11, "hirano"),
+    (11, "minimal_z_only"),
+    (14, "hirano"),
+    (14, "minimal_z_only"),
+)
 EXPECTED_INTERFACE_CHECKS = {
     3: (
         ("Z1a", ("1",), ("a",)),
@@ -65,7 +71,7 @@ LOGICAL_EXPECTATIONS = {
 
 
 # =============================================================================
-# Hirano merge schedule and measurement rules
+# Merge schedules and measurement rules
 # =============================================================================
 
 
@@ -101,8 +107,13 @@ def test_14_site_verification_groups_reuse_each_bell_pair_once() -> None:
 
 
 @pytest.mark.parametrize(("module", "build"), TARGETS)
-@pytest.mark.parametrize("patch_sites", [11, 14])
-def test_measurements_follow_hirano_merge_table(module, build, patch_sites: int) -> None:
+@pytest.mark.parametrize(("patch_sites", "merge_schedule"), PATCH_SCHEDULE_CASES)
+def test_measurements_follow_selected_merge_table(
+    module,
+    build,
+    patch_sites: int,
+    merge_schedule: common.MergeSchedule,
+) -> None:
     """Verify the built circuit against every row of the merge table.
 
     Each of the three merge rounds must measure interface checks first, all
@@ -117,14 +128,18 @@ def test_measurements_follow_hirano_merge_table(module, build, patch_sites: int)
     the hook-safe ``3 -> b -> 5 -> c`` CNOT order at either distance.
     """
     spec = module.TRANSFER_SPEC
-    patch_spec = common.resolve_steane_transfer_patch_spec(patch_sites)
+    patch_spec = common.resolve_steane_transfer_patch_spec(
+        patch_sites,
+        merge_schedule=merge_schedule,
+    )
     expected_interface_checks = EXPECTED_INTERFACE_CHECKS[spec.distance]
     expected_withheld_x_checks = EXPECTED_WITHHELD_X_CHECKS[spec.distance]
-    expected_color_checks = (
-        ("Z0145", "Z0235", "X0235", "Z0246", "X0246"),
-        ("Z0145", "Z0235", "Z0246"),
-        (),
-    )
+    if merge_schedule == "hirano":
+        expected_color_checks = common.STEANE_MERGE_VERIFICATION_ROUNDS
+    elif merge_schedule == "minimal_z_only":
+        expected_color_checks = common.MINIMAL_Z_ONLY_MERGE_VERIFICATION_ROUNDS
+    else:
+        raise ValueError(f"Unsupported merge schedule: {merge_schedule!r}.")
     expected_final_x_checks = {
         "X0235": ("0", "2", "3", "5"),
         "X0246": ("0", "2", "4", "6"),
@@ -137,12 +152,13 @@ def test_measurements_follow_hirano_merge_table(module, build, patch_sites: int)
     assert spec.merged_x_labels == tuple(
         label for label in spec.x_labels if label not in expected_withheld_x_checks
     )
-    assert common.STEANE_MERGE_VERIFICATION_ROUNDS == expected_color_checks
+    assert patch_spec.merge_verification_rounds == expected_color_checks
     assert common.FINAL_X_VERIFICATION_CHECKS == expected_final_x_checks
 
     # Index every physical measurement by semantic family and label.
     circuit = build(
         patch_sites=patch_sites,
+        merge_schedule=merge_schedule,
         injected_state="0",
         include_cultivation=False,
         add_barriers=False,
@@ -151,6 +167,7 @@ def test_measurements_follow_hirano_merge_table(module, build, patch_sites: int)
         spec,
         patch_sites=patch_sites,
         include_cultivation=False,
+        merge_schedule=merge_schedule,
         surface_readout_basis=None,
     )
     measurement_by_bit = {
@@ -231,27 +248,28 @@ def test_measurements_follow_hirano_merge_table(module, build, patch_sites: int)
             for check_name in color_checks
         )
         if patch_sites == 14:
-            expected_flag_sites = (
-                (
-                    EXPECTED_STEANE_BELL_PARTNER_FLAG_SITES["Z0145"],
-                    13,
-                )
-                if round_index == 1
-                else (
-                    *(
+            expected_flag_sites = []
+            for label in patch_spec.merge_bell_partner_flag_labels:
+                if not label.startswith(prefix):
+                    continue
+                if label.endswith("D2_copy_flag"):
+                    expected_flag_sites.append(13)
+                elif label.endswith("_bell_partner_flag"):
+                    check_name = label.removeprefix(prefix).removesuffix(
+                        "_bell_partner_flag"
+                    )
+                    expected_flag_sites.append(
                         EXPECTED_STEANE_BELL_PARTNER_FLAG_SITES[check_name]
-                        for check_name in color_checks
-                    ),
-                    *((13,) if round_index == 2 else ()),
-                )
-            )
+                    )
+                else:
+                    raise ValueError(f"Unsupported Bell-partner flag label: {label!r}.")
             assert tuple(
                 qubit_names[circuit.data[position].qubits[0]]
                 for position in bell_partner_flag_positions
             ) == tuple(patch_spec.site_labels[site] for site in expected_flag_sites)
             if bell_partner_flag_positions:
                 assert bell_partner_flag_positions[0] < color_positions[0]
-            if round_index == 1:
+            if merge_schedule == "hirano" and round_index == 1:
                 assert max(color_positions) < bell_partner_flag_positions[-1]
         elif patch_sites == 11:
             assert "steane_bell_partner_flags" not in positions

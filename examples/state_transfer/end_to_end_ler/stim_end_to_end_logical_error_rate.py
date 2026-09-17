@@ -20,6 +20,7 @@ from examples.state_transfer.lattice_surgery_only_ler.stim_logical_error_rate im
 )
 from msc.noise.fault_injection_stim import add_circuit_depolarizing_noise
 from msc.noise.fault_tolerance_stim import LogicalErrorEstimate
+from msc.state_transfer import common
 from msc.state_transfer import helper_stim as transfer_helper
 from msc.state_transfer import to_d5_rotated_stim as transfer
 
@@ -28,12 +29,15 @@ POST_TRANSFER_STABILIZATION_ROUNDS = transfer.TRANSFER_SPEC.distance
 
 def build_end_to_end_distillation_circuit(
     physical_error_probability: float,
+    *,
+    patch_sites: common.SteanePatchSites = 14,
+    merge_schedule: common.MergeSchedule = "hirano",
 ) -> tuple[
     stim.Circuit,
     stim.Circuit,
     transfer_helper.TransferMeasurementLayout,
 ]:
-    """Build sampling, decoder-model, and layout objects for 14-site MSC-LS.
+    """Build sampling, decoder-model, and layout objects for end-to-end MSC-LS.
 
     All operations from physical-state injection through the fifth d=5
     post-transfer round receive uniform circuit noise. The ideal final syndrome
@@ -47,16 +51,18 @@ def build_end_to_end_distillation_circuit(
         raise ValueError("physical_error_probability must be in [0, 1].")
 
     ideal_circuit = transfer.build_steane_to_rotated_d5_lattice_surgery_circuit(
-        patch_sites=14,
+        patch_sites=patch_sites,
         injected_state="S",
         include_cultivation=True,
+        merge_schedule=merge_schedule,
         surface_readout_basis=None,
         add_ticks=True,
     )
     transfer_layout = transfer_helper.transfer_measurement_layout(
         transfer.TRANSFER_SPEC,
-        patch_sites=14,
+        patch_sites=patch_sites,
         include_cultivation=True,
+        merge_schedule=merge_schedule,
     )
     post_transfer_layout = transfer.append_post_transfer_stabilization(
         ideal_circuit,
@@ -157,6 +163,8 @@ def estimate_end_to_end_complementary_gap_curve(
     *,
     complementary_gap_postselection_thresholds: Iterable[float],
     shots: int,
+    patch_sites: common.SteanePatchSites = 14,
+    merge_schedule: common.MergeSchedule = "hirano",
     batch_size: int = 100_000,
     seed: int | None = None,
 ) -> list[tuple[float, LogicalErrorEstimate]]:
@@ -180,7 +188,11 @@ def estimate_end_to_end_complementary_gap_curve(
         raise ValueError("batch_size must be positive.")
 
     fully_noisy_sampling_circuit, graphlike_decoder_model_circuit, layout = (
-        build_end_to_end_distillation_circuit(physical_error_probability)
+        build_end_to_end_distillation_circuit(
+            physical_error_probability,
+            patch_sites=patch_sites,
+            merge_schedule=merge_schedule,
+        )
     )
     analyzer = LatticeSurgeryOnlyShotAnalyzer(
         fully_noisy_sampling_circuit,

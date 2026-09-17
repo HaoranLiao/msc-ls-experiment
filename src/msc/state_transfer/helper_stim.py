@@ -93,6 +93,7 @@ def transfer_measurement_layout(
     *,
     patch_sites: common.SteanePatchSites = 14,
     include_cultivation: bool,
+    merge_schedule: common.MergeSchedule = "hirano",
 ) -> TransferMeasurementLayout:
     """Map shared measurement labels into Stim's physical append order.
 
@@ -103,10 +104,12 @@ def transfer_measurement_layout(
     append order. ``X_cd`` first reappears in full surface round 1, which is
     appended by the d=5 continuation.
     """
+    patch_spec = common.resolve_steane_transfer_patch_spec(patch_sites, merge_schedule=merge_schedule)
     labels = common.transfer_measurement_labels(
         spec,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
+        merge_schedule=merge_schedule,
         surface_readout_basis=None,
     )
     if patch_sites == 14:
@@ -115,7 +118,7 @@ def transfer_measurement_layout(
         # Bell-ancilla readouts whenever that face is measured.
         labels["steane_verify"] = tuple(
             f"round{round_index + 1}_{check_name}"
-            for round_index, checks in enumerate(common.STEANE_MERGE_VERIFICATION_ROUNDS)
+            for round_index, checks in enumerate(patch_spec.merge_verification_rounds)
             for group in common.group_14_site_superdense_verification_checks(checks)
             for check_name in group.check_names_in_readout_order
         )
@@ -154,7 +157,7 @@ def transfer_measurement_layout(
         )
         if patch_sites == 14:
             for group in common.group_14_site_superdense_verification_checks(
-                common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]
+                patch_spec.merge_verification_rounds[round_index]
             ):
                 _, readouts = steane.select_14_site_patch_superdense_measurement_layers(
                     group.basis,
@@ -169,7 +172,7 @@ def transfer_measurement_layout(
                         raise ValueError(f"Unsupported superdense readout role: {readout_role!r}.")
                     measurement_chunks.append((family, take_measurement_labels(family, 1)))
         elif patch_sites == 11:
-            for _ in common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]:
+            for _ in patch_spec.merge_verification_rounds[round_index]:
                 verification_chunk = (
                     "steane_verify",
                     take_measurement_labels("steane_verify", 1),
@@ -212,6 +215,7 @@ def build_lattice_surgery_circuit(
     patch_sites: common.SteanePatchSites = 14,
     injected_state: steane.StimInjectedStateName = "S",
     include_cultivation: bool = True,
+    merge_schedule: common.MergeSchedule = "hirano",
     add_ticks: bool = True,
 ) -> stim.Circuit:
     """Build the detector-annotated logical-Y-proxy transfer circuit.
@@ -246,7 +250,7 @@ def build_lattice_surgery_circuit(
     serialized helper does not reproduce Hirano's exact concurrent timing,
     idle noise, later code expansion, or complementary-gap lookup.
     """
-    patch_spec = common.resolve_steane_transfer_patch_spec(patch_sites)
+    patch_spec = common.resolve_steane_transfer_patch_spec(patch_sites, merge_schedule=merge_schedule)
     qubits = transfer_qubits(spec, patch_sites=patch_sites)
     steane_patch = [qubits[label] for label in patch_spec.site_labels]
     surface_qubits = [qubits[label] for label in spec.surface_order]
@@ -321,7 +325,7 @@ def build_lattice_surgery_circuit(
             round_label=f"merged interval round {round_index + 1}",
             add_ticks=add_ticks,
         )
-        verification_checks = common.STEANE_MERGE_VERIFICATION_ROUNDS[round_index]
+        verification_checks = patch_spec.merge_verification_rounds[round_index]
         if patch_sites == 11:
             for check_name in verification_checks:
                 steane.append_11_site_patch_stabilizer_measurement(
@@ -372,6 +376,7 @@ def build_lattice_surgery_circuit(
         spec,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
+        merge_schedule=merge_schedule,
     )
 
     # 6. Hard-postselect color/interface checks, then retain surface history for decoding.

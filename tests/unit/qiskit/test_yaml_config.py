@@ -22,6 +22,7 @@ from msc.state_transfer.tomography_qiskit import (
 TOMOGRAPHY_CONFIG: dict[str, object] = {
     "target_distance": 5,
     "patch_sites": 14,
+    "merge_schedule": "hirano",
     "full_post_selection": False,
     "persistent_surface_x_post_selection": True,
     "post_transfer_stabilizer_rounds": 2,
@@ -46,13 +47,21 @@ def _bitstring(positions: tuple[int, ...], width: int) -> str:
 
 
 @pytest.mark.parametrize(
-    ("target_distance", "patch_sites", "rounds", "add_barriers", "encoder_flags"),
-    ((3, 11, 2, False, 4), (5, 14, 4, True, 5)),
+    (
+        "target_distance",
+        "patch_sites",
+        "merge_schedule",
+        "rounds",
+        "add_barriers",
+        "encoder_flags",
+    ),
+    ((3, 11, "minimal_z_only", 2, False, 4), (5, 14, "hirano", 4, True, 5)),
 )
 def test_tomography_yaml_matches_constructed_circuits_and_analysis(
     tmp_path: Path,
     target_distance: TomographyTargetDistance,
     patch_sites: common.SteanePatchSites,
+    merge_schedule: common.MergeSchedule,
     rounds: int,
     add_barriers: bool,
     encoder_flags: int,
@@ -61,6 +70,7 @@ def test_tomography_yaml_matches_constructed_circuits_and_analysis(
         tmp_path,
         target_distance=target_distance,
         patch_sites=patch_sites,
+        merge_schedule=merge_schedule,
         post_transfer_stabilizer_rounds=rounds,
         add_barriers=add_barriers,
     )
@@ -69,9 +79,14 @@ def test_tomography_yaml_matches_constructed_circuits_and_analysis(
 
     expected_data_qubits = target_distance**2
     expected_stabilizers_per_basis = (expected_data_qubits - 1) // 2
+    expected_steane_verification_bits = {
+        "hirano": 8,
+        "minimal_z_only": 5,
+    }[merge_schedule]
     for basis, circuit in circuits.items():
         registers = {register.name: register for register in circuit.cregs}
         assert len(registers["enc_flags"]) == encoder_flags
+        assert len(registers["steane_verify"]) == expected_steane_verification_bits
         assert len(registers["post_transfer_surface_z"]) == (
             rounds * expected_stabilizers_per_basis
         )
@@ -131,6 +146,7 @@ def test_ler_yaml_matches_sweep_circuits_and_analysis(tmp_path: Path) -> None:
         tmp_path,
         target_distance=3,
         patch_sites=11,
+        merge_schedule="minimal_z_only",
         persistent_surface_x_post_selection=False,
         post_transfer_stabilizer_rounds=list(rounds),
     )
@@ -156,6 +172,7 @@ def test_ler_yaml_matches_sweep_circuits_and_analysis(tmp_path: Path) -> None:
         for basis, circuit in circuits.items():
             registers = {register.name: register for register in circuit.cregs}
             assert len(registers["enc_flags"]) == 4
+            assert len(registers["steane_verify"]) == 5
             assert len(registers["post_transfer_surface_z"]) == 4 * round_count
             assert len(registers["post_transfer_surface_x"]) == 4 * round_count
             assert len(registers[f"surface_data_{basis.lower()}"]) == 9
@@ -169,3 +186,10 @@ def test_ler_yaml_matches_sweep_circuits_and_analysis(tmp_path: Path) -> None:
     assert all(point.tomography.accepted_x_shots == 10 for point in summary.points)
     assert all(point.tomography.accepted_z_shots == 10 for point in summary.points)
     assert summary.fit.logical_error_rate_per_round == pytest.approx(0.0, abs=1e-8)
+
+
+def test_yaml_rejects_unknown_merge_schedule(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path, merge_schedule="unknown")
+
+    with pytest.raises(ValueError, match="merge_schedule"):
+        build_ty_tomography_circuits(circuit_config_path=config_path)

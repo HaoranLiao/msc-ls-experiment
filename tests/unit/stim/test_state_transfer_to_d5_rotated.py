@@ -5,11 +5,17 @@ from collections import Counter
 import numpy as np
 import pytest
 
+from examples.state_transfer.end_to_end_ler.stim_end_to_end_logical_error_rate import (
+    build_end_to_end_distillation_circuit,
+    estimate_end_to_end_complementary_gap_curve,
+)
 from examples.state_transfer.lattice_surgery_only_ler.stim_logical_error_rate import (
     LATTICE_SURGERY_EXPERIMENTS,
     LatticeSurgeryOnlyShotAnalyzer,
     build_lattice_surgery_only_circuit,
+    estimate_lattice_surgery_logical_error_curves,
 )
+from msc.noise.fault_injection_stim import add_circuit_depolarizing_noise
 from msc.noise.fault_tolerance_stim import assess_fully_postselected_circuit_fault_distance
 from msc.state_transfer import common
 from msc.state_transfer import helper_stim as helper
@@ -46,6 +52,18 @@ LOGICAL_EXPECTATIONS = {
     "-": {"X": -1.0, "Y": 0.0, "Z": 0.0},
     "i": {"X": 0.0, "Y": 1.0, "Z": 0.0},
     "-i": {"X": 0.0, "Y": -1.0, "Z": 0.0},
+}
+PATCH_SCHEDULE_CASES = (
+    (11, "hirano"),
+    (11, "minimal_z_only"),
+    (14, "hirano"),
+    (14, "minimal_z_only"),
+)
+EXPECTED_POSTSELECTION_DETECTOR_COUNTS = {
+    (11, "hirano"): 35,
+    (11, "minimal_z_only"): 32,
+    (14, "hirano"): 41,
+    (14, "minimal_z_only"): 38,
 }
 
 
@@ -248,13 +266,79 @@ def test_measurements_follow_hirano_merge_table(patch_sites: int) -> None:
 
 
 # =============================================================================
+# Minimal Z-only merge schedule
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    ("probe", "patch_sites", "expected_distance"),
+    (
+        ("X", 11, 3), ("Z", 11, 3), ("S", 11, 2),
+        ("X", 14, 3), ("Z", 14, 3), ("S", 14, 3),
+    ),
+)
+def test_minimal_z_only_with_noisy_cultivation_fault_distance(
+    probe: str, patch_sites: int, expected_distance: int,
+) -> None:
+    """Exhaust physical singles/pairs with the actual cultivated prefix included.
+
+    The 11-site logical-Y path has no Bell-partner flags and exposes malignant
+    pairs that the 14-site superdense readouts reject. Its X/Z diagnostic axes
+    and all 14-site probes retain distance three.
+    """
+    if probe == "S":
+        noisy, _, _ = build_end_to_end_distillation_circuit(
+            .001, patch_sites=patch_sites, merge_schedule="minimal_z_only",
+        )
+    elif probe in ("X", "Z"):
+        circuit = transfer.build_steane_to_rotated_d5_lattice_surgery_circuit(
+            patch_sites=patch_sites, merge_schedule="minimal_z_only", include_cultivation=True,
+            surface_readout_basis="Z" if probe == "X" else "X", full_post_selection=True,
+        )
+        receiver = helper.transfer_qubits(transfer.TRANSFER_SPEC, patch_sites=patch_sites)["a"]
+        steane_qubits = helper.transfer_qubits(
+            transfer.TRANSFER_SPEC, patch_sites=patch_sites,
+        )
+        steane_data = [steane_qubits[label] for label in common.HIRANO_STEANE_DATA_ORDER]
+        split = next(
+            i for i, op in enumerate(circuit)
+            if op.name == "RX" and receiver in [target.value for target in op.targets_copy()]
+        )
+        noisy = add_circuit_depolarizing_noise(circuit[:split], p=.001)
+        # Rotate only the diagnostic axis; injection/QED/cultivation remain noisy.
+        noisy.append("S", steane_data)  # Logical S-dagger maps +Y to +X.
+        if probe == "X":
+            noisy.append("H", steane_data)
+        noisy += add_circuit_depolarizing_noise(circuit[split:], p=.001)
+    else:
+        raise ValueError(f"Unknown probe: {probe}")
+    detectors, logical = noisy.without_noise().compile_detector_sampler(seed=19).sample(
+        64, separate_observables=True,
+    )
+    assert not detectors.any() and not logical.any()
+    assessment = assess_fully_postselected_circuit_fault_distance(
+        experiment_name=f"{patch_sites}-site cultivated minimal_z_only {probe}", circuit=noisy,
+        max_exhaustive_weight=2, find_witness_weight=3,
+    )
+    assert not assessment.malignant_single_faults
+    assert assessment.malignant_pair_count == (12 if expected_distance == 2 else 0)
+    assert (assessment.first_malignant_pair is not None) == (expected_distance == 2)
+    assert assessment.certified_distance == expected_distance
+
+
+# =============================================================================
 # Logical correctness of the transferred state
 # =============================================================================
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("patch_sites", [11, 14])
-def test_transferred_pauli_expectation_values(patch_sites: int) -> None:
+@pytest.mark.parametrize(
+    ("patch_sites", "merge_schedule"),
+    PATCH_SCHEDULE_CASES,
+)
+def test_transferred_pauli_expectation_values(
+    patch_sites: int, merge_schedule: common.MergeSchedule,
+) -> None:
     """Check corrected X/Z observables after five full surface rounds.
 
     The six Pauli eigenstates exercise deterministic and unbiased X/Z cases. The
@@ -280,6 +364,7 @@ def test_transferred_pauli_expectation_values(patch_sites: int) -> None:
         circuit = helper.build_lattice_surgery_circuit(
             transfer.TRANSFER_SPEC,
             patch_sites=patch_sites,
+            merge_schedule=merge_schedule,
             injected_state=state,
             include_cultivation=include_cultivation,
             add_ticks=False,
@@ -287,6 +372,7 @@ def test_transferred_pauli_expectation_values(patch_sites: int) -> None:
         transfer_layout = helper.transfer_measurement_layout(
             transfer.TRANSFER_SPEC,
             patch_sites=patch_sites,
+            merge_schedule=merge_schedule,
             include_cultivation=include_cultivation,
         )
         layout = transfer.append_post_transfer_and_readout(
@@ -323,10 +409,11 @@ def test_transferred_pauli_expectation_values(patch_sites: int) -> None:
 
 
 @pytest.mark.parametrize("experiment", LATTICE_SURGERY_EXPERIMENTS)
-@pytest.mark.parametrize("patch_sites", [11, 14])
+@pytest.mark.parametrize(("patch_sites", "merge_schedule"), PATCH_SCHEDULE_CASES)
 def test_postselected_color_interface_detector_policy(
     experiment,
     patch_sites: int,
+    merge_schedule: common.MergeSchedule,
 ) -> None:
     """Verify the selective detector mask across the complete noisy circuit.
 
@@ -338,6 +425,7 @@ def test_postselected_color_interface_detector_policy(
         1e-3,
         experiment=experiment,
         patch_sites=patch_sites,
+        merge_schedule=merge_schedule,
     )
     analyzer = LatticeSurgeryOnlyShotAnalyzer(
         circuit,
@@ -442,18 +530,30 @@ def test_postselected_color_interface_detector_policy(
         post_transfer_z_detector_start,
         readout_detector_start,
     }.isdisjoint(expected_postselection_detector_indices)
-    if patch_sites == 14:
-        assert len(analyzer._postselection_detector_indices) == 41
-        assert circuit.num_detectors - ideal_input_detector_count == 232
+    expected_detector_count = EXPECTED_POSTSELECTION_DETECTOR_COUNTS[
+        (patch_sites, merge_schedule)
+    ]
+    assert len(analyzer._postselection_detector_indices) == expected_detector_count
+    assert circuit.num_detectors - ideal_input_detector_count == expected_detector_count + 191
 
 
 @pytest.mark.parametrize("experiment", LATTICE_SURGERY_EXPERIMENTS)
-@pytest.mark.parametrize("patch_sites", [11, 14])
-def test_fully_postselected_lattice_surgery_has_fault_distance_three(
+@pytest.mark.parametrize(
+    ("patch_sites", "merge_schedule"),
+    PATCH_SCHEDULE_CASES,
+)
+def test_fully_postselected_lattice_surgery_only_has_fault_distance_three(
     experiment,
     patch_sites: int,
+    merge_schedule: common.MergeSchedule,
 ) -> None:
-    """Certify physical fault distance three under full postselection.
+    """Certify stage-only physical fault distance three under full postselection.
+
+    ``build_lattice_surgery_only_circuit`` keeps injection, QED, and cultivation
+    ideal, so this audit includes fault locations only from surface preparation
+    through lattice surgery, post-transfer rounds, and readout. It therefore
+    does not certify the fully noisy cultivated prefix exercised separately by
+    ``test_minimal_z_only_with_noisy_cultivation_fault_distance``.
 
     The direct-parity audit applies only when every detector rejects. It does not
     certify the decoded ``full_post_selection=False`` branch, which requires a
@@ -463,6 +563,7 @@ def test_fully_postselected_lattice_surgery_has_fault_distance_three(
         1e-3,
         experiment=experiment,
         patch_sites=patch_sites,
+        merge_schedule=merge_schedule,
         full_post_selection=True,
     )
     assessment = assess_fully_postselected_circuit_fault_distance(

@@ -36,6 +36,7 @@ MERGED_BOUNDARY_CHECKS = TRANSFER_SPEC.merged_boundary_checks
 def build_steane_to_rotated_d3_lattice_surgery_circuit(
     *,
     patch_sites: common.SteanePatchSites = 14,
+    merge_schedule: common.MergeSchedule = "hirano",
     injected_state: InjectedStateName = "Ty",
     cultivated_state: CultivatedStateName = "Ty",
     include_cultivation: bool = True,
@@ -69,6 +70,7 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     circuit = helper.build_lattice_surgery_circuit(
         TRANSFER_SPEC,
         patch_sites=patch_sites,
+        merge_schedule=merge_schedule,
         injected_state=injected_state,
         cultivated_state=cultivated_state,
         include_cultivation=include_cultivation,
@@ -136,6 +138,7 @@ def parse_transfer_measurements(
     bitstring: str,
     *,
     patch_sites: common.SteanePatchSites = 14,
+    merge_schedule: common.MergeSchedule = "hirano",
     include_cultivation: bool = True,
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
@@ -154,6 +157,7 @@ def parse_transfer_measurements(
         bitstring,
         spec=TRANSFER_SPEC,
         patch_sites=patch_sites,
+        merge_schedule=merge_schedule,
         include_cultivation=include_cultivation,
         post_transfer_stabilizer_rounds=resolved_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,

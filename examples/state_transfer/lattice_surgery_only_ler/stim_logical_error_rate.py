@@ -71,6 +71,7 @@ def build_lattice_surgery_only_circuit(
     *,
     experiment: LogicalErrorExperiment,
     patch_sites: common.SteanePatchSites = 14,
+    merge_schedule: common.MergeSchedule = "hirano",
     full_post_selection: bool = False,
 ) -> tuple[stim.Circuit, transfer_helper.TransferMeasurementLayout]:
     """Build the detector-annotated lattice-surgery-only experiment.
@@ -103,6 +104,10 @@ def build_lattice_surgery_only_circuit(
        destructive measurement of all 25 data qubits follows, with compatible
        readout-boundary detectors.
 
+    ``minimal_z_only`` instead jointly extracts Z0145/Z0235 in round 1 and
+    all three Z checks in round 2, with every Bell-partner/copy flag retained.
+    The source X checks are reconstructed at final demolition.
+
     The selected Steane encoder and post-injection QED before these phases are
     ideal. The final observable combines the appropriate five-qubit logical
     support within the all-data readout with the transfer-frame records.
@@ -127,6 +132,7 @@ def build_lattice_surgery_only_circuit(
     # Build the ideal input and transfer, then verify its measurement layout.
     circuit = transfer.build_steane_to_rotated_d5_lattice_surgery_circuit(
         patch_sites=patch_sites,
+        merge_schedule=merge_schedule,
         injected_state=experiment.injected_state,
         include_cultivation=False,
         surface_readout_basis=None,
@@ -135,6 +141,7 @@ def build_lattice_surgery_only_circuit(
     transfer_layout = transfer_helper.transfer_measurement_layout(
         transfer.TRANSFER_SPEC,
         patch_sites=patch_sites,
+        merge_schedule=merge_schedule,
         include_cultivation=False,
     )
     if circuit.num_measurements != transfer_layout.num_measurements:
@@ -363,6 +370,7 @@ def estimate_lattice_surgery_logical_error_probability(
     experiment: LogicalErrorExperiment,
     shots: int,
     patch_sites: common.SteanePatchSites = 14,
+    merge_schedule: common.MergeSchedule = "hirano",
     full_post_selection: bool = False,
     complementary_gap_postselection_threshold: float | None = None,
     batch_size: int = 100_000,
@@ -381,6 +389,7 @@ def estimate_lattice_surgery_logical_error_probability(
         physical_error_probability,
         experiment=experiment,
         patch_sites=patch_sites,
+        merge_schedule=merge_schedule,
         full_post_selection=full_post_selection,
     )
     return sample_detector_logical_error_probability(
@@ -404,6 +413,7 @@ def estimate_lattice_surgery_logical_error_curves(
     experiments: Sequence[LogicalErrorExperiment] = LATTICE_SURGERY_EXPERIMENTS,
     shots: int,
     patch_sites: common.SteanePatchSites = 14,
+    merge_schedule: common.MergeSchedule = "hirano",
     full_post_selection: bool = False,
     complementary_gap_postselection_threshold: float | None = None,
     batch_size: int = 100_000,
@@ -439,6 +449,7 @@ def estimate_lattice_surgery_logical_error_curves(
                 experiment=experiment,
                 shots=shots,
                 patch_sites=patch_sites,
+                merge_schedule=merge_schedule,
                 full_post_selection=full_post_selection,
                 complementary_gap_postselection_threshold=complementary_gap_postselection_threshold,
                 batch_size=batch_size,
@@ -454,6 +465,7 @@ def estimate_lattice_surgery_logical_error_curves(
                 experiment=experiment,
                 shots=shots,
                 patch_sites=patch_sites,
+                merge_schedule=merge_schedule,
                 full_post_selection=full_post_selection,
                 complementary_gap_postselection_threshold=complementary_gap_postselection_threshold,
                 batch_size=batch_size,

@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from msc.state_transfer.common import (
+    MergeSchedule,
     SteanePatchSites,
     SurfaceCodeTransferSpec,
     interpret_transfer_measurements,
@@ -18,6 +19,7 @@ def parse_transfer_measurements(
     spec: SurfaceCodeTransferSpec,
     patch_sites: SteanePatchSites = 14,
     include_cultivation: bool = True,
+    merge_schedule: MergeSchedule = "hirano",
 ) -> dict[str, object]:
     """Label one record row, then derive checks, recovery, and Pauli byproducts."""
     shot = np.asarray(shot, dtype=bool)
@@ -27,6 +29,7 @@ def parse_transfer_measurements(
         spec,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
+        merge_schedule=merge_schedule,
     )
     if shot.shape[0] != layout.num_measurements:
         raise ValueError(
