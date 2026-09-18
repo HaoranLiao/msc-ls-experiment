@@ -163,13 +163,18 @@ def _build_cultivation_with_logical_measurement(
     basis: str,
     *,
     n_rounds: int = 1,
+    add_ticks: bool = False,
 ) -> stim.Circuit:
-    """Build injection, cultivation, and destructive logical readout."""
+    """Build injection, cultivation, and destructive logical readout.
+
+    Pass ``add_ticks=True`` when the circuit will be noised: ticks keep
+    sequential shared-qubit CNOTs unfused so noise lands on each.
+    """
     circuit = patch.build_circuit(
         state,
         cultivation_rounds=n_rounds,
         add_qed_round=True,
-        add_ticks=False,
+        add_ticks=add_ticks,
     )
     support = patch.default_logical_z if basis == "Z" else patch.default_logical_x
     patch.append_logical_measurement(
@@ -343,6 +348,7 @@ class TestNoisyCultivationWithRounds:
                     "S",
                     basis,
                     n_rounds=n_rounds,
+                    add_ticks=True,
                 )
             )
             shots = _sample(
@@ -377,6 +383,7 @@ class TestNoisyCultivationWithRounds:
                     "S",
                     "Y",
                     n_rounds=n_rounds,
+                    add_ticks=True,
                 )
             )
             shots = _sample(
@@ -409,7 +416,7 @@ class TestNoisyCultivationWithRounds:
             "S",
             cultivation_rounds=0,
             add_qed_round=False,
-            add_ticks=False,
+            add_ticks=True,  # noised below; ticks keep shared-qubit CNOTs unfused
         )
         patch.append_logical_measurement(
             uncultivated_circuit,
@@ -432,6 +439,7 @@ class TestNoisyCultivationWithRounds:
                 patch,
                 "S",
                 "Y",
+                add_ticks=True,
             )
         )
         cultivated_shots = _sample(cultivated_circuit, shots=NUM_SHOTS)
@@ -451,14 +459,18 @@ class TestNoisyCultivationWithRounds:
 
 
 class TestCultivationFaultTolerance:
-    """Injection, QED, and cultivation have physical fault distance three.
+    """Physical fault distance of injection, QED, and cultivation.
 
-    Only the 11-site patch has a ``skip_cx_1_4`` variant, so it keeps its own
-    parametrized test; the 14-site patch has one default-schedule test.
+    The 14-site patch has distance three. The 11-site patch has distance two:
+    once shared-ancilla parity CNOTs are no longer fused into one Stim gate,
+    circuit-level noise exposes weight-2 hook-fault pairs (e.g. Z9*Z7 with Z8)
+    that flip logical Y with all detectors silent.
     """
 
+    # Both skip_cx_1_4 values are exercised to confirm the drop to distance two
+    # is intrinsic: keeping CX 1->4 in the fold network does not restore three.
     @pytest.mark.parametrize("skip_cx_1_4", [False, True])
-    def test_11_site_injection_qed_cultivation_has_fault_distance_three(
+    def test_11_site_injection_qed_cultivation_has_fault_distance_two(
         self,
         skip_cx_1_4: bool,
     ) -> None:
@@ -490,15 +502,16 @@ class TestCultivationFaultTolerance:
             find_witness_weight=3,
         )
 
+        # No weight-1 logical fault, but weight-2 malignant pairs exist, so the
+        # circuit-level distance is two (was reported as three when the parity
+        # CNOTs were fused and their intermediate hook faults were invisible).
         assert not assessment.malignant_single_faults
-        assert assessment.malignant_pair_count == 0
-        assert assessment.first_malignant_pair is None
-        assert assessment.first_malignant_triple is not None
-        assert assessment.certified_distance == 3
+        assert assessment.malignant_pair_count > 0
+        assert assessment.first_malignant_pair is not None
+        assert assessment.certified_distance == 2
 
-        witness = assessment.first_malignant_triple
-        assert witness.weight == 3
-        assert len({fault.location_key for fault in witness.faults}) == 3
+        witness = assessment.first_malignant_pair
+        assert witness.weight == 2
         assert witness.combined_detector_mask == 0
         assert witness.combined_observable_mask == 1
 
@@ -570,7 +583,7 @@ class TestShotAndDetectorPostselectionAgree:
         patch: PatchCultivationSuite,
     ) -> None:
         noisy_circuit = add_circuit_depolarizing_noise(
-            patch.build_circuit("S", add_qed_round=True, add_ticks=False),
+            patch.build_circuit("S", add_qed_round=True, add_ticks=True),
             p=0.02,
         )
         n_postselection_bits = _n_postselection_bits(patch, n_rounds=1)

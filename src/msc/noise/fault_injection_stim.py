@@ -97,6 +97,15 @@ def add_circuit_depolarizing_noise(
             elif gate.is_unitary and gate.is_single_qubit_gate:
                 noisy_circuit.append("DEPOLARIZE1", qubits, p)
             elif gate.is_unitary and gate.is_two_qubit_gate:
+                if len(qubits) != len(set(qubits)):
+                    # A multi-pair gate sharing a qubit runs sequentially, but one
+                    # DEPOLARIZE2 after it cannot model faults between the gates.
+                    raise ValueError(
+                        f"two-qubit gate {instruction_name!r} reuses a qubit "
+                        f"across its pairs ({qubits}); circuit-level noise cannot "
+                        "place a fault location between the physically sequential "
+                        "gates. Separate the pairs into distinct instructions."
+                    )
                 noisy_circuit.append("DEPOLARIZE2", qubits, p)
 
         return noisy_circuit

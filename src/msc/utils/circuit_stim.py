@@ -93,8 +93,9 @@ def append_scheduled_parity_measurements(
         false only when the entire argument is omitted; a supplied sequence
         must contain one value per row.
     add_ticks
-        Whether to separate reset, interaction, and measurement layers with
-        ticks.
+        Whether to separate the reset, interaction, and measurement layers with
+        ticks. Consecutive interaction columns are always tick-separated
+        regardless, so their shared-ancilla CNOTs are not fused.
 
     Notes
     -----
@@ -145,7 +146,11 @@ def append_scheduled_parity_measurements(
     if used_ancillas and add_ticks:
         circuit.append("TICK", [])
 
-    for data_qubits_at_step in schedule_layers:
+    for layer_index, data_qubits_at_step in enumerate(schedule_layers):
+        if layer_index > 0 and not add_ticks:
+            # Separate sequential shared-ancilla columns so Stim does not fuse
+            # them into one multi-pair gate (which would hide hook faults).
+            circuit.append("TICK", [])
         cx_targets: list[int] = []
         cy_targets: list[int] = []
         for data_qubit, basis, ancilla in zip(
@@ -200,6 +205,8 @@ def append_parity_measurement(
         data_qubit_schedules=(tuple(data_qubits),),
         ancilla_qubits=(ancilla_qubit,),
         invert_results=(invert_result,),
+        # Tick between the shared-ancilla CNOTs so noise sees each separately.
+        add_ticks=True,
     )
 
 
@@ -242,7 +249,12 @@ def append_pauli_string_measurement(
         return
 
     circuit.append("RX", [ancilla_qubit])
-    for pauli, data_qubit in zip(selected_paulis, selected_data_qubits, strict=True):
+    for index, (pauli, data_qubit) in enumerate(
+        zip(selected_paulis, selected_data_qubits, strict=True)
+    ):
+        if index > 0:
+            # Tick between shared-ancilla gates so same-Pauli runs are not fused.
+            circuit.append("TICK", [])
         circuit.append({"X": "CX", "Y": "CY", "Z": "CZ"}[pauli], [ancilla_qubit, data_qubit])
     measurement_target: int | stim.GateTarget = ancilla_qubit
     if invert_result:

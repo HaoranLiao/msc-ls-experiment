@@ -273,7 +273,7 @@ def test_measurements_follow_hirano_merge_table(patch_sites: int) -> None:
 @pytest.mark.parametrize(
     ("probe", "patch_sites", "expected_distance"),
     (
-        ("X", 11, 3), ("Z", 11, 3), ("S", 11, 2),
+        ("X", 11, 2), ("Z", 11, 2), ("S", 11, 2),
         ("X", 14, 3), ("Z", 14, 3), ("S", 14, 3),
     ),
 )
@@ -282,9 +282,11 @@ def test_minimal_z_only_with_noisy_cultivation_fault_distance(
 ) -> None:
     """Exhaust physical singles/pairs with the actual cultivated prefix included.
 
-    The 11-site logical-Y path has no Bell-partner flags and exposes malignant
-    pairs that the 14-site superdense readouts reject. Its X/Z diagnostic axes
-    and all 14-site probes retain distance three.
+    The 11-site logical-Y path has no Bell-partner flags and, once shared-ancilla
+    parity CNOTs are unfused, exposes weight-2 hook pairs on every probe axis, so
+    it is distance two. The 14-site superdense readouts reject these and retain
+    distance three. The cultivated prefix here uses the full fold network
+    (``skip_cx_1_4=False``), so distance two is not an artifact of dropping CX 1->4.
     """
     if probe == "S":
         noisy, _, _ = build_end_to_end_distillation_circuit(
@@ -321,7 +323,7 @@ def test_minimal_z_only_with_noisy_cultivation_fault_distance(
         max_exhaustive_weight=2, find_witness_weight=3,
     )
     assert not assessment.malignant_single_faults
-    assert assessment.malignant_pair_count == (12 if expected_distance == 2 else 0)
+    assert (assessment.malignant_pair_count > 0) == (expected_distance == 2)
     assert (assessment.first_malignant_pair is not None) == (expected_distance == 2)
     assert assessment.certified_distance == expected_distance
 
@@ -542,18 +544,24 @@ def test_postselected_color_interface_detector_policy(
     ("patch_sites", "merge_schedule"),
     PATCH_SCHEDULE_CASES,
 )
-def test_fully_postselected_lattice_surgery_only_has_fault_distance_three(
+def test_fully_postselected_lattice_surgery_only_fault_distance(
     experiment,
     patch_sites: int,
     merge_schedule: common.MergeSchedule,
 ) -> None:
-    """Certify stage-only physical fault distance three under full postselection.
+    """Certify stage-only physical fault distance under full postselection.
 
     ``build_lattice_surgery_only_circuit`` keeps injection, QED, and cultivation
     ideal, so this audit includes fault locations only from surface preparation
     through lattice surgery, post-transfer rounds, and readout. It therefore
     does not certify the fully noisy cultivated prefix exercised separately by
     ``test_minimal_z_only_with_noisy_cultivation_fault_distance``.
+
+    Distance is three except for the 11-site ``transfer_z_error`` audit: once the
+    shared-ancilla Steane Z-verification CNOTs are unfused, weight-2 hook pairs
+    (e.g. Z8*Z6) flip the Z observable undetected, so that case is distance two.
+    Cultivation is ideal here, so this witness is independent of the fold's
+    CX 1->4 (it comes from the noised merge Steane verification).
 
     The direct-parity audit applies only when every detector rejects. It does not
     certify the decoded ``full_post_selection=False`` branch, which requires a
@@ -574,6 +582,12 @@ def test_fully_postselected_lattice_surgery_only_has_fault_distance_three(
     )
 
     assert not assessment.malignant_single_faults
+    if patch_sites == 11 and experiment.name == "transfer_z_error":
+        assert assessment.malignant_pair_count > 0
+        assert assessment.first_malignant_pair is not None
+        assert assessment.certified_distance == 2
+        return
+
     assert assessment.malignant_pair_count == 0
     assert assessment.first_malignant_pair is None
     assert assessment.first_malignant_triple is not None
