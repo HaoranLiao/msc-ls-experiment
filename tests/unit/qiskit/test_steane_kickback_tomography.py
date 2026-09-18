@@ -276,11 +276,9 @@ class TestKickbackTomographyCountsAnalysis:
         assert layout.detector_positions == expected_detector_positions
 
     @pytest.mark.parametrize("patch_sites", [11, 14])
-    @pytest.mark.parametrize("no_reset", [False, True])
     def test_summary_correctly_postselects_and_classifies_kt_root_outcomes(
         self,
         patch_sites: int,
-        no_reset: bool,
     ) -> None:
         """Postselect synthetic counts and classify the two KT folded roots.
 
@@ -302,7 +300,6 @@ class TestKickbackTomographyCountsAnalysis:
             include_prep_cultivation=False,
             qed_cycle_indices=(),
             final_stabilizer_basis="NONE",
-            no_reset=no_reset,
             add_barriers=False,
         )
         layout = experiment.layout
@@ -329,22 +326,9 @@ class TestKickbackTomographyCountsAnalysis:
             rejected_round_check = bitstring_with(layout.tomography_measure_round.flag_positions[3])
         else:
             assert check_root_check is not None
-            measurement_check_for_root_one = (
-                (measurement_root_check,)
-                if layout.tomography_measure_round.reset_before_root_check
-                else ()
-            )
-            check_check_for_root_one = (
-                (check_root_check,) if layout.tomography_check_round.reset_before_root_check else ()
-            )
-            rejected_round_check = bitstring_with(
-                measurement_root,
-                *(
-                    ()
-                    if layout.tomography_measure_round.reset_before_root_check
-                    else (measurement_root_check,)
-                ),
-            )
+            measurement_check_for_root_one = (measurement_root_check,)
+            check_check_for_root_one = (check_root_check,)
+            rejected_round_check = bitstring_with(measurement_root)
 
         good_error = bitstring_with(
             measurement_root,
@@ -409,20 +393,17 @@ class TestNoiselessKickbackTomography:
 
     @pytest.mark.parametrize("cultivated_state", ["T", "Ty"])
     @pytest.mark.parametrize("patch_sites", [11, 14])
-    @pytest.mark.parametrize("no_reset", [False, True])
     def test_cultivated_magic_state_has_zero_kt_logical_error(
         self,
         cultivated_state: CultivatedStateName,
         patch_sites: int,
-        no_reset: bool,
     ) -> None:
         experiment = build_kickback_tomography_experiment(
             cultivated_state=cultivated_state,
             patch_sites=patch_sites,
-            no_reset=no_reset,
             add_barriers=False,
         )
-        shots = 100 if patch_sites == 14 and no_reset else 10
+        shots = 10
         counts = (
             AerSimulator()
             .run(experiment.circuit, shots=shots, seed_simulator=42)
@@ -431,10 +412,7 @@ class TestNoiselessKickbackTomography:
         )
         summary = analyze_kickback_tomography_counts(counts, experiment.layout)
 
-        if patch_sites == 14 and no_reset:
-            assert summary.retained_shots > 0
-        else:
-            assert summary.retained_shots == shots
+        assert summary.retained_shots == shots
         assert summary.logical_error_shots == 0
         assert summary.logical_error_probability == 0.0
 
@@ -495,12 +473,10 @@ class TestNoiselessKickbackTomography:
     @pytest.mark.slow
     @pytest.mark.parametrize("cultivated_state", ["T", "Ty"])
     @pytest.mark.parametrize("patch_sites", [11, 14])
-    @pytest.mark.parametrize("no_reset", [False, True])
     def test_preparation_cultivation_projects_before_kt(
         self,
         cultivated_state: CultivatedStateName,
         patch_sites: int,
-        no_reset: bool,
     ) -> None:
         """
         With preparation cultivation, the state is projected to the selected
@@ -513,7 +489,6 @@ class TestNoiselessKickbackTomography:
             include_prep_cultivation=True,
             qed_cycle_indices=(),
             final_stabilizer_basis="NONE",
-            no_reset=no_reset,
             add_barriers=False,
         )
         counts = AerSimulator().run(experiment.circuit, shots=NUM_SHOTS).result().get_counts()

@@ -13,9 +13,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
-from qiskit.transpiler import PassManager
 
-from msc.decoding.measurement_frame import MeasurementFrame
 from msc.steane_code.kickback_tomography_common import (
     KT_DEFAULT_QED_CYCLE_INDICES,
     KT_STABILIZER_BITS_PER_CYCLE,
@@ -43,7 +41,6 @@ from msc.steane_code.state_injection_qiskit import (
     append_14_site_patch_abstract_routed_encoder,
     append_14_site_patch_superdense_stabilizer_measurement,
 )
-from msc.utils.circuit_qiskit import RemoveResetOperations
 from msc.utils.normalize import qiskit_bit_value
 
 # =============================================================================
@@ -70,7 +67,6 @@ def build_kickback_tomography_experiment(
     measure_encoder_flags: bool = False,
     qed_cycle_indices: Iterable[int] = KT_DEFAULT_QED_CYCLE_INDICES,
     final_stabilizer_basis: FinalStabilizerMode = "X",
-    no_reset: bool = False,
     add_barriers: bool = True,
 ) -> KickbackTomographyExperiment:
     """Build a T/Ty kickback-tomography experiment, defaulting to Ty on 14 sites.
@@ -107,10 +103,6 @@ def build_kickback_tomography_experiment(
     six stabilizers, and ``"NONE"`` omits the final check. A 14-site X- or
     Z-only final block also records and postselects the three default
     Bell-partner flags.
-
-    When ``no_reset`` is true, a final transpiler pass removes every reset for
-    hardware without reset support. Postprocessing uses a measurement frame to
-    compare each repeated helper-root check with its folded-root result.
     """
     spec = resolve_kickback_tomography_patch_spec(patch_sites)
     cultivated_state = normalize_kickback_tomography_state(cultivated_state)
@@ -260,7 +252,6 @@ def build_kickback_tomography_experiment(
         cultivation_round_bits_from_positions(
             tuple(circuit.find_bit(bit).index for bit in prep_creg),
             root_check_index=spec.cultivation_root_check_index,
-            reset_before_root_check=not no_reset,
         )
         if prep_creg is not None
         else None
@@ -275,12 +266,10 @@ def build_kickback_tomography_experiment(
         tomography_measure_round=cultivation_round_bits_from_positions(
             tuple(circuit.find_bit(bit).index for bit in kt_measure_creg),
             root_check_index=spec.cultivation_root_check_index,
-            reset_before_root_check=not no_reset,
         ),
         tomography_check_round=cultivation_round_bits_from_positions(
             tuple(circuit.find_bit(bit).index for bit in kt_check_creg),
             root_check_index=spec.cultivation_root_check_index,
-            reset_before_root_check=not no_reset,
         ),
         qed_cycles=qed_positions,
         qed_cycle_indices=qed_indices,
@@ -318,11 +307,8 @@ def build_kickback_tomography_experiment(
             "qed_cycle_indices": qed_indices,
             "cultivated_state": cultivated_state,
             "final_stabilizer_basis": final_stabilizer_basis,
-            "no_reset": no_reset,
         },
     }
-    if no_reset:
-        circuit = PassManager([RemoveResetOperations()]).run(circuit)
     return KickbackTomographyExperiment(circuit=circuit, layout=layout)
 
 
@@ -435,34 +421,19 @@ def _append_patch_projection_round(
 # =============================================================================
 
 
-_KT_FOLDED_MEASUREMENT_QUBIT = "folded_measurement_site"
-
-
 def _interpret_cultivation_round(
     bitstring: str,
     round_bits: KickbackCultivationRoundBits,
 ) -> tuple[int, int | None]:
-    """Return one round's root and its optional measurement-frame-corrected check.
+    """Return one round's folded root and its optional repeated-root check.
 
-    A reset makes the raw repeated helper-root result report the root; without
-    reset, ``MeasurementFrame`` converts its raw result to the same semantic
-    value. Each round starts a fresh frame.
+    The check is the root re-measured after unfolding. Both reads are reset
+    before measurement, so each raw bit reports its own outcome directly.
     """
-    measurement_frame = MeasurementFrame()
-    root = measurement_frame.advance(
-        _KT_FOLDED_MEASUREMENT_QUBIT,
-        qiskit_bit_value(bitstring, round_bits.folded_root),
-    )
+    root = qiskit_bit_value(bitstring, round_bits.folded_root)
     if round_bits.folded_root_check is None:
         return root, None
-    if round_bits.reset_before_root_check:
-        measurement_frame.reset(_KT_FOLDED_MEASUREMENT_QUBIT)
-
-    root_check = measurement_frame.advance(
-        _KT_FOLDED_MEASUREMENT_QUBIT,
-        qiskit_bit_value(bitstring, round_bits.folded_root_check),
-    )
-    return root, root_check
+    return root, qiskit_bit_value(bitstring, round_bits.folded_root_check)
 
 
 def analyze_kickback_tomography_counts(
@@ -474,9 +445,10 @@ def analyze_kickback_tomography_counts(
     """Analyze Qiskit counts by postselecting and classifying the two KT logical readouts.
 
     Fixed-zero detector bits reject first. Each folded root must also agree
-    with its measurement-frame-corrected helper-root check. Shots whose two
-    roots disagree are retained by default and reported separately. Agreement
-    at zero is a logical success; agreement at one is a logical error.
+    with its repeated-root check (the root re-measured after unfolding),
+    otherwise the shot is discarded. Shots whose two inter-round roots disagree
+    are retained by default and reported separately. Agreement at zero is a
+    logical success; agreement at one is a logical error.
     """
 
     total_shots = sum(counts.values())
@@ -491,7 +463,7 @@ def analyze_kickback_tomography_counts(
         if any(qiskit_bit_value(bitstring, position) for position in layout.detector_positions):
             continue
 
-        # Reset-free repeated-root checks require semantic frame comparison.
+        # Each folded root must agree with its repeated-root check.
         measurement_root, measurement_root_check = _interpret_cultivation_round(
             bitstring,
             layout.tomography_measure_round,

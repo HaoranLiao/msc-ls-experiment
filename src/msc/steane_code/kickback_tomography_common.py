@@ -79,7 +79,6 @@ class KickbackCultivationRoundBits:
     folded_root: int
     flag_positions: tuple[int, ...]
     folded_root_check: int | None
-    reset_before_root_check: bool
 
     @property
     def all_positions(self) -> tuple[int, ...]:
@@ -154,7 +153,6 @@ def cultivation_round_bits_from_positions(
     positions: Sequence[int],
     *,
     root_check_index: int | None,
-    reset_before_root_check: bool,
 ) -> KickbackCultivationRoundBits:
     """Partition one patch record into its logical root, flags, and optional root check.
 
@@ -170,7 +168,6 @@ def cultivation_round_bits_from_positions(
             folded_root=positions[0],
             flag_positions=positions[1:],
             folded_root_check=None,
-            reset_before_root_check=False,
         )
     if root_check_index <= 0 or root_check_index >= len(positions):
         raise ValueError("root_check_index must select a post-root round position.")
@@ -178,7 +175,6 @@ def cultivation_round_bits_from_positions(
         folded_root=positions[0],
         flag_positions=positions[1:root_check_index] + positions[root_check_index + 1 :],
         folded_root_check=positions[root_check_index],
-        reset_before_root_check=reset_before_root_check,
     )
 
 

@@ -85,9 +85,8 @@ def build_kickback_tomography_experiment(
     abstract-routed encoder. When ``measure_encoder_flags`` is true, their
     available flags are measured after encoding and postselected to zero.
 
-    Both patches reset and remeasure their helper root after unfolding. The
-    repeated-root detector accepts either logical branch when the two results
-    agree.
+    Both patches reset and re-measure the fold root after unfolding, and the
+    repeated-root check accepts either logical branch when the two reads agree.
 
     ``qed_cycle_indices`` uses the paper's one-based numbering and defaults to
     ``(1, 3)``. An empty tuple omits the QED cycles. The final stabilizer basis
@@ -137,7 +136,6 @@ def build_kickback_tomography_experiment(
         bits = cultivation_round_bits_from_positions(
             positions,
             root_check_index=spec.cultivation_root_check_index,
-            reset_before_root_check=True,
         )
         record_count += spec.cultivation_measurement_count
         return bits
@@ -314,10 +312,10 @@ def analyze_kickback_tomography_shots(
 
     ``shots`` is a boolean array of shape ``(num_shots, num_measurements)`` from
     ``circuit.compile_sampler().sample(...)``. Fixed-zero detector columns
-    reject first. Each folded root must agree with its repeated helper-root
-    check. Inter-round root disagreements are retained by default and reported
-    separately; agreeing roots classify logical success (zero) or logical
-    error (one).
+    reject first. Each folded root must agree with its repeated-root check (the
+    root re-measured after unfolding). Inter-round root disagreements are
+    retained by default and reported separately; agreeing roots classify logical
+    success (zero) or logical error (one).
     """
     shots = np.asarray(shots, dtype=bool)
     if shots.ndim != 2:
@@ -340,17 +338,13 @@ def analyze_kickback_tomography_shots(
     if layout.detector_positions:
         retained &= ~shots[:, layout.detector_positions].any(axis=1)
 
-    # Each repeated helper-root check must match its round's logical root.
+    # Each repeated-root check must match its round's root.
     measurement_root = shots[:, measurement_round.folded_root]
     check_root = shots[:, check_round.folded_root]
     if measurement_round.folded_root_check is not None:
-        expected_measurement_root_check = (
-            measurement_root if measurement_round.reset_before_root_check else False
-        )
-        retained &= shots[:, measurement_round.folded_root_check] == expected_measurement_root_check
+        retained &= shots[:, measurement_round.folded_root_check] == measurement_root
     if check_round.folded_root_check is not None:
-        expected_check_root_check = check_root if check_round.reset_before_root_check else False
-        retained &= shots[:, check_round.folded_root_check] == expected_check_root_check
+        retained &= shots[:, check_round.folded_root_check] == check_root
 
     # Inter-round disagreement is diagnostic unless explicitly postselected.
     agree = measurement_root == check_root

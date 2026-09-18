@@ -8,26 +8,11 @@ from typing import Any
 from qiskit import QuantumCircuit
 from qiskit.circuit import Gate
 from qiskit.circuit.classical import expr
-from qiskit.dagcircuit import DAGCircuit
-from qiskit.transpiler import TransformationPass
 
 from msc.utils.circuit_common import (
     resolve_logical_measurement_terms,
 )
 from msc.utils.normalize import normalize_pauli_char
-
-# ---------------------------------------------------------------------------
-# Circuit transformations
-# ---------------------------------------------------------------------------
-
-
-class RemoveResetOperations(TransformationPass):
-    """Remove every reset operation from a completed circuit."""
-
-    def run(self, dag: DAGCircuit) -> DAGCircuit:
-        dag.remove_all_ops_named("reset")
-        return dag
-
 
 # ---------------------------------------------------------------------------
 # Gate decompositions
