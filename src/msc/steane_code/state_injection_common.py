@@ -26,7 +26,7 @@ def resolve_patch_stabilizer_indices(
 ) -> tuple[int, ...]:
     """Validate and return an ordered selection of patch stabilizer indices."""
     if stabilizer_indices is None:
-        selected_indices = (0, 1, 2)
+        selected_indices: tuple[int, ...] = (0, 1, 2)
     else:
         selected_indices = tuple(stabilizer_indices)
     if not selected_indices:
@@ -140,7 +140,7 @@ PATCH_11_SITE_HELPER_SITES: tuple[int, ...] = (1, 2, 6, 7)
 # used by the 14-site patch.
 PATCH_11_SITE_COORDS: tuple[tuple[int, int], ...] = (
     (2, 0),  # 0  data  (Steane 0; injection)
-    (1, 1),  # 1  helper (unused routing site)
+    (1, 1),  # 1  helper (face {0,3,4,5} routing ancilla)
     (3, 1),  # 2  helper (face {0,3,4,5} ancilla)
     (0, 2),  # 3  data  (Steane 1)
     (2, 2),  # 4  data  (Steane 3)
@@ -236,16 +236,79 @@ PATCH_11_SITE_ROSENFELD_ENCODER_LAYERS: tuple[tuple[PatchEncoderGateName, tuple]
 
 
 # -----------------------------------------------------------------------------
-# Stabilizer-measurement ancillas
+# Stabilizer-measurement ancillas and routed schedules
 # -----------------------------------------------------------------------------
 
 
 # Map from stabilizer index to the helper site used as its ancilla.
-# Each helper sits at the geometric center of the corresponding face:
+# The first ancilla is adjacent to 0, 4, 5 but NOT 3; site 1 routes that check.
 #   Stabilizer 0 (0, 3, 4, 5)  → helper site 2
 #   Stabilizer 1 (3, 4, 8, 9)  → helper site 6
 #   Stabilizer 2 (4, 5, 9, 10) → helper site 7
 PATCH_11_SITE_STABILIZER_ANCILLA_SITES: tuple[int, ...] = (2, 6, 7)
+
+
+# Per-face Z-extraction schedules, indexed by stabilizer then two-qubit layer.
+# Geometry: Rosenfeld et al., "Magic state cultivation on a superconducting
+# quantum processor", Figs. 1 and S10. The extraction uses only our 11 sites,
+# with every CX between geometric neighbors (hardware-routable, no SWAPs).
+#
+# Face 0345 is not simply connected: ancilla 2 neighbors data 0, 4, 5 but not
+# 3. Site 1 bridges data 3 into the syndrome. Prepare ancilla 2 in |0> and
+# routing ancilla 1 in |+>, thread data 3 through 1 and data 0, then restore
+# data 0; measuring Z2 gives the syndrome. Site 1 returns to |+> disentangled
+# from the data, so it is not measured. Reversing every CX and exchanging X/Z
+# preparation and readout gives X0345. Faces 3489 and 45910 are simply
+# connected and use plain four-layer data->ancilla extraction.
+PATCH_11_SITE_Z_STABILIZER_CNOT_LAYERS = (
+    (
+        ((1, 0),),
+        ((0, 2),),
+        ((4, 2), (1, 0)),
+        ((0, 2), (3, 1)),
+        ((5, 2), (1, 0)),
+        ((0, 2),),
+        ((1, 0),),
+    ),
+    (((3, 6),), ((4, 6),), ((8, 6),), ((9, 6),)),
+    (((4, 7),), ((5, 7),), ((9, 7),), ((10, 7),)),
+)
+
+
+def select_11_site_patch_stabilizer_measurement_layers(
+    basis: PatchStabilizerBasis,
+    stabilizer_indices: Sequence[int] | None,
+):
+    """Schedule selected local checks in parallel, preserving requested readout order.
+
+    Return the ordered indices and one ``(basis, CX layers)`` phase per measured
+    basis. Each phase prepares and reads its selected ancilla sites in the native
+    basis; face 0345 additionally uses routing ancilla 1 (prepared in the
+    opposite basis and left unmeasured).
+    """
+    selected_indices = resolve_patch_stabilizer_indices(stabilizer_indices)
+    selected_schedules = tuple(
+        PATCH_11_SITE_Z_STABILIZER_CNOT_LAYERS[index] for index in selected_indices
+    )
+    z_layers = tuple(
+        tuple(
+            pair
+            for schedule in selected_schedules
+            if layer_index < len(schedule)
+            for pair in schedule[layer_index]
+        )
+        for layer_index in range(max(map(len, selected_schedules)))
+    )
+    # X extraction reverses every CX and swaps preparation/readout bases.
+    x_layers = tuple(tuple((target, control) for control, target in layer) for layer in z_layers)
+    if basis == "X":
+        return selected_indices, (("X", x_layers),)
+    elif basis == "Z":
+        return selected_indices, (("Z", z_layers),)
+    elif basis == "BOTH":
+        return selected_indices, (("X", x_layers), ("Z", z_layers))
+    else:
+        raise ValueError("basis must be 'X', 'Z', or 'BOTH'.")
 
 
 # =============================================================================
@@ -571,7 +634,9 @@ def select_14_site_patch_superdense_measurement_layers(
     }
     if measure_d2_copy_flag:
         selected_ancilla_sites.add(13)
-    active_layers = list(_SUPERDENSE_BELL_PREPARATION_LAYERS)
+    active_layers: list[tuple[tuple[str, tuple], ...]] = list(
+        _SUPERDENSE_BELL_PREPARATION_LAYERS
+    )
 
     if measure_z_stabilizers:
         if measure_d2_copy_flag:

@@ -33,8 +33,6 @@ from msc.steane_code.state_injection_common import (
     PATCH_11_SITE_ROSENFELD_ENCODER_INJECTION_SITE,
     PATCH_11_SITE_ROSENFELD_ENCODER_LAYERS,
     PATCH_11_SITE_STABILIZER_ANCILLA_SITES,
-    PATCH_11_SITE_X_STABILIZERS,
-    PATCH_11_SITE_Z_STABILIZERS,
     PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES,
     PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_INJECTION_SITE,
     PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_LAYERS,
@@ -45,13 +43,12 @@ from msc.steane_code.state_injection_common import (
     PATCH_14_SITE_HIRANO_ENCODER_COORDS,
     PATCH_14_SITE_HIRANO_ENCODER_LAYERS,
     PatchStabilizerBasis,
-    resolve_patch_stabilizer_indices,
+    select_11_site_patch_stabilizer_measurement_layers,
     select_14_site_patch_superdense_measurement_layers,
 )
 from msc.utils import circuit_stim
 from msc.utils.circuit_stim import (
     append_logical_measurement_on_indexed_qubits,
-    append_parity_measurement,
 )
 from msc.utils.normalize import resolve_patch_qubits
 
@@ -261,9 +258,12 @@ def append_11_site_patch_stabilizer_measurement(
     """Append non-destructive Stim stabilizer measurements on the 11-site patch.
 
     Mirrors the Qiskit ``append_11_site_patch_stabilizer_measurement``: the helper sites (2, 6, 7)
-    act as ancillas measuring the X- and/or Z-type stabilizers. Measurements are
-    appended to the record in order X0, X1, X2 then Z0, Z1, Z2 (three per basis).
-    Every measured code stabilizer is annotated against its known +1 reference.
+    act as ancillas measuring the X- and/or Z-type stabilizers, grouped by basis
+    with X checks before Z checks (record order X0, X1, X2 then Z0, Z1, Z2). Face
+    0345 routes data 3 through helper 1, a bridge prepared opposite to the
+    syndrome basis and restored (not measured); the other faces run in parallel
+    in four CX layers. Every measured stabilizer is annotated against its known
+    +1 reference.
 
     Parameters
     ----------
@@ -278,43 +278,46 @@ def append_11_site_patch_stabilizer_measurement(
         Ordered subset of the three canonical stabilizers to measure. ``None``
         measures all three.
     add_ticks
-        Whether to insert a ``TICK`` between X and Z rounds in ``"BOTH"``
-        mode.
+        Whether to separate preparation and readout from the CX layers with
+        ``TICK`` instructions. Consecutive CX layers are always tick-separated
+        regardless, so their shared-ancilla gates are not fused.
     """
-    if basis not in ("X", "Z", "BOTH"):
-        raise ValueError("basis must be 'X', 'Z', or 'BOTH'.")
-
     patch_qubits = resolve_patch_qubits(
         patch_qubits,
         expected_count=NUM_QUBITS_PATCH_11_SITES,
     )
-    selected_indices = resolve_patch_stabilizer_indices(stabilizer_indices)
+    selected_indices, phases = select_11_site_patch_stabilizer_measurement_layers(
+        basis, stabilizer_indices
+    )
     first_stabilizer_position = circuit.num_measurements
-    anc = PATCH_11_SITE_STABILIZER_ANCILLA_SITES
-
-    if basis in ("X", "BOTH"):
-        for stabilizer_index in selected_indices:
-            ancilla_site = anc[stabilizer_index]
-            support = PATCH_11_SITE_X_STABILIZERS[stabilizer_index]
-            append_parity_measurement(
-                circuit,
-                "X",
-                data_qubits=[patch_qubits[site] for site in support],
-                ancilla_qubit=patch_qubits[ancilla_site],
-            )
-        if basis == "BOTH" and add_ticks:
-            circuit.append("TICK", [])
-
-    if basis in ("Z", "BOTH"):
-        for stabilizer_index in selected_indices:
-            ancilla_site = anc[stabilizer_index]
-            support = PATCH_11_SITE_Z_STABILIZERS[stabilizer_index]
-            append_parity_measurement(
-                circuit,
-                "Z",
-                data_qubits=[patch_qubits[site] for site in support],
-                ancilla_qubit=patch_qubits[ancilla_site],
-            )
+    selected_ancilla_qubits = [
+        patch_qubits[PATCH_11_SITE_STABILIZER_ANCILLA_SITES[index]]
+        for index in selected_indices
+    ]
+    for measurement_basis, layers in phases:
+        if measurement_basis == "X":
+            reset_gate, measurement_gate, routing_reset_gate = "RX", "MX", "R"
+        elif measurement_basis == "Z":
+            reset_gate, measurement_gate, routing_reset_gate = "R", "M", "RX"
+        else:  # pragma: no cover - shared schedule validates.
+            raise ValueError(f"Unsupported measurement basis: {measurement_basis!r}.")
+        circuit.append(reset_gate, selected_ancilla_qubits)
+        if 0 in selected_indices:
+            circuit.append(routing_reset_gate, [patch_qubits[1]])
+        if add_ticks:
+            circuit.append("TICK")
+        for layer_index, layer in enumerate(layers):
+            # Always separate consecutive CX columns so Stim does not fuse the
+            # shared-ancilla gates into one multi-pair instruction, which would
+            # hide hook faults and break circuit-level noise placement.
+            if layer_index and not add_ticks:
+                circuit.append("TICK")
+            circuit.append("CX", [patch_qubits[site] for pair in layer for site in pair])
+            if add_ticks:
+                circuit.append("TICK")
+        circuit.append(measurement_gate, selected_ancilla_qubits)
+        if add_ticks:
+            circuit.append("TICK")
     for position in range(first_stabilizer_position, circuit.num_measurements):
         circuit_stim.append_detector(
             circuit,

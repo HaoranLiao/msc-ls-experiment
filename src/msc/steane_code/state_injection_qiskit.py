@@ -18,8 +18,6 @@ from msc.steane_code.state_injection_common import (
     PATCH_11_SITE_ROSENFELD_ENCODER_INJECTION_SITE,
     PATCH_11_SITE_ROSENFELD_ENCODER_LAYERS,
     PATCH_11_SITE_STABILIZER_ANCILLA_SITES,
-    PATCH_11_SITE_X_STABILIZERS,
-    PATCH_11_SITE_Z_STABILIZERS,
     PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES,
     PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_INJECTION_SITE,
     PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_LAYERS,
@@ -28,12 +26,11 @@ from msc.steane_code.state_injection_common import (
     PATCH_14_SITE_HELPER_SITES,
     PATCH_14_SITE_HIRANO_ENCODER_LAYERS,
     PatchStabilizerBasis,
-    resolve_patch_stabilizer_indices,
+    select_11_site_patch_stabilizer_measurement_layers,
     select_14_site_patch_superdense_measurement_layers,
 )
 from msc.utils.circuit_qiskit import (
     append_logical_measurement_on_indexed_qubits,
-    append_parity_measurement,
     apply_ty,
 )
 from msc.utils.normalize import resolve_patch_qubits
@@ -360,7 +357,10 @@ def append_11_site_patch_stabilizer_measurement(
 
     Uses the patch helper sites (2, 6, 7) as ancillas to measure the selected
     X-type and/or Z-type stabilizers without disturbing the encoded state. The
-    helper sites are reset before each measurement round.
+    ancilla sites are reset before each measurement basis. Face 0345 routes data
+    3 through helper 1, a bridge prepared opposite to the syndrome basis and
+    restored (not measured); the other faces run in parallel in four CX layers.
+    ``"BOTH"`` measures X then Z.
 
     Parameters
     ----------
@@ -387,51 +387,41 @@ def append_11_site_patch_stabilizer_measurement(
         patch_qubits,
         expected_count=NUM_QUBITS_PATCH_11_SITES,
     )
-    if basis not in {"X", "Z", "BOTH"}:
-        raise ValueError("basis must be 'X', 'Z', or 'BOTH'.")
-
-    selected_indices = resolve_patch_stabilizer_indices(stabilizer_indices)
+    selected_indices, phases = select_11_site_patch_stabilizer_measurement_layers(
+        basis, stabilizer_indices
+    )
 
     required_bits = len(selected_indices) * (2 if basis == "BOTH" else 1)
     if len(bits) < required_bits:
         raise ValueError(f"bits must contain at least {required_bits} bits.")
 
-    measurement_bits = list(bits)
-    anc_sites = PATCH_11_SITE_STABILIZER_ANCILLA_SITES
-    selected_ancilla_sites = tuple(anc_sites[index] for index in selected_indices)
-
-    if basis in {"X", "BOTH"}:
-        # X-stabilizer measurements.
+    selected_ancilla_sites = tuple(
+        PATCH_11_SITE_STABILIZER_ANCILLA_SITES[index] for index in selected_indices
+    )
+    for phase_index, (measurement_basis, layers) in enumerate(phases):
+        if phase_index and add_barriers:
+            circuit.barrier()
         for site in selected_ancilla_sites:
             circuit.reset(patch_qubits[site])
-        for output_index, stabilizer_index in enumerate(selected_indices):
-            ancilla_site = anc_sites[stabilizer_index]
-            support = PATCH_11_SITE_X_STABILIZERS[stabilizer_index]
-            append_parity_measurement(
-                circuit,
-                "X",
-                data_qubits=[patch_qubits[site] for site in support],
-                ancilla_qubit=patch_qubits[ancilla_site],
-                bit=measurement_bits[output_index],
-            )
-
-    if basis == "BOTH" and add_barriers:
-        circuit.barrier()
-
-    if basis in {"Z", "BOTH"}:
-        # Z-stabilizer measurements.
-        for site in selected_ancilla_sites:
-            circuit.reset(patch_qubits[site])
-        bit_offset = len(selected_indices) if basis == "BOTH" else 0
-        for output_index, stabilizer_index in enumerate(selected_indices):
-            ancilla_site = anc_sites[stabilizer_index]
-            support = PATCH_11_SITE_Z_STABILIZERS[stabilizer_index]
-            append_parity_measurement(
-                circuit,
-                "Z",
-                data_qubits=[patch_qubits[site] for site in support],
-                ancilla_qubit=patch_qubits[ancilla_site],
-                bit=measurement_bits[bit_offset + output_index],
+        if 0 in selected_indices:
+            circuit.reset(patch_qubits[1])
+        if measurement_basis == "X":
+            for site in selected_ancilla_sites:
+                circuit.h(patch_qubits[site])
+        elif measurement_basis == "Z":
+            if 0 in selected_indices:
+                circuit.h(patch_qubits[1])
+        else:  # pragma: no cover - shared schedule validates.
+            raise ValueError(f"Unsupported measurement basis: {measurement_basis!r}.")
+        for layer in layers:
+            for control, target in layer:
+                circuit.cx(patch_qubits[control], patch_qubits[target])
+        if measurement_basis == "X":
+            for site in selected_ancilla_sites:
+                circuit.h(patch_qubits[site])
+        for output_index, site in enumerate(selected_ancilla_sites):
+            circuit.measure(
+                patch_qubits[site], bits[phase_index * len(selected_indices) + output_index]
             )
 
 

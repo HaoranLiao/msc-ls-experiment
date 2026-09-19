@@ -271,14 +271,14 @@ def test_measurements_follow_hirano_merge_table(patch_sites: int) -> None:
 
 
 @pytest.mark.parametrize(
-    ("probe", "patch_sites", "expected_distance"),
+    ("probe", "patch_sites", "expected_distance", "expected_malignant_pair_count"),
     (
-        ("X", 11, 2), ("Z", 11, 2), ("S", 11, 2),
-        ("X", 14, 3), ("Z", 14, 3), ("S", 14, 3),
+        ("X", 11, 2, 53), ("Z", 11, 2, 968), ("S", 11, 2, 972),
+        ("X", 14, 3, 0), ("Z", 14, 3, 0), ("S", 14, 3, 0),
     ),
 )
 def test_minimal_z_only_with_noisy_cultivation_fault_distance(
-    probe: str, patch_sites: int, expected_distance: int,
+    probe: str, patch_sites: int, expected_distance: int, expected_malignant_pair_count: int,
 ) -> None:
     """Exhaust physical singles/pairs with the actual cultivated prefix included.
 
@@ -323,7 +323,7 @@ def test_minimal_z_only_with_noisy_cultivation_fault_distance(
         max_exhaustive_weight=2, find_witness_weight=3,
     )
     assert not assessment.malignant_single_faults
-    assert (assessment.malignant_pair_count > 0) == (expected_distance == 2)
+    assert assessment.malignant_pair_count == expected_malignant_pair_count
     assert (assessment.first_malignant_pair is not None) == (expected_distance == 2)
     assert assessment.certified_distance == expected_distance
 
@@ -583,7 +583,8 @@ def test_fully_postselected_lattice_surgery_only_fault_distance(
 
     assert not assessment.malignant_single_faults
     if patch_sites == 11 and experiment.name == "transfer_z_error":
-        assert assessment.malignant_pair_count > 0
+        expected_malignant_pair_count = {"hirano": 728, "minimal_z_only": 564}[merge_schedule]
+        assert assessment.malignant_pair_count == expected_malignant_pair_count
         assert assessment.first_malignant_pair is not None
         assert assessment.certified_distance == 2
         return

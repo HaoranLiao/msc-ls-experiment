@@ -469,10 +469,14 @@ class TestCultivationFaultTolerance:
 
     # Both skip_cx_1_4 values are exercised to confirm the drop to distance two
     # is intrinsic: keeping CX 1->4 in the fold network does not restore three.
-    @pytest.mark.parametrize("skip_cx_1_4", [False, True])
+    @pytest.mark.parametrize(
+        ("skip_cx_1_4", "expected_malignant_pair_count"),
+        [(False, 29), (True, 29)],
+    )
     def test_11_site_injection_qed_cultivation_has_fault_distance_two(
         self,
         skip_cx_1_4: bool,
+        expected_malignant_pair_count: int,
     ) -> None:
         circuit = add_circuit_depolarizing_noise(
             build_11_site_patch_injection_and_cultivation_circuit(
@@ -506,7 +510,7 @@ class TestCultivationFaultTolerance:
         # circuit-level distance is two (was reported as three when the parity
         # CNOTs were fused and their intermediate hook faults were invisible).
         assert not assessment.malignant_single_faults
-        assert assessment.malignant_pair_count > 0
+        assert assessment.malignant_pair_count == expected_malignant_pair_count
         assert assessment.first_malignant_pair is not None
         assert assessment.certified_distance == 2
 
