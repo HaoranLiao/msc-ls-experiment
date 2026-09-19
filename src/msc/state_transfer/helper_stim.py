@@ -104,7 +104,9 @@ def transfer_measurement_layout(
     append order. ``X_cd`` first reappears in full surface round 1, which is
     appended by the d=5 continuation.
     """
-    patch_spec = common.resolve_steane_transfer_patch_spec(patch_sites, merge_schedule=merge_schedule)
+    patch_spec = common.resolve_steane_transfer_patch_spec(
+        patch_sites, merge_schedule=merge_schedule
+    )
     labels = common.transfer_measurement_labels(
         spec,
         patch_sites=patch_sites,
@@ -250,7 +252,9 @@ def build_lattice_surgery_circuit(
     serialized helper does not reproduce Hirano's exact concurrent timing,
     idle noise, later code expansion, or complementary-gap lookup.
     """
-    patch_spec = common.resolve_steane_transfer_patch_spec(patch_sites, merge_schedule=merge_schedule)
+    patch_spec = common.resolve_steane_transfer_patch_spec(
+        patch_sites, merge_schedule=merge_schedule
+    )
     qubits = transfer_qubits(spec, patch_sites=patch_sites)
     steane_patch = [qubits[label] for label in patch_spec.site_labels]
     surface_qubits = [qubits[label] for label in spec.surface_order]

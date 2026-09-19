@@ -520,9 +520,7 @@ def enumerate_circuit_physical_fault_signatures(
                 total_elementary_fault_cases += repeat_multiplicity * instruction.num_measurements
                 total_physical_locations += repeat_multiplicity * instruction.num_measurements
             else:
-                raise NotImplementedError(
-                    f"Unsupported physical fault channel: {instruction.name}"
-                )
+                raise NotImplementedError(f"Unsupported physical fault channel: {instruction.name}")
 
     effectful_faults: list[PhysicalFaultCase] = []
     for explained_error in circuit.explain_detector_error_model_errors():
@@ -748,8 +746,7 @@ def _find_malignant_triple_by_signature(
     fault_count = len(faults)
 
     required_pair_signatures = {
-        (detector_masks[index], observable_masks[index] ^ 1)
-        for index in range(fault_count)
+        (detector_masks[index], observable_masks[index] ^ 1) for index in range(fault_count)
     }
     pairs_by_signature: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
     for left_index in range(fault_count):
@@ -769,13 +766,16 @@ def _find_malignant_triple_by_signature(
             observable_masks[third_index] ^ 1,
         )
         for left_index, right_index in pairs_by_signature.get(required_signature, ()):
-            if len(
-                {
-                    location_keys[left_index],
-                    location_keys[right_index],
-                    location_keys[third_index],
-                }
-            ) == 3:
+            if (
+                len(
+                    {
+                        location_keys[left_index],
+                        location_keys[right_index],
+                        location_keys[third_index],
+                    }
+                )
+                == 3
+            ):
                 return FaultCombinationWitness(
                     (faults[left_index], faults[right_index], faults[third_index])
                 )

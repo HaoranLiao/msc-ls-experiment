@@ -634,9 +634,7 @@ def select_14_site_patch_superdense_measurement_layers(
     }
     if measure_d2_copy_flag:
         selected_ancilla_sites.add(13)
-    active_layers: list[tuple[tuple[str, tuple], ...]] = list(
-        _SUPERDENSE_BELL_PREPARATION_LAYERS
-    )
+    active_layers: list[tuple[tuple[str, tuple], ...]] = list(_SUPERDENSE_BELL_PREPARATION_LAYERS)
 
     if measure_z_stabilizers:
         if measure_d2_copy_flag:

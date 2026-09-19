@@ -21,7 +21,6 @@ from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
-import numpy as np
 import stim
 
 from msc.noise.fault_injection_stim import add_circuit_depolarizing_noise

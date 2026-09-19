@@ -262,9 +262,11 @@ def resolve_steane_transfer_patch_spec(
             cultivation_labels=(
                 "root_x",
                 *(
-                    "root_x_check"
-                    if site == PATCH_14_SITE_FOLDED_MEASUREMENT_SITE
-                    else f"cult_f{site}"
+                    (
+                        "root_x_check"
+                        if site == PATCH_14_SITE_FOLDED_MEASUREMENT_SITE
+                        else f"cult_f{site}"
+                    )
                     for site in PATCH_14_SITE_HELPER_SITES[1:]
                 ),
             ),

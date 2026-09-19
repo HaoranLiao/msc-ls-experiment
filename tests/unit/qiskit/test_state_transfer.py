@@ -255,12 +255,8 @@ def test_measurements_follow_selected_merge_table(
                 if label.endswith("D2_copy_flag"):
                     expected_flag_sites.append(13)
                 elif label.endswith("_bell_partner_flag"):
-                    check_name = label.removeprefix(prefix).removesuffix(
-                        "_bell_partner_flag"
-                    )
-                    expected_flag_sites.append(
-                        EXPECTED_STEANE_BELL_PARTNER_FLAG_SITES[check_name]
-                    )
+                    check_name = label.removeprefix(prefix).removesuffix("_bell_partner_flag")
+                    expected_flag_sites.append(EXPECTED_STEANE_BELL_PARTNER_FLAG_SITES[check_name])
                 else:
                     raise ValueError(f"Unsupported Bell-partner flag label: {label!r}.")
             assert tuple(

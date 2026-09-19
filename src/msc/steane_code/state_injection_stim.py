@@ -291,8 +291,7 @@ def append_11_site_patch_stabilizer_measurement(
     )
     first_stabilizer_position = circuit.num_measurements
     selected_ancilla_qubits = [
-        patch_qubits[PATCH_11_SITE_STABILIZER_ANCILLA_SITES[index]]
-        for index in selected_indices
+        patch_qubits[PATCH_11_SITE_STABILIZER_ANCILLA_SITES[index]] for index in selected_indices
     ]
     for measurement_basis, layers in phases:
         if measurement_basis == "X":
