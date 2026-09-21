@@ -110,7 +110,14 @@ def test_tomography_yaml_matches_constructed_circuits_and_analysis(
 
 
 @pytest.mark.parametrize(
-    ("flag_field", "patch_sites", "merge_schedule", "register", "measured_width", "unmeasured_width"),
+    (
+        "flag_field",
+        "patch_sites",
+        "merge_schedule",
+        "register",
+        "measured_width",
+        "unmeasured_width",
+    ),
     (
         # The encoder-flag register vanishes entirely; the cultivation round's
         # cult register keeps its folded root and root check and drops the four
