@@ -1094,9 +1094,9 @@ def test_14_site_encoder_two_qubit_depths() -> None:
     )
 
     assert two_qubit_depth(hirano) == 11
-    assert two_qubit_depth(abstract_routed) == 14
+    assert two_qubit_depth(abstract_routed) == 9
     assert hirano.count_ops()["cx"] == 25
-    assert abstract_routed.count_ops()["cx"] == 33
+    assert abstract_routed.count_ops()["cx"] == 23
 
 
 # ----------------------------------------------------

@@ -21,8 +21,6 @@ from typing import Literal
 import stim
 
 from msc.steane_code.state_injection_common import (
-    _STEANE_TO_11_SITE_PATCH,
-    _STEANE_TO_14_SITE_PATCH,
     ABSTRACT_ENCODER_CNOT_LAYERS,
     NUM_QUBITS_PATCH_11_SITES,
     NUM_QUBITS_PATCH_14_SITES,
@@ -42,6 +40,8 @@ from msc.steane_code.state_injection_common import (
     PATCH_14_SITE_HELPER_SITES,
     PATCH_14_SITE_HIRANO_ENCODER_COORDS,
     PATCH_14_SITE_HIRANO_ENCODER_LAYERS,
+    STEANE_TO_11_SITE_PATCH,
+    STEANE_TO_14_SITE_PATCH,
     PatchStabilizerBasis,
     select_11_site_patch_stabilizer_measurement_layers,
     select_14_site_patch_superdense_measurement_layers,
@@ -109,16 +109,16 @@ def append_abstract_encoder(
 
     This is the Clifford parallel of Qiskit's :func:`append_abstract_encoder`.
     It implements
-    ``|psi> |+> |0> |0> |+> |0> |+> -> |psi_L>`` for any single-qubit
+    ``|psi> |+> |+> |+> |0> |0> |0> -> |psi_L>`` for any single-qubit
     Clifford state supported by Stim and inserts explicit tick boundaries for
-    the seven collision-free CX layers.
+    the nine collision-free CX layers.
     """
     if len(data_qubits) < 7:
         raise ValueError("data_qubits must contain at least 7 qubits.")
     data_qubits = list(data_qubits)
 
     prepare_physical_state(circuit, data_qubits[0], injected_state)
-    circuit.append("H", [data_qubits[site] for site in (1, 4, 6)])
+    circuit.append("H", [data_qubits[site] for site in (1, 2, 3)])
     if add_ticks:
         circuit.append("TICK", [])
 
@@ -158,7 +158,7 @@ def append_11_site_patch_abstract_encoder(
         circuit.append("QUBIT_COORDS", [qubit], coords)
     return append_abstract_encoder(
         circuit,
-        data_qubits=[patch_qubits[site] for site in _STEANE_TO_11_SITE_PATCH],
+        data_qubits=[patch_qubits[site] for site in STEANE_TO_11_SITE_PATCH],
         injected_state=injected_state,
         add_ticks=add_ticks,
     )
@@ -382,28 +382,28 @@ def append_14_site_patch_abstract_encoder(
     injected_state: StimInjectedStateName = "S",
     add_ticks: bool = True,
 ) -> stim.Circuit:
-    """Append the abstract Steane encoder directly on the 14-site data sites.
+    """Append the abstract Steane encoder onto the 14-site data sites.
 
-    This is the fixed-geometry, unrouted reference encoder. Unlike Hirano's
-    specialized phase-injection schedule, the abstract Steane isometry is not
-    restricted to logical-Y eigenstates: it encodes any Clifford single-qubit
-    input supported by Stim. It maps the abstract Steane triangle onto Hirano
-    data labels ``(6, 4, 2, 0, 1, 5, 3)`` and never uses the six helper sites or
-    D2'. In particular, D1 is data site 1 at ``(1, 5)`` from the start; no
-    post-injection relocation is needed::
+    This is the fixed-geometry, unrouted reference encoder and the seed-addition
+    network that :func:`append_14_site_patch_abstract_routed_encoder` is derived
+    from. It is :func:`append_abstract_encoder` mapped onto the data sites via
+    ``STEANE_TO_14_SITE_PATCH``: the arbitrary input lands on D3, the three
+    ``|+>`` seeds on D0, D2, D5, and D1, D4, D6 start in ``|0>``. Unlike Hirano's
+    specialized phase-injection schedule, it is not restricted to logical-Y
+    eigenstates: it encodes any Clifford single-qubit input supported by Stim,
+    with encoded logical support ``{1, 3, 5}``. The encoder never uses the six
+    helper sites or D2'::
 
               x=0    x=1    x=2    x=3    x=4    x=5    x=6
-       y=0                   D6/A0
+       y=0                   D6
        y=1                          H9            D2'
-       y=2                   D4/A1         H10           D2/A2
-       y=3           H7            D0/A3          H12
+       y=2                   D4            H10           D2
+       y=3           H7            D0            H12
        y=4                  H8            H11
-       y=5           D1/A4         D5/A5          D3/A6
+       y=5           D1            D5            D3*
 
-    ``A<i>`` denotes abstract encoder qubit ``i``. The injected physical state
-    is therefore prepared on D6/A0; abstract qubits A1, A4, and A6 are prepared
-    in ``|+>`` before the seven-layer CX encoder. The abstract CXs are not routed
-    through the patch connectivity.
+    ``*`` marks the arbitrary-input site D3. The twelve abstract CXs, grouped into
+    nine collision-free layers, are not routed through the patch connectivity.
     """
     patch_qubits = resolve_patch_qubits(
         patch_qubits,
@@ -413,7 +413,7 @@ def append_14_site_patch_abstract_encoder(
         circuit.append("QUBIT_COORDS", [qubit], coords)
     return append_abstract_encoder(
         circuit,
-        data_qubits=[patch_qubits[site] for site in _STEANE_TO_14_SITE_PATCH],
+        data_qubits=[patch_qubits[site] for site in STEANE_TO_14_SITE_PATCH],
         injected_state=injected_state,
         add_ticks=add_ticks,
     )
@@ -427,12 +427,13 @@ def append_14_site_patch_abstract_routed_encoder(
     measure_flags: bool = True,
     add_ticks: bool = True,
 ) -> stim.Circuit:
-    """Append the Clifford parallel of the routed IBM Miami encoder.
+    """Append the Clifford parallel of the diagonal-local routed encoder.
 
     This is the same arbitrary-input Steane isometry as
     :func:`append_14_site_patch_abstract_encoder`, restricted only by Stim to
-    Clifford input states. It starts the input on D3 and returns the encoded
-    state to D0–D6, while every helper and D2' finishes disentangled in
+    Clifford input states, obtained by routing that seed-addition network with
+    seven SWAPs and simplifying. It starts the input on D3 and returns the
+    encoded state to D0–D6, while every helper and D2' finishes disentangled in
     ``|0>``. H8–H12 provide routing workspace; H7 and D2' are idle::
 
               x=0    x=1    x=2    x=3    x=4    x=5    x=6
@@ -444,8 +445,9 @@ def append_14_site_patch_abstract_routed_encoder(
        y=5           D1            D5            D3*
 
     ``*`` marks the arbitrary-input site. Every CX is diagonal-local in the
-    fixed rotated patch geometry, and the two-qubit depth is 14. H8–H12 return
-    to ``|0>`` and can be measured in Z as known-zero routing flags.
+    fixed rotated patch geometry; the schedule uses 23 CXs in nine two-qubit
+    layers. H8–H12 return to ``|0>`` and can be measured in Z as known-zero
+    routing flags.
 
     Parameters
     ----------

@@ -32,6 +32,7 @@ def build_end_to_end_distillation_circuit(
     *,
     patch_sites: common.SteanePatchSites = 14,
     merge_schedule: common.MergeSchedule = "hirano",
+    measure_encoder_flags: bool = False,
 ) -> tuple[
     stim.Circuit,
     stim.Circuit,
@@ -54,6 +55,7 @@ def build_end_to_end_distillation_circuit(
         patch_sites=patch_sites,
         injected_state="S",
         include_cultivation=True,
+        measure_encoder_flags=measure_encoder_flags,
         merge_schedule=merge_schedule,
         surface_readout_basis=None,
         add_ticks=True,
@@ -62,6 +64,7 @@ def build_end_to_end_distillation_circuit(
         transfer.TRANSFER_SPEC,
         patch_sites=patch_sites,
         include_cultivation=True,
+        measure_encoder_flags=measure_encoder_flags,
         merge_schedule=merge_schedule,
     )
     post_transfer_layout = transfer.append_post_transfer_stabilization(
@@ -165,6 +168,7 @@ def estimate_end_to_end_complementary_gap_curve(
     shots: int,
     patch_sites: common.SteanePatchSites = 14,
     merge_schedule: common.MergeSchedule = "hirano",
+    measure_encoder_flags: bool = False,
     batch_size: int = 100_000,
     seed: int | None = None,
 ) -> list[tuple[float, LogicalErrorEstimate]]:
@@ -192,6 +196,7 @@ def estimate_end_to_end_complementary_gap_curve(
             physical_error_probability,
             patch_sites=patch_sites,
             merge_schedule=merge_schedule,
+            measure_encoder_flags=measure_encoder_flags,
         )
     )
     analyzer = LatticeSurgeryOnlyShotAnalyzer(

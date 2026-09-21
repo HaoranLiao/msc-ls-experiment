@@ -93,6 +93,7 @@ def transfer_measurement_layout(
     *,
     patch_sites: common.SteanePatchSites = 14,
     include_cultivation: bool,
+    measure_encoder_flags: bool = False,
     merge_schedule: common.MergeSchedule = "hirano",
 ) -> TransferMeasurementLayout:
     """Map shared measurement labels into Stim's physical append order.
@@ -113,6 +114,7 @@ def transfer_measurement_layout(
         include_cultivation=include_cultivation,
         merge_schedule=merge_schedule,
         surface_readout_basis=None,
+        measure_encoder_flags=measure_encoder_flags,
     )
     if patch_sites == 14:
         # Follow the grouped superdense readout order: same-face X/Z checks
@@ -124,9 +126,10 @@ def transfer_measurement_layout(
             for group in common.group_14_site_superdense_verification_checks(checks)
             for check_name in group.check_names_in_readout_order
         )
-    measurement_chunks: list[tuple[str, tuple[str, ...]]] = [
-        (name, labels[name]) for name in ("enc_flags", "steane_qed")
-    ]
+    measurement_chunks: list[tuple[str, tuple[str, ...]]] = []
+    if measure_encoder_flags:
+        measurement_chunks.append(("enc_flags", labels["enc_flags"]))
+    measurement_chunks.append(("steane_qed", labels["steane_qed"]))
     if include_cultivation:
         measurement_chunks.append(("cult", labels["cult"]))
     measurement_chunks.extend((name, labels[name]) for name in ("surface_init_z", "surface_init_x"))
@@ -217,13 +220,15 @@ def build_lattice_surgery_circuit(
     patch_sites: common.SteanePatchSites = 14,
     injected_state: steane.StimInjectedStateName = "S",
     include_cultivation: bool = True,
+    measure_encoder_flags: bool = False,
     merge_schedule: common.MergeSchedule = "hirano",
     add_ticks: bool = True,
 ) -> stim.Circuit:
     """Build the detector-annotated logical-Y-proxy transfer circuit.
 
-    1. Encode ``injected_state`` on the selected Steane patch and measure its
-       encoder flags. The default 14-site path uses the abstract-routed encoder;
+    1. Encode ``injected_state`` on the selected Steane patch and, when
+       ``measure_encoder_flags`` is true, measure and postselect its encoder
+       flags. The default 14-site path uses the abstract-routed encoder;
        the 11-site path uses Rosenfeld's encoder.
     2. Measure all six Steane stabilizers for post-injection QED.
     3. Optionally apply logical-Y cultivation, Stim's proxy for H_XY
@@ -273,7 +278,7 @@ def build_lattice_surgery_circuit(
             patch_qubits=steane_patch,
             injected_state=injected_state,
             cultivation_rounds=int(include_cultivation),
-            measure_encoder_flags=True,
+            measure_encoder_flags=measure_encoder_flags,
             add_qed_round=True,
             add_ticks=add_ticks,
             skip_cx_1_4=False,
@@ -286,7 +291,7 @@ def build_lattice_surgery_circuit(
             injected_state=injected_state,
             encoder="abstract_routed",
             cultivation_rounds=int(include_cultivation),
-            measure_encoder_flags=True,
+            measure_encoder_flags=measure_encoder_flags,
             add_qed_round=True,
             add_ticks=add_ticks,
         )
@@ -380,6 +385,7 @@ def build_lattice_surgery_circuit(
         spec,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
+        measure_encoder_flags=measure_encoder_flags,
         merge_schedule=merge_schedule,
     )
 

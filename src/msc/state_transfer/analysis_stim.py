@@ -19,6 +19,7 @@ def parse_transfer_measurements(
     spec: SurfaceCodeTransferSpec,
     patch_sites: SteanePatchSites = 14,
     include_cultivation: bool = True,
+    measure_encoder_flags: bool = False,
     merge_schedule: MergeSchedule = "hirano",
 ) -> dict[str, object]:
     """Label one record row, then derive checks, recovery, and Pauli byproducts."""
@@ -29,6 +30,7 @@ def parse_transfer_measurements(
         spec,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
+        measure_encoder_flags=measure_encoder_flags,
         merge_schedule=merge_schedule,
     )
     if shot.shape[0] != layout.num_measurements:
@@ -42,6 +44,7 @@ def parse_transfer_measurements(
         bits,
         spec=spec,
         include_cultivation=include_cultivation,
+        measure_encoder_flags=measure_encoder_flags,
     )
     parsed["registers"] = {
         name: {

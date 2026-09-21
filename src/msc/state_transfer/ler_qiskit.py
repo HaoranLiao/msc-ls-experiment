@@ -121,6 +121,7 @@ def build_ty_logical_error_rate_circuits(
             merge_schedule=tomography.merge_schedule,
             full_post_selection=tomography.full_post_selection,
             persistent_surface_x_post_selection=tomography.persistent_surface_x_post_selection,
+            measure_encoder_flags=tomography.measure_encoder_flags,
             post_transfer_stabilizer_rounds=round_count,
             add_barriers=tomography.add_barriers,
         )
@@ -159,6 +160,7 @@ def analyze_ty_logical_error_rate_counts(
                 persistent_surface_x_post_selection=(
                     tomography.persistent_surface_x_post_selection
                 ),
+                measure_encoder_flags=tomography.measure_encoder_flags,
                 post_transfer_stabilizer_rounds=round_count,
             ),
         )

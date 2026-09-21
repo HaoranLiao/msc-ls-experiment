@@ -7,8 +7,6 @@ from qiskit import QuantumCircuit
 from qiskit.circuit import Qubit
 
 from msc.steane_code.state_injection_common import (
-    _STEANE_TO_11_SITE_PATCH,
-    _STEANE_TO_14_SITE_PATCH,
     ABSTRACT_ENCODER_CNOT_LAYERS,
     NUM_QUBITS_PATCH_11_SITES,
     NUM_QUBITS_PATCH_14_SITES,
@@ -25,6 +23,8 @@ from msc.steane_code.state_injection_common import (
     PATCH_14_SITE_DEFAULT_LOGICAL_Z,
     PATCH_14_SITE_HELPER_SITES,
     PATCH_14_SITE_HIRANO_ENCODER_LAYERS,
+    STEANE_TO_11_SITE_PATCH,
+    STEANE_TO_14_SITE_PATCH,
     PatchStabilizerBasis,
     select_11_site_patch_stabilizer_measurement_layers,
     select_14_site_patch_superdense_measurement_layers,
@@ -154,7 +154,7 @@ def append_abstract_encoder(
     """Append a Steane-code state-injection encoder to an existing circuit.
 
     Implements the map
-    |psi> |+> |0> |0> |+> |0> |+> -> |psi_L>
+    |psi> |+> |+> |+> |0> |0> |0> -> |psi_L>
     on the seven supplied data qubits (ordered 0-6). The caller owns register
     creation and passes the target qubits via ``data_qubits``.
 
@@ -186,8 +186,8 @@ def append_abstract_encoder(
     )
 
     circuit.h(dq[1])
-    circuit.h(dq[4])
-    circuit.h(dq[6])
+    circuit.h(dq[2])
+    circuit.h(dq[3])
 
     if add_barriers:
         circuit.barrier(dq)
@@ -223,7 +223,7 @@ def append_11_site_patch_abstract_encoder(
     """Append the Steane-code state-injection encoder on the 11-site patch.
 
     Composes the 7-qubit encoder from append_abstract_encoder onto the 7 data
-    sites of the 11-site patch via _STEANE_TO_11_SITE_PATCH, which maps abstract
+    sites of the 11-site patch via STEANE_TO_11_SITE_PATCH, which maps abstract
     qubits 0-6 to patch sites (0, 3, 5, 4, 8, 9, 10).
 
     Parameters
@@ -244,7 +244,7 @@ def append_11_site_patch_abstract_encoder(
     )
 
     # Map abstract encoder qubits 0–6 to the corresponding patch data sites.
-    data_qubits = [patch_qubits[_STEANE_TO_11_SITE_PATCH[i]] for i in range(7)]
+    data_qubits = [patch_qubits[STEANE_TO_11_SITE_PATCH[i]] for i in range(7)]
     append_abstract_encoder(
         circuit,
         data_qubits=data_qubits,
@@ -472,28 +472,27 @@ def append_14_site_patch_abstract_encoder(
     injection_polar_angle: float | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
-    """Append the abstract Steane encoder directly on the 14-site data sites.
+    """Append the abstract Steane encoder onto the 14-site data sites.
 
-    This is the fixed-geometry, unrouted reference encoder. Unlike Hirano's
-    specialized phase-injection schedule, the abstract Steane isometry can
-    encode an arbitrary injected state: all named inputs supported by
-    :func:`append_abstract_encoder`, or any swept equatorial or meridional state.
-    It maps the abstract Steane triangle onto
-    Hirano data labels ``(6, 4, 2, 0, 1, 5, 3)`` and never uses the six helper
-    sites or D2'. In particular, D1 is data site 1 at ``(1, 5)`` from the start;
-    no post-injection relocation is needed::
+    This is the fixed-geometry, unrouted reference encoder and the seed-addition
+    network that :func:`append_14_site_patch_abstract_routed_encoder` is derived
+    from. It is :func:`append_abstract_encoder` mapped onto the data sites via
+    ``STEANE_TO_14_SITE_PATCH``: the arbitrary input lands on D3, the three
+    ``|+>`` seeds on D0, D2, D5, and D1, D4, D6 start in ``|0>``. Unlike Hirano's
+    specialized phase-injection schedule, it can encode an arbitrary injected
+    state and its encoded logical support is ``{1, 3, 5}``. The encoder never
+    uses the six helper sites or D2'::
 
               x=0    x=1    x=2    x=3    x=4    x=5    x=6
-       y=0                   D6/A0
+       y=0                   D6
        y=1                          H9            D2'
-       y=2                   D4/A1         H10           D2/A2
-       y=3           H7            D0/A3          H12
+       y=2                   D4            H10           D2
+       y=3           H7            D0            H12
        y=4                  H8            H11
-       y=5           D1/A4         D5/A5          D3/A6
+       y=5           D1            D5            D3*
 
-    ``A<i>`` denotes abstract encoder qubit ``i``. The injected physical state
-    is therefore prepared on D6/A0. The abstract CXs are not routed through the
-    patch connectivity.
+    ``*`` marks the arbitrary-input site D3. The twelve abstract CXs are not
+    routed through the patch connectivity.
 
     Parameters
     ----------
@@ -502,11 +501,10 @@ def append_14_site_patch_abstract_encoder(
     patch_qubits
         Fourteen Qiskit qubits indexed by the fixed patch labels.
     injected_state, injection_azimuth_angle, injection_polar_angle
-        Mutually exclusive injection inputs prepared on D6/A0, with no logical-Y
+        Mutually exclusive injection inputs prepared on D3, with no logical-Y
         restriction; see :func:`prepare_injection_input`.
     add_barriers
-        Whether to retain the abstract encoder's preparation barrier and append
-        a labeled completion barrier.
+        Whether to insert a preparation barrier and a labeled completion barrier.
 
     Returns
     -------
@@ -517,10 +515,9 @@ def append_14_site_patch_abstract_encoder(
         patch_qubits,
         expected_count=NUM_QUBITS_PATCH_14_SITES,
     )
-    data_qubits = [patch_qubits[site] for site in _STEANE_TO_14_SITE_PATCH]
     append_abstract_encoder(
         circuit,
-        data_qubits=data_qubits,
+        data_qubits=[patch_qubits[site] for site in STEANE_TO_14_SITE_PATCH],
         injected_state=injected_state,
         injection_azimuth_angle=injection_azimuth_angle,
         injection_polar_angle=injection_polar_angle,
@@ -541,14 +538,15 @@ def append_14_site_patch_abstract_routed_encoder(
     flag_bits: Sequence | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
-    """Append the routed arbitrary-state encoder found for IBM Miami.
+    """Append the diagonal-local routed abstract-state encoder.
 
     This is a hardware-local realization of the same isometry as
-    :func:`append_14_site_patch_abstract_encoder`. It uses the fixed 14-site
-    patch, prepares the arbitrary input on D3, and returns the encoded state on
-    D0–D6 with every helper and D2' disentangled in ``|0>``. H8–H12 provide
-    routing workspace; H7 and D2' are idle. Every CX is diagonal-local in the
-    fixed rotated patch geometry::
+    :func:`append_14_site_patch_abstract_encoder`, obtained by routing that
+    seed-addition network with seven SWAPs and simplifying. It uses the fixed
+    14-site patch, prepares the arbitrary input on D3, and returns the encoded
+    state on D0–D6 with every helper and D2' disentangled in ``|0>``. H8–H12
+    provide routing workspace; H7 and D2' are idle. Every CX is diagonal-local
+    in the fixed rotated patch geometry::
 
               x=0    x=1    x=2    x=3    x=4    x=5    x=6
        y=0                   D6
@@ -558,10 +556,9 @@ def append_14_site_patch_abstract_routed_encoder(
        y=4                  H8            H11
        y=5           D1            D5            D3*
 
-    ``*`` marks the arbitrary-input site. The explicit H/CX schedule and its
-    IBM Miami native translation both have two-qubit depth 14 while involving
-    only 12 patch sites. H8–H12 return to ``|0>`` and are optionally measured
-    in Z as five routing flags.
+    ``*`` marks the arbitrary-input site. The H/CX schedule uses 23 CXs in nine
+    two-qubit layers while involving only 12 patch sites. H8–H12 return to
+    ``|0>`` and are optionally measured in Z as five routing flags.
 
     Parameters
     ----------

@@ -369,6 +369,7 @@ def transfer_measurement_labels(
     include_cultivation: bool,
     merge_schedule: MergeSchedule = "hirano",
     surface_readout_basis: SurfaceReadoutBasis | None,
+    measure_encoder_flags: bool = False,
     post_transfer_stabilizer_rounds: int = 0,
     full_data_readout: bool = False,
 ) -> dict[str, tuple[str, ...]]:
@@ -378,14 +379,18 @@ def transfer_measurement_labels(
     for Stim family labels. Stim separately maps these labels to global record
     positions because physical append order interleaves families within every
     merged round.
+
+    ``measure_encoder_flags=False`` omits the ``enc_flags`` family so the
+    encoder emits no postselection flags; the record layout shifts accordingly
+    and construction and parsing must pass the same value.
     """
     patch_spec = resolve_steane_transfer_patch_spec(patch_sites, merge_schedule=merge_schedule)
     if post_transfer_stabilizer_rounds < 0:
         raise ValueError("post_transfer_stabilizer_rounds must be nonnegative.")
-    labels = {
-        "enc_flags": patch_spec.encoder_flag_labels,
-        "steane_qed": patch_spec.qed_labels,
-    }
+    labels: dict[str, tuple[str, ...]] = {}
+    if measure_encoder_flags:
+        labels["enc_flags"] = patch_spec.encoder_flag_labels
+    labels["steane_qed"] = patch_spec.qed_labels
     if include_cultivation:
         labels["cult"] = patch_spec.cultivation_labels
     labels.update(
@@ -443,6 +448,7 @@ def interpret_transfer_measurements(
     *,
     spec: SurfaceCodeTransferSpec,
     include_cultivation: bool = True,
+    measure_encoder_flags: bool = False,
     post_transfer_stabilizer_rounds: int = 0,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     full_data_readout: bool = False,
@@ -468,7 +474,6 @@ def interpret_transfer_measurements(
         bits["merged_surface_x"], spec.merged_x_labels, rounds=LATTICE_SURGERY_ROUNDS
     )
     parsed: dict[str, object] = {
-        "enc_flags": bits["enc_flags"],
         "post_injection_qed": bits["steane_qed"],
         "surface_init_z": bits["surface_init_z"],
         "surface_init_x": bits["surface_init_x"],
@@ -481,6 +486,8 @@ def interpret_transfer_measurements(
         "full_post_selection": full_post_selection,
         "persistent_surface_x_post_selection": persistent_surface_x_post_selection,
     }
+    if measure_encoder_flags:
+        parsed["enc_flags"] = bits["enc_flags"]
     if "steane_bell_partner_flags" in bits:
         parsed["steane_bell_partner_flags"] = bits["steane_bell_partner_flags"]
     if include_cultivation:
@@ -738,7 +745,7 @@ def transfer_rejection_stages(measurements: dict[str, object]) -> tuple[tuple[st
         surface_init_rejects = merged_surface_rejects = post_transfer_rejects = False
 
     return (
-        ("encoder_flags", any(measurements["enc_flags"].values())),
+        ("encoder_flags", any(measurements.get("enc_flags", {}).values())),
         ("post_injection_qed", any(measurements["post_injection_qed"].values())),
         ("cultivation", any(measurements.get("cultivation", {}).values())),
         ("surface_initialization", surface_init_rejects),

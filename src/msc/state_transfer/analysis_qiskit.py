@@ -18,6 +18,7 @@ def parse_transfer_measurements(
     patch_sites: SteanePatchSites = 14,
     merge_schedule: MergeSchedule = "hirano",
     include_cultivation: bool = True,
+    measure_encoder_flags: bool = False,
     post_transfer_stabilizer_rounds: int = 0,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     full_data_readout: bool = False,
@@ -28,12 +29,16 @@ def parse_transfer_measurements(
 
     Full-data X/Z readout reconstructs the compatible final stabilizers and
     logical support from the same canonical surface-data register.
+
+    ``measure_encoder_flags`` must match construction; ``False`` drops the
+    ``enc_flags`` family from the record layout.
     """
     labels = transfer_measurement_labels(
         spec,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
         merge_schedule=merge_schedule,
+        measure_encoder_flags=measure_encoder_flags,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,
         full_data_readout=full_data_readout,
@@ -43,6 +48,7 @@ def parse_transfer_measurements(
         bits,
         spec=spec,
         include_cultivation=include_cultivation,
+        measure_encoder_flags=measure_encoder_flags,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,
         full_data_readout=full_data_readout,

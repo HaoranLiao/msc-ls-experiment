@@ -42,6 +42,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     injected_state: InjectedStateName = "Ty",
     cultivated_state: CultivatedStateName = "Ty",
     include_cultivation: bool = True,
+    measure_encoder_flags: bool = False,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,
     post_transfer_stabilizer_rounds: int | None = None,
@@ -70,6 +71,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
         injected_state=injected_state,
         cultivated_state=cultivated_state,
         include_cultivation=include_cultivation,
+        measure_encoder_flags=measure_encoder_flags,
         add_barriers=add_barriers,
     )
     if surface_readout_basis is None:
@@ -177,6 +179,7 @@ def parse_transfer_measurements(
     patch_sites: common.SteanePatchSites = 14,
     merge_schedule: common.MergeSchedule = "hirano",
     include_cultivation: bool = True,
+    measure_encoder_flags: bool = False,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,
     persistent_surface_x_post_selection: bool = True,
@@ -196,6 +199,7 @@ def parse_transfer_measurements(
         patch_sites=patch_sites,
         merge_schedule=merge_schedule,
         include_cultivation=include_cultivation,
+        measure_encoder_flags=measure_encoder_flags,
         post_transfer_stabilizer_rounds=resolved_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,
         full_data_readout=surface_readout_basis is not None,

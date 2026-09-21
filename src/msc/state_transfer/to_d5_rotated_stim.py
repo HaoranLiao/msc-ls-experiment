@@ -75,6 +75,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     patch_sites: common.SteanePatchSites = 14,
     injected_state: StimInjectedStateName = "S",
     include_cultivation: bool = True,
+    measure_encoder_flags: bool = False,
     merge_schedule: common.MergeSchedule = "hirano",
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,
@@ -97,6 +98,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
         patch_sites=patch_sites,
         injected_state=injected_state,
         include_cultivation=include_cultivation,
+        measure_encoder_flags=measure_encoder_flags,
         merge_schedule=merge_schedule,
         add_ticks=add_ticks,
     )
@@ -109,6 +111,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
         TRANSFER_SPEC,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
+        measure_encoder_flags=measure_encoder_flags,
         merge_schedule=merge_schedule,
     )
     append_post_transfer_and_readout(
@@ -444,6 +447,7 @@ def parse_transfer_measurements(
     *,
     patch_sites: common.SteanePatchSites = 14,
     include_cultivation: bool = True,
+    measure_encoder_flags: bool = False,
     merge_schedule: common.MergeSchedule = "hirano",
 ) -> dict[str, object]:
     """Parse a circuit ending at the ``m_ab`` transfer boundary."""
@@ -452,5 +456,6 @@ def parse_transfer_measurements(
         spec=TRANSFER_SPEC,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
+        measure_encoder_flags=measure_encoder_flags,
         merge_schedule=merge_schedule,
     )

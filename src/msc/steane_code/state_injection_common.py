@@ -93,17 +93,21 @@ LOGICAL_Z_REPRESENTATIVES: tuple[tuple[int, ...], ...] = LOGICAL_X_REPRESENTATIV
 # -----------------------------------------------------------------------------
 
 
-# Abstract Steane encoder schedule grouped into seven collision-free CX layers.
-# Both frameworks consume this single representation; Stim additionally emits
-# an explicit ``TICK`` after each layer.
+# Abstract Steane encoder: the arbitrary input is prepared on data qubit 0, the
+# |+> seeds on data qubits 1, 2, 3, and data qubits 4, 5, 6 start in |0>. The
+# twelve-CX seed-addition network, grouped into nine collision-free layers, is
+# the routing-friendly factorization for the 14-site patch, relabeled here to
+# the abstract [[7,1,3]] stabilizer convention above.
 ABSTRACT_ENCODER_CNOT_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
-    ((6, 2),),
-    ((0, 6), (2, 5)),
-    ((4, 0), (2, 3)),
-    ((0, 1),),
-    ((1, 3), (0, 2)),
+    ((3, 5),),
+    ((5, 4), (3, 0)),
+    ((5, 6), (0, 3)),
+    ((1, 3),),
+    ((3, 2),),
+    ((2, 6), (3, 5)),
+    ((2, 1),),
+    ((4, 1),),
     ((1, 4),),
-    ((4, 5),),
 )
 
 
@@ -161,13 +165,14 @@ PATCH_11_SITE_COORDS: tuple[tuple[int, int], ...] = (
 # The 7 abstract Steane qubits (0–6) map to 11-site patch data sites as:
 #   abstract 0 → patch site 0  (injection)
 #   abstract 1 → patch site 3  (|+⟩)
-#   abstract 2 → patch site 5  (|0⟩)
-#   abstract 3 → patch site 4  (|0⟩)
-#   abstract 4 → patch site 8  (|+⟩)
+#   abstract 2 → patch site 5  (|+⟩)
+#   abstract 3 → patch site 4  (|+⟩)
+#   abstract 4 → patch site 8  (|0⟩)
 #   abstract 5 → patch site 9  (|0⟩)
-#   abstract 6 → patch site 10 (|+⟩)
-# Map from abstract Steane qubit index (0–6) to 11-site patch data site.
-_STEANE_TO_11_SITE_PATCH: tuple[int, ...] = (0, 3, 5, 4, 8, 9, 10)
+#   abstract 6 → patch site 10 (|0⟩)
+# Map from abstract Steane qubit index (0–6) to 11-site patch data site. The
+# |+> seeds are abstract qubits 1, 2, 3 (see ``ABSTRACT_ENCODER_CNOT_LAYERS``).
+STEANE_TO_11_SITE_PATCH: tuple[int, ...] = (0, 3, 5, 4, 8, 9, 10)
 
 
 # -----------------------------------------------------------------------------
@@ -340,7 +345,8 @@ def select_11_site_patch_stabilizer_measurement_layers(
 #   y=5           D1            D5            D3
 #
 #   D<i> = data site (site index == Steane qubit index i); D4 is Hirano's phase
-#          site, D6 is the direct abstract input, and D3 is the routed input.
+#          site, and D3 is the input site of both the abstract and routed
+#          encoders.
 #   H<j> = helper/ancilla site (site index j).
 #   D2'  = site 13, the superdense second copy of data qubit 2.
 #
@@ -386,16 +392,20 @@ PATCH_14_SITE_HIRANO_ENCODER_COORDS: tuple[tuple[int, int], ...] = (
 # -----------------------------------------------------------------------------
 
 
-# The 7 abstract Steane qubits (0–6) map to 14-site patch data sites as:
-#   abstract 0 → patch site 6 (D6, injection)
-#   abstract 1 → patch site 4 (D4, |+⟩)
-#   abstract 2 → patch site 2 (D2, |0⟩)
-#   abstract 3 → patch site 0 (D0, |0⟩)
-#   abstract 4 → patch site 1 (D1, |+⟩)
-#   abstract 5 → patch site 5 (D5, |0⟩)
-#   abstract 6 → patch site 3 (D3, |+⟩)
-# Map from abstract Steane qubit index (0–6) to 14-site patch data site.
-_STEANE_TO_14_SITE_PATCH: tuple[int, ...] = (6, 4, 2, 0, 1, 5, 3)
+# The abstract Steane encoder (``ABSTRACT_ENCODER_CNOT_LAYERS``) mapped, unrouted,
+# onto the 14-site data sites. Abstract encoder qubit (0–6) → 14-site data site:
+#   abstract 0 → site 3 (D3, injection)
+#   abstract 1 → site 0 (D0, |+⟩)
+#   abstract 2 → site 2 (D2, |+⟩)
+#   abstract 3 → site 5 (D5, |+⟩)
+#   abstract 4 → site 4 (D4, |0⟩)
+#   abstract 5 → site 1 (D1, |0⟩)
+#   abstract 6 → site 6 (D6, |0⟩)
+# This reproduces the routing-friendly twelve-CX network on the fixed patch
+# labels (the seed-addition network the routed encoder is derived from), encoding
+# into ``PATCH_14_SITE_X_STABILIZERS`` with logical support {1, 3, 5}. The CXs are
+# *not* routed through the diagonal connectivity; the routed encoder imposes that.
+STEANE_TO_14_SITE_PATCH: tuple[int, ...] = (3, 0, 2, 5, 4, 1, 6)
 
 
 # -----------------------------------------------------------------------------
@@ -437,7 +447,8 @@ PATCH_14_SITE_LOGICAL_Z_REPRESENTATIVES: tuple[tuple[int, ...], ...] = (
 # The routed abstract encoder uses the fixed patch geometry, starts its
 # arbitrary input on D3, and returns all seven encoded qubits to D0–D6. H8–H12
 # are routing workspace; H7 and D2' are idle. Every non-data site finishes in
-# |0>, so the superdense and cultivation schedules can follow immediately.
+# |0>, so the superdense and cultivation schedules can follow immediately. This
+# constant is the patch-site -> IBM Miami physical-qubit hardware layout.
 PATCH_14_SITE_ABSTRACT_ROUTED_IBM_MIAMI_QUBITS: tuple[int, ...] = (
     23,
     21,
@@ -458,12 +469,11 @@ PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_INJECTION_SITE: int = 3
 # H8–H12 are the routing workspace and provide five known-zero Z-basis flags.
 PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES: tuple[int, ...] = (8, 9, 10, 11, 12)
 
-# The arbitrary-state abstract isometry routed by reversing an IBM Miami route
-# of the inverse encoder. The search covers all 168 valid output mappings and
-# SABRE seeds 0–63, ranking native depth before involved-site count. The winner
-# uses 33 CXs in 14 two-qubit layers on 12 patch sites after reducing its final
-# four-CX word to an equivalent two-CX word. IBM basis translation preserves
-# the 14-layer depth with 33 CZs. The input state is prepared separately on D3.
+# The fixed-patch realization of the seed-addition network above, obtained by
+# routing the twelve-CX abstract network with seven SWAPs, deleting eight
+# state-trivial CXs (a control known |0> or a target known |+>), cancelling the
+# one resulting commuting CX pair, and rescheduling. The result uses 23 CXs in
+# nine diagonal-local two-qubit layers on 12 patch sites.
 PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_LAYERS: tuple[
     tuple[tuple[PatchEncoderGateName, tuple], ...], ...
 ] = (
@@ -471,16 +481,11 @@ PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_LAYERS: tuple[
     (("CX", ((11, 0),)),),
     (("CX", ((0, 4), (11, 3))),),
     (("CX", ((0, 10), (3, 11))),),
-    (("CX", ((5, 11), (0, 8))),),
-    (("CX", ((11, 12), (8, 0))),),
-    (("CX", ((12, 10), (0, 8), (11, 5))),),
-    (("CX", ((10, 9), (5, 11))),),
-    (("CX", ((9, 10), (11, 5))),),
-    (("CX", ((10, 9), (12, 11), (5, 8))),),
-    (("CX", ((9, 6), (11, 0), (8, 1), (12, 2))),),
-    (("CX", ((6, 9), (0, 11), (1, 8), (2, 12))),),
-    (("CX", ((9, 6), (11, 0), (8, 1), (12, 2))),),
-    (("CX", ((4, 0),)),),
+    (("CX", ((5, 11), (0, 8), (12, 10))),),
+    (("CX", ((8, 0), (10, 9), (12, 11))),),
+    (("CX", ((9, 10), (5, 8), (11, 0), (12, 2))),),
+    (("CX", ((9, 6), (8, 1), (0, 11), (2, 12))),),
+    (("CX", ((6, 9), (1, 8), (4, 0))),),
     (("CX", ((0, 4),)),),
 )
 

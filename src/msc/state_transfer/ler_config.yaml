@@ -5,6 +5,11 @@ patch_sites: 14
 merge_schedule: hirano
 full_post_selection: false
 persistent_surface_x_post_selection: true
+# Set true to measure and postselect the abstract-routed encoder flags (H8-H12).
+# False (default) drops the enc_flags register and skips that postselection. For
+# the default 14-site abstract-routed encoder this leaves the encoder+QED+
+# cultivation circuit-level fault distance unchanged (verified at three).
+measure_encoder_flags: false
 # Fit sqrt(<X_L>^2 + <Z_L>^2) over these post-transfer QEC round counts.
 post_transfer_stabilizer_rounds: [1, 3, 5, 7, 9, 11, 13, 15]
 add_barriers: true

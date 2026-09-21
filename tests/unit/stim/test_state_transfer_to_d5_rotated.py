@@ -448,6 +448,7 @@ def test_postselected_color_interface_detector_policy(
         experiment=experiment,
         patch_sites=patch_sites,
         merge_schedule=merge_schedule,
+        measure_encoder_flags=True,
     )
     analyzer = LatticeSurgeryOnlyShotAnalyzer(
         circuit,
@@ -555,6 +556,49 @@ def test_postselected_color_interface_detector_policy(
     expected_detector_count = EXPECTED_POSTSELECTION_DETECTOR_COUNTS[(patch_sites, merge_schedule)]
     assert len(analyzer._postselection_detector_indices) == expected_detector_count
     assert circuit.num_detectors - ideal_input_detector_count == expected_detector_count + 191
+
+
+@pytest.mark.parametrize(("patch_sites", "encoder_flags"), ((11, 4), (14, 5)))
+def test_disabling_encoder_flags_drops_the_stim_record(
+    patch_sites: int,
+    encoder_flags: int,
+) -> None:
+    """``measure_encoder_flags=False`` drops the enc_flags family and its detectors.
+
+    The shifted record layout stays internally consistent with the circuit and
+    every other measurement family is unchanged.
+    """
+    build_kwargs = dict(
+        patch_sites=patch_sites,
+        injected_state="0",
+        include_cultivation=False,
+        merge_schedule="hirano",
+        add_ticks=False,
+    )
+    layout_kwargs = dict(
+        patch_sites=patch_sites,
+        include_cultivation=False,
+        merge_schedule="hirano",
+    )
+    measured = transfer.build_steane_to_rotated_d5_lattice_surgery_circuit(
+        measure_encoder_flags=True, **build_kwargs
+    )
+    unmeasured = transfer.build_steane_to_rotated_d5_lattice_surgery_circuit(
+        measure_encoder_flags=False, **build_kwargs
+    )
+    measured_layout = helper.transfer_measurement_layout(
+        transfer.TRANSFER_SPEC, measure_encoder_flags=True, **layout_kwargs
+    )
+    unmeasured_layout = helper.transfer_measurement_layout(
+        transfer.TRANSFER_SPEC, measure_encoder_flags=False, **layout_kwargs
+    )
+
+    assert "enc_flags" in measured_layout.positions
+    assert "enc_flags" not in unmeasured_layout.positions
+    assert set(measured_layout.positions) - set(unmeasured_layout.positions) == {"enc_flags"}
+    assert measured.num_measurements - unmeasured.num_measurements == encoder_flags
+    assert measured.num_detectors - unmeasured.num_detectors == encoder_flags
+    assert unmeasured.num_measurements == unmeasured_layout.num_measurements
 
 
 @pytest.mark.parametrize("experiment", LATTICE_SURGERY_EXPERIMENTS)

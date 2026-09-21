@@ -25,12 +25,14 @@ TOMOGRAPHY_CONFIG: dict[str, object] = {
     "merge_schedule": "hirano",
     "full_post_selection": False,
     "persistent_surface_x_post_selection": True,
+    "measure_encoder_flags": True,
     "post_transfer_stabilizer_rounds": 2,
     "add_barriers": False,
 }
 
 
 def _write_config(tmp_path: Path, **overrides: object) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         yaml.safe_dump({**TOMOGRAPHY_CONFIG, **overrides}, sort_keys=False),
@@ -102,6 +104,46 @@ def test_tomography_yaml_matches_constructed_circuits_and_analysis(
             "Z": {"0" * circuits["Z"].num_clbits: 4},
         },
         circuit_config_path=config_path,
+    )
+    assert summary.accepted_x_shots == summary.accepted_z_shots == 4
+
+
+@pytest.mark.parametrize(
+    ("patch_sites", "encoder_flags"),
+    ((11, 4), (14, 5)),
+)
+def test_disabling_encoder_flags_drops_the_register(
+    tmp_path: Path,
+    patch_sites: common.SteanePatchSites,
+    encoder_flags: int,
+) -> None:
+    merge_schedule = "hirano" if patch_sites == 14 else "minimal_z_only"
+    measured_config = _write_config(
+        tmp_path / "with", patch_sites=patch_sites, merge_schedule=merge_schedule
+    )
+    measured_circuit = build_ty_tomography_circuits(circuit_config_path=measured_config)["X"]
+
+    unmeasured_config = _write_config(
+        tmp_path / "without",
+        patch_sites=patch_sites,
+        merge_schedule=merge_schedule,
+        measure_encoder_flags=False,
+    )
+    unmeasured_circuit = build_ty_tomography_circuits(circuit_config_path=unmeasured_config)["X"]
+
+    measured_registers = {register.name for register in measured_circuit.cregs}
+    unmeasured_registers = {register.name for register in unmeasured_circuit.cregs}
+    assert "enc_flags" in measured_registers
+    assert "enc_flags" not in unmeasured_registers
+    assert measured_registers - unmeasured_registers == {"enc_flags"}
+    assert unmeasured_circuit.num_clbits == measured_circuit.num_clbits - encoder_flags
+
+    summary = analyze_ty_tomography_counts(
+        {
+            "X": {"0" * unmeasured_circuit.num_clbits: 4},
+            "Z": {"0" * unmeasured_circuit.num_clbits: 4},
+        },
+        circuit_config_path=unmeasured_config,
     )
     assert summary.accepted_x_shots == summary.accepted_z_shots == 4
 

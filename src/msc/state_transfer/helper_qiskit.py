@@ -17,6 +17,7 @@ def build_lattice_surgery_circuit(
     injected_state: steane.InjectedStateName = "Ty",
     cultivated_state: cultivation.CultivatedStateName = "Ty",
     include_cultivation: bool = True,
+    measure_encoder_flags: bool = False,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
     """Build injection -> QED/cultivation -> three-round transfer -> ``m_ab``.
@@ -48,6 +49,11 @@ def build_lattice_surgery_circuit(
     parity. This closes an otherwise-hidden two-fault path and retains graphlike
     distance three in the serialized schedule. Surface histories are
     spacetime-decoded into the Pauli frame.
+
+    ``measure_encoder_flags=False`` skips the encoder-flag measurements and
+    drops the ``enc_flags`` classical register, so the abstract-routed (or
+    Rosenfeld) encoder emits no flag postselection. Parsing must be given the
+    same value so the shifted record layout stays aligned.
     """
     patch_spec = common.resolve_steane_transfer_patch_spec(
         patch_sites,
@@ -74,7 +80,8 @@ def build_lattice_surgery_circuit(
     surface_qubits = [qubits[label] for label in spec.surface_order]
 
     # Classical allocation uses one register per measurement family:
-    # - enc_flags: 4 Rosenfeld or 5 abstract-routed encoder-flag bits;
+    # - enc_flags: 4 Rosenfeld or 5 abstract-routed encoder-flag bits, omitted
+    #   entirely when measure_encoder_flags is false;
     # - steane_qed: 6 post-injection Steane stabilizer bits, plus the 14-site
     #   D2-copy flag when applicable;
     # - cult: 5 (11-site) or 7 (14-site) bits, when cultivation is enabled;
@@ -97,6 +104,7 @@ def build_lattice_surgery_circuit(
         include_cultivation=include_cultivation,
         merge_schedule=merge_schedule,
         surface_readout_basis=None,
+        measure_encoder_flags=measure_encoder_flags,
     )
     cregs = {
         name: ClassicalRegister(len(labels), name) for name, labels in measurement_labels.items()
@@ -110,7 +118,7 @@ def build_lattice_surgery_circuit(
             patch_qubits=steane_patch,
             injected_state=injected_state,
             cultivated_state=cultivated_state,
-            encoder_bits=list(cregs["enc_flags"]),
+            encoder_bits=list(cregs["enc_flags"]) if measure_encoder_flags else None,
             qed_bits=list(cregs["steane_qed"]),
             cultivation_bits=[list(cregs["cult"])] if include_cultivation else [],
             cultivation_rounds=int(include_cultivation),
@@ -126,7 +134,7 @@ def build_lattice_surgery_circuit(
             injected_state=injected_state,
             cultivated_state=cultivated_state,
             encoder="abstract_routed",
-            encoder_bits=list(cregs["enc_flags"]),
+            encoder_bits=list(cregs["enc_flags"]) if measure_encoder_flags else None,
             qed_bits=list(cregs["steane_qed"]),
             cultivation_bits=[list(cregs["cult"])] if include_cultivation else [],
             cultivation_rounds=int(include_cultivation),

@@ -28,6 +28,7 @@ class TyTomographyConfig:
     merge_schedule: common.MergeSchedule
     full_post_selection: bool
     persistent_surface_x_post_selection: bool
+    measure_encoder_flags: bool
     post_transfer_stabilizer_rounds: int | None
     add_barriers: bool
 
@@ -38,7 +39,12 @@ class TyTomographyConfig:
             raise ValueError("patch_sites must be 11 or 14.")
         if self.merge_schedule not in ("hirano", "minimal_z_only"):
             raise ValueError("merge_schedule must be 'hirano' or 'minimal_z_only'.")
-        for name in ("full_post_selection", "persistent_surface_x_post_selection", "add_barriers"):
+        for name in (
+            "full_post_selection",
+            "persistent_surface_x_post_selection",
+            "measure_encoder_flags",
+            "add_barriers",
+        ):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"{name} must be true or false.")
         if self.post_transfer_stabilizer_rounds is not None and (
@@ -96,6 +102,7 @@ def resolve_ty_tomography_config(
     merge_schedule: common.MergeSchedule | None = None,
     full_post_selection: bool | None = None,
     persistent_surface_x_post_selection: bool | None = None,
+    measure_encoder_flags: bool | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
     add_barriers: bool | None = None,
 ) -> TyTomographyConfig:
@@ -109,6 +116,7 @@ def resolve_ty_tomography_config(
             ("merge_schedule", merge_schedule),
             ("full_post_selection", full_post_selection),
             ("persistent_surface_x_post_selection", persistent_surface_x_post_selection),
+            ("measure_encoder_flags", measure_encoder_flags),
             ("post_transfer_stabilizer_rounds", post_transfer_stabilizer_rounds),
             ("add_barriers", add_barriers),
         )
@@ -125,6 +133,7 @@ def build_ty_tomography_circuits(
     merge_schedule: common.MergeSchedule | None = None,
     full_post_selection: bool | None = None,
     persistent_surface_x_post_selection: bool | None = None,
+    measure_encoder_flags: bool | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
     add_barriers: bool | None = None,
 ) -> dict[common.SurfaceReadoutBasis, QuantumCircuit]:
@@ -143,6 +152,7 @@ def build_ty_tomography_circuits(
         merge_schedule=merge_schedule,
         full_post_selection=full_post_selection,
         persistent_surface_x_post_selection=persistent_surface_x_post_selection,
+        measure_encoder_flags=measure_encoder_flags,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         add_barriers=add_barriers,
     )
@@ -160,6 +170,7 @@ def build_ty_tomography_circuits(
             injected_state="Ty",
             cultivated_state="Ty",
             include_cultivation=True,
+            measure_encoder_flags=config.measure_encoder_flags,
             surface_readout_basis=basis,
             full_post_selection=config.full_post_selection,
             post_transfer_stabilizer_rounds=(config.resolved_post_transfer_stabilizer_rounds),
@@ -178,6 +189,7 @@ def analyze_ty_tomography_counts(
     merge_schedule: common.MergeSchedule | None = None,
     full_post_selection: bool | None = None,
     persistent_surface_x_post_selection: bool | None = None,
+    measure_encoder_flags: bool | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
 ) -> TyTomographySummary:
     """Analyze paired counts using the same YAML config as construction."""
@@ -188,6 +200,7 @@ def analyze_ty_tomography_counts(
         merge_schedule=merge_schedule,
         full_post_selection=full_post_selection,
         persistent_surface_x_post_selection=persistent_surface_x_post_selection,
+        measure_encoder_flags=measure_encoder_flags,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         add_barriers=None,
     )
@@ -214,6 +227,7 @@ def analyze_ty_tomography_counts(
                 patch_sites=config.patch_sites,
                 merge_schedule=config.merge_schedule,
                 include_cultivation=True,
+                measure_encoder_flags=config.measure_encoder_flags,
                 surface_readout_basis=basis,
                 full_post_selection=config.full_post_selection,
                 persistent_surface_x_post_selection=(config.persistent_surface_x_post_selection),

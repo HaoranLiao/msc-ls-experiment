@@ -46,10 +46,7 @@ from msc.utils.normalize import qiskit_bit_value, resolve_patch_qubits
 #
 # The patch layouts, fold/unfold CNOT schedules, measurement counts, and
 # filter_11_site_patch_fold_layer are framework-neutral and live in
-# magic_state_cultivation_common.py.  The
-# patch-mapping constant (_STEANE_TO_11_SITE_PATCH) and the injection encoder
-# (append_abstract_encoder) live in state_injection_common.py /
-# state_injection_qiskit.py.
+# magic_state_cultivation_common.py.
 
 
 # =============================================================================
@@ -447,7 +444,7 @@ def append_11_site_patch_injection_and_cultivation(
     patch_qubits: Sequence,
     injected_state: InjectedStateName = "Ty",
     cultivated_state: CultivatedStateName = "Ty",
-    encoder_bits: Sequence,
+    encoder_bits: Sequence | None,
     cultivation_bits: Sequence[Sequence],
     cultivation_rounds: int = 1,
     qed_bits: Sequence | None = None,
@@ -474,7 +471,8 @@ def append_11_site_patch_injection_and_cultivation(
         Magic state selected by each projection round. ``"T"`` measures
         logical H_XY and ``"Ty"`` measures logical H_XZ.
     encoder_bits
-        Four classical bits for encoder-flag postselection.
+        Four classical bits for encoder-flag postselection, or ``None`` to
+        skip the encoder-flag measurements entirely.
     cultivation_bits
         Exactly ``cultivation_rounds`` 5-bit sequences, one per cultivation
         round.
@@ -495,7 +493,7 @@ def append_11_site_patch_injection_and_cultivation(
     skip_cx
         If given, omit the specified (control, target) CX gate.
     """
-    if len(encoder_bits) < 4:
+    if encoder_bits is not None and len(encoder_bits) < 4:
         raise ValueError("encoder_bits must contain at least 4 bits.")
     if cultivation_rounds < 0:
         raise ValueError("cultivation_rounds must be non-negative.")
@@ -548,7 +546,7 @@ def append_14_site_patch_injection_and_cultivation(
     *,
     add_qed_round: bool,
     patch_qubits: Sequence,
-    encoder_bits: Sequence,
+    encoder_bits: Sequence | None,
     cultivation_bits: Sequence[Sequence],
     encoder: Patch14SiteEncoderName = "abstract_routed",
     injected_state: InjectedStateName = "Ty",
@@ -566,11 +564,15 @@ def append_14_site_patch_injection_and_cultivation(
     followed by the terminal D2' copy-detour flag; all seven are postselection
     data and no recovery is applied.
 
+    ``encoder_bits`` receives the encoder-flag postselection outcomes; pass
+    ``None`` to skip those measurements entirely, in which case the classical
+    record omits the flag bits and no encoder-flag postselection is available.
+
     ``cultivated_state="Ty"`` is the Qiskit default and measures logical
     H_XZ. Pass ``"T"`` to retain logical-H_XY cultivation.
     """
     encoder_flag_count = patch_14_site_encoder_flag_count(encoder)
-    if len(encoder_bits) < encoder_flag_count:
+    if encoder_bits is not None and len(encoder_bits) < encoder_flag_count:
         raise ValueError(f"encoder_bits must contain at least {encoder_flag_count} bits.")
     if cultivation_rounds < 0:
         raise ValueError("cultivation_rounds must be non-negative.")
@@ -588,7 +590,7 @@ def append_14_site_patch_injection_and_cultivation(
             f"{PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND} bits when add_qed_round is true."
         )
 
-    encoder_flags = list(encoder_bits) if encoder_flag_count else None
+    encoder_flags = list(encoder_bits) if encoder_bits is not None and encoder_flag_count else None
     if encoder == "abstract":
         append_14_site_patch_abstract_encoder(
             circuit,

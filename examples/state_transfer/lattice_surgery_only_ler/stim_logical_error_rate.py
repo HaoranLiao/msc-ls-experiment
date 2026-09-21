@@ -71,6 +71,7 @@ def build_lattice_surgery_only_circuit(
     experiment: LogicalErrorExperiment,
     patch_sites: common.SteanePatchSites = 14,
     merge_schedule: common.MergeSchedule = "hirano",
+    measure_encoder_flags: bool = False,
     full_post_selection: bool = False,
 ) -> tuple[stim.Circuit, transfer_helper.TransferMeasurementLayout]:
     """Build the detector-annotated lattice-surgery-only experiment.
@@ -134,6 +135,7 @@ def build_lattice_surgery_only_circuit(
         merge_schedule=merge_schedule,
         injected_state=experiment.injected_state,
         include_cultivation=False,
+        measure_encoder_flags=measure_encoder_flags,
         surface_readout_basis=None,
         add_ticks=True,
     )
@@ -142,6 +144,7 @@ def build_lattice_surgery_only_circuit(
         patch_sites=patch_sites,
         merge_schedule=merge_schedule,
         include_cultivation=False,
+        measure_encoder_flags=measure_encoder_flags,
     )
     if circuit.num_measurements != transfer_layout.num_measurements:
         raise RuntimeError("transfer measurement layout does not match the circuit.")
@@ -255,7 +258,7 @@ class LatticeSurgeryOnlyShotAnalyzer(DetectorErrorModelShotAnalyzer):
                 transfer_helper.num_transfer_protocol_postselection_detectors(layout)
             )
             ideal_input_detector_count = sum(
-                len(layout.positions[name]) for name in ("enc_flags", "steane_qed")
+                len(layout.positions.get(name, ())) for name in ("enc_flags", "steane_qed")
             )
             # Detector order is protocol prefix -> initial surface X -> merged
             # surface Z -> merged surface X -> post-transfer Z -> post-transfer
@@ -370,6 +373,7 @@ def estimate_lattice_surgery_logical_error_probability(
     shots: int,
     patch_sites: common.SteanePatchSites = 14,
     merge_schedule: common.MergeSchedule = "hirano",
+    measure_encoder_flags: bool = False,
     full_post_selection: bool = False,
     complementary_gap_postselection_threshold: float | None = None,
     batch_size: int = 100_000,
@@ -389,6 +393,7 @@ def estimate_lattice_surgery_logical_error_probability(
         experiment=experiment,
         patch_sites=patch_sites,
         merge_schedule=merge_schedule,
+        measure_encoder_flags=measure_encoder_flags,
         full_post_selection=full_post_selection,
     )
     return sample_detector_logical_error_probability(
@@ -413,6 +418,7 @@ def estimate_lattice_surgery_logical_error_curves(
     shots: int,
     patch_sites: common.SteanePatchSites = 14,
     merge_schedule: common.MergeSchedule = "hirano",
+    measure_encoder_flags: bool = False,
     full_post_selection: bool = False,
     complementary_gap_postselection_threshold: float | None = None,
     batch_size: int = 100_000,
@@ -449,6 +455,7 @@ def estimate_lattice_surgery_logical_error_curves(
                 shots=shots,
                 patch_sites=patch_sites,
                 merge_schedule=merge_schedule,
+                measure_encoder_flags=measure_encoder_flags,
                 full_post_selection=full_post_selection,
                 complementary_gap_postselection_threshold=complementary_gap_postselection_threshold,
                 batch_size=batch_size,
@@ -465,6 +472,7 @@ def estimate_lattice_surgery_logical_error_curves(
                 shots=shots,
                 patch_sites=patch_sites,
                 merge_schedule=merge_schedule,
+                measure_encoder_flags=measure_encoder_flags,
                 full_post_selection=full_post_selection,
                 complementary_gap_postselection_threshold=complementary_gap_postselection_threshold,
                 batch_size=batch_size,
