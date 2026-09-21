@@ -18,6 +18,7 @@ from msc.decoding.stabilizer_frame import StabilizerFrame
 from msc.rotated_surface_code import common as surface_common
 from msc.rotated_surface_code.decoding.decoder import SpaceTimeRotatedDecoder
 from msc.steane_code.magic_state_cultivation_common import (
+    PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX,
     PATCH_14_SITE_FOLDED_MEASUREMENT_SITE,
 )
 from msc.steane_code.state_injection_common import (
@@ -370,6 +371,7 @@ def transfer_measurement_labels(
     merge_schedule: MergeSchedule = "hirano",
     surface_readout_basis: SurfaceReadoutBasis | None,
     measure_encoder_flags: bool = False,
+    measure_cultivation_flags: bool = False,
     post_transfer_stabilizer_rounds: int = 0,
     full_data_readout: bool = False,
 ) -> dict[str, tuple[str, ...]]:
@@ -381,8 +383,11 @@ def transfer_measurement_labels(
     merged round.
 
     ``measure_encoder_flags=False`` omits the ``enc_flags`` family so the
-    encoder emits no postselection flags; the record layout shifts accordingly
-    and construction and parsing must pass the same value.
+    encoder emits no postselection flags. ``measure_cultivation_flags=False``
+    shrinks each ``cult`` round to its folded root and root check, dropping the
+    four ancilla flags; this applies only to the 14-site patch and is ignored on
+    the 11-site patch (whose cultivation round is unchanged). Both shift the
+    record layout, so construction and parsing must pass the same values.
     """
     patch_spec = resolve_steane_transfer_patch_spec(patch_sites, merge_schedule=merge_schedule)
     if post_transfer_stabilizer_rounds < 0:
@@ -392,7 +397,14 @@ def transfer_measurement_labels(
         labels["enc_flags"] = patch_spec.encoder_flag_labels
     labels["steane_qed"] = patch_spec.qed_labels
     if include_cultivation:
-        labels["cult"] = patch_spec.cultivation_labels
+        if not measure_cultivation_flags and patch_sites == NUM_QUBITS_PATCH_14_SITES:
+            # 14-site only: keep the folded root and its root check (H10 read twice).
+            labels["cult"] = (
+                patch_spec.cultivation_labels[0],
+                patch_spec.cultivation_labels[PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX],
+            )
+        else:
+            labels["cult"] = patch_spec.cultivation_labels
     labels.update(
         surface_init_z=spec.z_labels,
         surface_init_x=spec.x_labels,

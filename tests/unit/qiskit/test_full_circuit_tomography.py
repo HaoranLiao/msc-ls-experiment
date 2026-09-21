@@ -49,6 +49,7 @@ def test_full_d5_ty_tomography_measurement_record_is_complete_and_semantic(
         target_distance=5,
         patch_sites=14,
         measure_encoder_flags=True,
+        measure_cultivation_flags=True,
         add_barriers=False,
     )[basis]
     z_labels = (
@@ -200,6 +201,7 @@ def test_full_d5_ty_tomography_measurement_record_is_complete_and_semantic(
         patch_sites=14,
         include_cultivation=True,
         measure_encoder_flags=True,
+        measure_cultivation_flags=True,
         surface_readout_basis=basis,
     )
 

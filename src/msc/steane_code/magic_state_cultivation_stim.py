@@ -32,11 +32,11 @@ from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_ROOT_CHECK_INDEX,
     PATCH_11_SITE_FOLD_LAYERS,
     PATCH_11_SITE_FOLDED_MEASUREMENT_SITE,
-    PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX,
     PATCH_14_SITE_FOLD_LAYERS,
     PATCH_14_SITE_FOLDED_MEASUREMENT_SITE,
     Patch14SiteEncoderName,
     filter_11_site_patch_fold_layer,
+    measured_14_site_cultivation_helpers,
 )
 from msc.steane_code.state_injection_common import (
     NUM_QUBITS_PATCH_11_SITES,
@@ -291,6 +291,7 @@ def append_14_site_patch_y_projection_round(
     circuit: stim.Circuit,
     *,
     patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
+    measure_flags: bool = True,
     add_ticks: bool = True,
     running_kt: bool = False,
 ) -> tuple[int, ...]:
@@ -298,13 +299,18 @@ def append_14_site_patch_y_projection_round(
 
     Reset the active helpers H8-H12 to ``|+>``, apply ``S``/``S_DAG`` to the
     seven data sites, fold onto H10, measure and reset H10 in the X basis,
-    unfold, then read out H8-H12 in site order. H7 is unused. H10's second
-    result must agree with the folded root; the other four results are fixed-+1
-    checks. The root-agreement detector applies to cultivation and KT, while
-    only cultivation adds a detector that pins the folded root to +1.
+    unfold, then read out the helper checks in site order. H7 is unused. H10's
+    second result must agree with the folded root; the root-agreement detector
+    applies to cultivation and KT, while only cultivation adds a detector that
+    pins the folded root to +1.
 
     Parameters
     ----------
+    measure_flags
+        Whether to read the four fixed-+1 ancilla flags H8, H9, H11, and H12
+        (each an extra postselection detector). When false, only H10 is
+        re-measured as the root check, so the round keeps the folded root and
+        its root check and omits the four ancilla-flag measurements.
     running_kt
         Whether to retain both folded-root branches for KT. The root is reset
         and checked after unfolding in either mode, but Stim's detector
@@ -314,13 +320,15 @@ def append_14_site_patch_y_projection_round(
     Returns
     -------
     tuple[int, ...]
-        Absolute record positions for the folded H10 root followed by helper
-        readouts H8, H9, H10, H11, and H12. The H10 readout is the root check.
+        Absolute record positions for the folded H10 root followed by the
+        measured helper readouts (H8-H12 with flags, else H10 alone). The H10
+        readout is the root check.
     """
     patch_qubits = resolve_patch_qubits(
         patch_qubits,
         expected_count=NUM_QUBITS_PATCH_14_SITES,
     )
+    measured_helpers = measured_14_site_cultivation_helpers(measure_flags=measure_flags)
     first_projection_position = circuit.num_measurements
 
     for helper_site in PATCH_14_SITE_HELPER_SITES[1:]:
@@ -344,7 +352,7 @@ def append_14_site_patch_y_projection_round(
 
     append_14_site_patch_unfold_network(circuit, patch_qubits, add_ticks=add_ticks)
 
-    for helper_site in PATCH_14_SITE_HELPER_SITES[1:]:
+    for helper_site in measured_helpers:
         measure_in_x_basis(circuit, patch_qubits[helper_site])
     if add_ticks:
         circuit.append("TICK", [])
@@ -361,10 +369,10 @@ def append_14_site_patch_y_projection_round(
     # measurements this call contributed, in append order.
     measurement_positions = tuple(range(first_projection_position, circuit.num_measurements))
     folded_root = measurement_positions[0]
-    root_check = measurement_positions[PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX]
+    root_check_index = 1 + measured_helpers.index(PATCH_14_SITE_FOLDED_MEASUREMENT_SITE)
+    root_check = measurement_positions[root_check_index]
     flag_positions = (
-        measurement_positions[1:PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX]
-        + measurement_positions[PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX + 1 :]
+        measurement_positions[1:root_check_index] + measurement_positions[root_check_index + 1 :]
     )
     if not running_kt:
         circuit_stim.append_detector(circuit, measurement_positions=(folded_root,))
@@ -448,6 +456,7 @@ def append_14_site_patch_injection_and_cultivation(
     encoder: Patch14SiteEncoderName = "abstract_routed",
     cultivation_rounds: int = 1,
     measure_encoder_flags: bool = False,
+    measure_cultivation_flags: bool = True,
     add_ticks: bool = True,
 ) -> None:
     """Append selectable 14-site injection, optional QED, and cultivation rounds.
@@ -460,8 +469,10 @@ def append_14_site_patch_injection_and_cultivation(
     ``measure_encoder_flags`` is true, the record order starts with the
     selected encoder's flags (five for abstract-routed, six for Hirano),
     then seven QED outcomes (six stabilizers plus the terminal D2' flag),
-    then six outcomes per cultivation round (the folded H10 root followed by
-    helper readouts H8-H12, with H10 serving as the root check). Set
+    then per cultivation round the folded H10 root and helper readouts. With
+    ``measure_cultivation_flags`` true each round reads H8-H12 (six outcomes,
+    H10 being the root check); false reads only the folded root and its H10
+    root check (two outcomes), omitting the four ancilla flags. Set
     ``cultivation_rounds=0``
     to stop after injection and optional QED. Every measured encoder-flag,
     QED, and cultivation outcome -- including every helper flag -- is
@@ -511,6 +522,7 @@ def append_14_site_patch_injection_and_cultivation(
         append_14_site_patch_y_projection_round(
             circuit,
             patch_qubits=patch_qubits,
+            measure_flags=measure_cultivation_flags,
             add_ticks=add_ticks,
         )
 
@@ -576,6 +588,7 @@ def build_14_site_patch_injection_and_cultivation_circuit(
     add_qed_round: bool,
     encoder: Patch14SiteEncoderName = "abstract_routed",
     cultivation_rounds: int = 1,
+    measure_cultivation_flags: bool = True,
     add_ticks: bool = True,
 ) -> stim.Circuit:
     """Authoritative 14-site Stim qubit-layout and appending example.
@@ -588,9 +601,10 @@ def build_14_site_patch_injection_and_cultivation_circuit(
 
     Measurement-record layout: the selected encoder's flag entries, then (if
     ``add_qed_round``) seven Steane QED entries (six stabilizers plus the
-    terminal D2' flag), then six entries per cultivation round (the folded H10
-    root followed by helper readouts H8-H12, with H10 serving as the root
-    check). Every entry is emitted as a postselection detector.
+    terminal D2' flag), then per cultivation round the folded H10 root and its
+    helper readouts. ``measure_cultivation_flags`` true reads H8-H12 (six
+    entries, H10 the root check); false reads only the folded root and its H10
+    root check (two entries). Every entry is emitted as a postselection detector.
 
     Returns
     -------
@@ -606,7 +620,7 @@ def build_14_site_patch_injection_and_cultivation_circuit(
     # Measurement-record layout:
     # - selected encoder's flag entries;
     # - 7 post-injection Steane QED entries, when enabled;
-    # - 6 entries for each cultivation round.
+    # - 6 (flags on) or 2 (flags off) entries for each cultivation round.
     append_14_site_patch_injection_and_cultivation(
         circuit,
         patch_qubits=DEFAULT_STIM_14_SITE_PATCH_QUBITS,
@@ -614,6 +628,7 @@ def build_14_site_patch_injection_and_cultivation_circuit(
         encoder=encoder,
         cultivation_rounds=cultivation_rounds,
         measure_encoder_flags=True,
+        measure_cultivation_flags=measure_cultivation_flags,
         add_qed_round=add_qed_round,
         add_ticks=add_ticks,
     )

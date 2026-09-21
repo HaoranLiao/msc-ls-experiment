@@ -41,6 +41,7 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
     cultivated_state: CultivatedStateName = "Ty",
     include_cultivation: bool = True,
     measure_encoder_flags: bool = False,
+    measure_cultivation_flags: bool = False,
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,
@@ -76,6 +77,7 @@ def build_steane_to_rotated_d3_lattice_surgery_circuit(
         cultivated_state=cultivated_state,
         include_cultivation=include_cultivation,
         measure_encoder_flags=measure_encoder_flags,
+        measure_cultivation_flags=measure_cultivation_flags,
         add_barriers=add_barriers,
     )
     if surface_readout_basis is None and not include_post_transfer_stabilizer_rounds:
@@ -143,6 +145,7 @@ def parse_transfer_measurements(
     merge_schedule: common.MergeSchedule = "hirano",
     include_cultivation: bool = True,
     measure_encoder_flags: bool = False,
+    measure_cultivation_flags: bool = False,
     include_post_transfer_stabilizer_rounds: bool = False,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,
@@ -163,6 +166,7 @@ def parse_transfer_measurements(
         merge_schedule=merge_schedule,
         include_cultivation=include_cultivation,
         measure_encoder_flags=measure_encoder_flags,
+        measure_cultivation_flags=measure_cultivation_flags,
         post_transfer_stabilizer_rounds=resolved_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,
         full_data_readout=surface_readout_basis is not None,

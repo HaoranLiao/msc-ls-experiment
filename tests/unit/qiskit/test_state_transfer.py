@@ -832,6 +832,7 @@ def test_d5_qiskit_measurements_match_stim_acceptance_detector_accounting() -> N
                 patch_sites=patch_sites,
                 include_cultivation=include_cultivation,
                 measure_encoder_flags=True,
+                measure_cultivation_flags=True,
             )
             assert (
                 transfer_stim_helper.num_transfer_protocol_postselection_detectors(transfer_layout)
@@ -873,6 +874,7 @@ def test_d5_qiskit_measurements_match_stim_acceptance_detector_accounting() -> N
                         injected_state="0",
                         include_cultivation=include_cultivation,
                         measure_encoder_flags=True,
+                        measure_cultivation_flags=True,
                         surface_readout_basis=readout_basis,
                         full_post_selection=full_post_selection,
                         add_barriers=False,
@@ -882,6 +884,7 @@ def test_d5_qiskit_measurements_match_stim_acceptance_detector_accounting() -> N
                         injected_state="0",
                         include_cultivation=include_cultivation,
                         measure_encoder_flags=True,
+                        measure_cultivation_flags=True,
                         surface_readout_basis=readout_basis,
                         full_post_selection=full_post_selection,
                         add_ticks=False,

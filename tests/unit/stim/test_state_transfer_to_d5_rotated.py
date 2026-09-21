@@ -298,12 +298,14 @@ def test_minimal_z_only_with_noisy_cultivation_fault_distance(
             0.001,
             patch_sites=patch_sites,
             merge_schedule="minimal_z_only",
+            measure_cultivation_flags=True,
         )
     elif probe in ("X", "Z"):
         circuit = transfer.build_steane_to_rotated_d5_lattice_surgery_circuit(
             patch_sites=patch_sites,
             merge_schedule="minimal_z_only",
             include_cultivation=True,
+            measure_cultivation_flags=True,
             surface_readout_basis="Z" if probe == "X" else "X",
             full_post_selection=True,
         )

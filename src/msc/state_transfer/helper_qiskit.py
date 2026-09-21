@@ -18,6 +18,7 @@ def build_lattice_surgery_circuit(
     cultivated_state: cultivation.CultivatedStateName = "Ty",
     include_cultivation: bool = True,
     measure_encoder_flags: bool = False,
+    measure_cultivation_flags: bool = False,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
     """Build injection -> QED/cultivation -> three-round transfer -> ``m_ab``.
@@ -52,8 +53,10 @@ def build_lattice_surgery_circuit(
 
     ``measure_encoder_flags=False`` skips the encoder-flag measurements and
     drops the ``enc_flags`` classical register, so the abstract-routed (or
-    Rosenfeld) encoder emits no flag postselection. Parsing must be given the
-    same value so the shifted record layout stays aligned.
+    Rosenfeld) encoder emits no flag postselection. ``measure_cultivation_flags``
+    is 14-site only: ``False`` shrinks each ``cult`` register to the folded root
+    and its root check, dropping the four ancilla-flag measurements. Parsing
+    must be given the same values so the shifted record layout stays aligned.
     """
     patch_spec = common.resolve_steane_transfer_patch_spec(
         patch_sites,
@@ -105,6 +108,7 @@ def build_lattice_surgery_circuit(
         merge_schedule=merge_schedule,
         surface_readout_basis=None,
         measure_encoder_flags=measure_encoder_flags,
+        measure_cultivation_flags=measure_cultivation_flags,
     )
     cregs = {
         name: ClassicalRegister(len(labels), name) for name, labels in measurement_labels.items()
@@ -138,6 +142,7 @@ def build_lattice_surgery_circuit(
             qed_bits=list(cregs["steane_qed"]),
             cultivation_bits=[list(cregs["cult"])] if include_cultivation else [],
             cultivation_rounds=int(include_cultivation),
+            measure_cultivation_flags=measure_cultivation_flags,
             add_qed_round=True,
             add_barriers=add_barriers,
         )

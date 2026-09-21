@@ -29,6 +29,7 @@ class TyTomographyConfig:
     full_post_selection: bool
     persistent_surface_x_post_selection: bool
     measure_encoder_flags: bool
+    measure_cultivation_flags: bool
     post_transfer_stabilizer_rounds: int | None
     add_barriers: bool
 
@@ -43,6 +44,7 @@ class TyTomographyConfig:
             "full_post_selection",
             "persistent_surface_x_post_selection",
             "measure_encoder_flags",
+            "measure_cultivation_flags",
             "add_barriers",
         ):
             if type(getattr(self, name)) is not bool:
@@ -103,6 +105,7 @@ def resolve_ty_tomography_config(
     full_post_selection: bool | None = None,
     persistent_surface_x_post_selection: bool | None = None,
     measure_encoder_flags: bool | None = None,
+    measure_cultivation_flags: bool | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
     add_barriers: bool | None = None,
 ) -> TyTomographyConfig:
@@ -117,6 +120,7 @@ def resolve_ty_tomography_config(
             ("full_post_selection", full_post_selection),
             ("persistent_surface_x_post_selection", persistent_surface_x_post_selection),
             ("measure_encoder_flags", measure_encoder_flags),
+            ("measure_cultivation_flags", measure_cultivation_flags),
             ("post_transfer_stabilizer_rounds", post_transfer_stabilizer_rounds),
             ("add_barriers", add_barriers),
         )
@@ -134,6 +138,7 @@ def build_ty_tomography_circuits(
     full_post_selection: bool | None = None,
     persistent_surface_x_post_selection: bool | None = None,
     measure_encoder_flags: bool | None = None,
+    measure_cultivation_flags: bool | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
     add_barriers: bool | None = None,
 ) -> dict[common.SurfaceReadoutBasis, QuantumCircuit]:
@@ -153,6 +158,7 @@ def build_ty_tomography_circuits(
         full_post_selection=full_post_selection,
         persistent_surface_x_post_selection=persistent_surface_x_post_selection,
         measure_encoder_flags=measure_encoder_flags,
+        measure_cultivation_flags=measure_cultivation_flags,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         add_barriers=add_barriers,
     )
@@ -171,6 +177,7 @@ def build_ty_tomography_circuits(
             cultivated_state="Ty",
             include_cultivation=True,
             measure_encoder_flags=config.measure_encoder_flags,
+            measure_cultivation_flags=config.measure_cultivation_flags,
             surface_readout_basis=basis,
             full_post_selection=config.full_post_selection,
             post_transfer_stabilizer_rounds=(config.resolved_post_transfer_stabilizer_rounds),
@@ -190,6 +197,7 @@ def analyze_ty_tomography_counts(
     full_post_selection: bool | None = None,
     persistent_surface_x_post_selection: bool | None = None,
     measure_encoder_flags: bool | None = None,
+    measure_cultivation_flags: bool | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
 ) -> TyTomographySummary:
     """Analyze paired counts using the same YAML config as construction."""
@@ -201,6 +209,7 @@ def analyze_ty_tomography_counts(
         full_post_selection=full_post_selection,
         persistent_surface_x_post_selection=persistent_surface_x_post_selection,
         measure_encoder_flags=measure_encoder_flags,
+        measure_cultivation_flags=measure_cultivation_flags,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         add_barriers=None,
     )
@@ -228,6 +237,7 @@ def analyze_ty_tomography_counts(
                 merge_schedule=config.merge_schedule,
                 include_cultivation=True,
                 measure_encoder_flags=config.measure_encoder_flags,
+                measure_cultivation_flags=config.measure_cultivation_flags,
                 surface_readout_basis=basis,
                 full_post_selection=config.full_post_selection,
                 persistent_surface_x_post_selection=(config.persistent_surface_x_post_selection),

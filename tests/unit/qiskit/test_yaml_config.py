@@ -26,6 +26,7 @@ TOMOGRAPHY_CONFIG: dict[str, object] = {
     "full_post_selection": False,
     "persistent_surface_x_post_selection": True,
     "measure_encoder_flags": True,
+    "measure_cultivation_flags": True,
     "post_transfer_stabilizer_rounds": 2,
     "add_barriers": False,
 }
@@ -109,15 +110,27 @@ def test_tomography_yaml_matches_constructed_circuits_and_analysis(
 
 
 @pytest.mark.parametrize(
-    ("patch_sites", "encoder_flags"),
-    ((11, 4), (14, 5)),
+    ("flag_field", "patch_sites", "merge_schedule", "register", "measured_width", "unmeasured_width"),
+    (
+        # The encoder-flag register vanishes entirely; the cultivation round's
+        # cult register keeps its folded root and root check and drops the four
+        # ancilla flags. Both remove real measurement operations, so the record
+        # shrinks by exactly the retired bits.
+        ("measure_encoder_flags", 11, "minimal_z_only", "enc_flags", 4, 0),
+        ("measure_encoder_flags", 14, "hirano", "enc_flags", 5, 0),
+        ("measure_cultivation_flags", 14, "hirano", "cult", 6, 2),
+        ("measure_cultivation_flags", 14, "minimal_z_only", "cult", 6, 2),
+    ),
 )
-def test_disabling_encoder_flags_drops_the_register(
+def test_disabling_flag_measurements_shrinks_the_record(
     tmp_path: Path,
+    flag_field: str,
     patch_sites: common.SteanePatchSites,
-    encoder_flags: int,
+    merge_schedule: common.MergeSchedule,
+    register: str,
+    measured_width: int,
+    unmeasured_width: int,
 ) -> None:
-    merge_schedule = "hirano" if patch_sites == 14 else "minimal_z_only"
     measured_config = _write_config(
         tmp_path / "with", patch_sites=patch_sites, merge_schedule=merge_schedule
     )
@@ -127,16 +140,17 @@ def test_disabling_encoder_flags_drops_the_register(
         tmp_path / "without",
         patch_sites=patch_sites,
         merge_schedule=merge_schedule,
-        measure_encoder_flags=False,
+        **{flag_field: False},
     )
     unmeasured_circuit = build_ty_tomography_circuits(circuit_config_path=unmeasured_config)["X"]
 
-    measured_registers = {register.name for register in measured_circuit.cregs}
-    unmeasured_registers = {register.name for register in unmeasured_circuit.cregs}
-    assert "enc_flags" in measured_registers
-    assert "enc_flags" not in unmeasured_registers
-    assert measured_registers - unmeasured_registers == {"enc_flags"}
-    assert unmeasured_circuit.num_clbits == measured_circuit.num_clbits - encoder_flags
+    measured_widths = {r.name: len(r) for r in measured_circuit.cregs}
+    unmeasured_widths = {r.name: len(r) for r in unmeasured_circuit.cregs}
+    assert measured_widths[register] == measured_width
+    assert unmeasured_widths.get(register, 0) == unmeasured_width
+    assert unmeasured_circuit.num_clbits == (
+        measured_circuit.num_clbits - (measured_width - unmeasured_width)
+    )
 
     summary = analyze_ty_tomography_counts(
         {

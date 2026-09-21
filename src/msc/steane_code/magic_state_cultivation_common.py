@@ -141,6 +141,20 @@ PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX: int = 1 + PATCH_14_SITE_HELPER_SITES
 PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND: int = 1 + len(PATCH_14_SITE_HELPER_SITES[1:])
 
 
+def measured_14_site_cultivation_helpers(*, measure_flags: bool) -> tuple[int, ...]:
+    """Helper sites read in the X basis after unfolding one 14-site cultivation round.
+
+    These follow the folded H10 root in record order. Measuring flags reads
+    H8-H12 (the H10 root check plus the four fixed-zero ancilla flags); skipping
+    flags reads only H10, keeping the folded root and its root check and dropping
+    the four ancilla-flag measurements. Callers derive the per-round measurement
+    count (``1 + len``) and the root-check index (``1 + index of H10``).
+    """
+    if measure_flags:
+        return PATCH_14_SITE_HELPER_SITES[1:]
+    return (PATCH_14_SITE_FOLDED_MEASUREMENT_SITE,)
+
+
 # =============================================================================
 # Fold / unfold network schedule
 # =============================================================================

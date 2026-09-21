@@ -20,6 +20,7 @@ def parse_transfer_measurements(
     patch_sites: SteanePatchSites = 14,
     include_cultivation: bool = True,
     measure_encoder_flags: bool = False,
+    measure_cultivation_flags: bool = False,
     merge_schedule: MergeSchedule = "hirano",
 ) -> dict[str, object]:
     """Label one record row, then derive checks, recovery, and Pauli byproducts."""
@@ -31,6 +32,7 @@ def parse_transfer_measurements(
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
         measure_encoder_flags=measure_encoder_flags,
+        measure_cultivation_flags=measure_cultivation_flags,
         merge_schedule=merge_schedule,
     )
     if shot.shape[0] != layout.num_measurements:

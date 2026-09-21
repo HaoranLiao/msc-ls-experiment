@@ -94,6 +94,7 @@ def transfer_measurement_layout(
     patch_sites: common.SteanePatchSites = 14,
     include_cultivation: bool,
     measure_encoder_flags: bool = False,
+    measure_cultivation_flags: bool = False,
     merge_schedule: common.MergeSchedule = "hirano",
 ) -> TransferMeasurementLayout:
     """Map shared measurement labels into Stim's physical append order.
@@ -115,6 +116,7 @@ def transfer_measurement_layout(
         merge_schedule=merge_schedule,
         surface_readout_basis=None,
         measure_encoder_flags=measure_encoder_flags,
+        measure_cultivation_flags=measure_cultivation_flags,
     )
     if patch_sites == 14:
         # Follow the grouped superdense readout order: same-face X/Z checks
@@ -221,6 +223,7 @@ def build_lattice_surgery_circuit(
     injected_state: steane.StimInjectedStateName = "S",
     include_cultivation: bool = True,
     measure_encoder_flags: bool = False,
+    measure_cultivation_flags: bool = False,
     merge_schedule: common.MergeSchedule = "hirano",
     add_ticks: bool = True,
 ) -> stim.Circuit:
@@ -292,6 +295,7 @@ def build_lattice_surgery_circuit(
             encoder="abstract_routed",
             cultivation_rounds=int(include_cultivation),
             measure_encoder_flags=measure_encoder_flags,
+            measure_cultivation_flags=measure_cultivation_flags,
             add_qed_round=True,
             add_ticks=add_ticks,
         )
@@ -386,6 +390,7 @@ def build_lattice_surgery_circuit(
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
         measure_encoder_flags=measure_encoder_flags,
+        measure_cultivation_flags=measure_cultivation_flags,
         merge_schedule=merge_schedule,
     )
 

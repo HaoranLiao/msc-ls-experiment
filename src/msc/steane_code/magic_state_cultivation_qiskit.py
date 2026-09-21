@@ -10,7 +10,6 @@ from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     PATCH_11_SITE_FOLD_LAYERS,
     PATCH_11_SITE_FOLDED_MEASUREMENT_SITE,
-    PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     PATCH_14_SITE_FOLD_LAYERS,
     PATCH_14_SITE_FOLDED_MEASUREMENT_SITE,
     PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
@@ -18,6 +17,7 @@ from msc.steane_code.magic_state_cultivation_common import (
     CultivatedStateName,
     Patch14SiteEncoderName,
     filter_11_site_patch_fold_layer,
+    measured_14_site_cultivation_helpers,
     patch_14_site_encoder_flag_count,
 )
 from msc.steane_code.state_injection_common import (
@@ -350,15 +350,19 @@ def append_14_site_patch_magic_state_projection_round(
     patch_qubits: Sequence,
     bits: Sequence,
     cultivated_state: CultivatedStateName,
+    measure_flags: bool = True,
     add_barriers: bool = True,
 ) -> None:
     """Append one logical magic-state projection round on the 14-site patch.
 
     The round prepares H8-H12 in ``|+>``, rotates H_XY or H_XZ onto logical X,
-    folds onto H10, measures and resets H10, unfolds, measures H8-H12 in X,
-    then undoes the basis rotation. The six output bits are the folded H10 root
-    followed by H8, H9, H10, H11, and H12. The second H10 result is a root
-    check; the other four helper results are fixed-zero checks. H7 is unused.
+    folds onto H10, measures and resets H10, unfolds, reads the helper checks in
+    X, then undoes the basis rotation. With ``measure_flags`` true the bits are
+    the folded H10 root followed by H8, H9, H10, H11, and H12; the second H10
+    result is the root check and the other four are fixed-zero ancilla flags. H7
+    is unused. With ``measure_flags`` false the round reads only the folded root
+    and its H10 root check (two bits), omitting the four ancilla-flag
+    measurements.
 
     Cultivation postselects the folded root to zero. KT retains either root
     branch and requires the repeated H10 result to agree with it.
@@ -368,15 +372,17 @@ def append_14_site_patch_magic_state_projection_round(
     cultivated_state
         ``"T"`` projects onto the +1 eigenspace of H_XY; ``"Ty"`` projects
         onto the +1 eigenspace of H_XZ.
+    measure_flags
+        Whether to read the four fixed-zero ancilla flags H8, H9, H11, and H12.
     """
     patch_qubits = resolve_patch_qubits(
         patch_qubits,
         expected_count=NUM_QUBITS_PATCH_14_SITES,
     )
-    if len(bits) != PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND:
-        raise ValueError(
-            "bits must contain exactly " f"{PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND} bits."
-        )
+    measured_helpers = measured_14_site_cultivation_helpers(measure_flags=measure_flags)
+    measurement_count = 1 + len(measured_helpers)
+    if len(bits) != measurement_count:
+        raise ValueError(f"bits must contain exactly {measurement_count} bits.")
     bits = list(bits)
 
     for helper_site in PATCH_14_SITE_HELPER_SITES[1:]:
@@ -416,7 +422,7 @@ def append_14_site_patch_magic_state_projection_round(
         patch_qubits,
         add_barriers=add_barriers,
     )
-    for bit_index, helper_site in enumerate(PATCH_14_SITE_HELPER_SITES[1:], start=1):
+    for bit_index, helper_site in enumerate(measured_helpers, start=1):
         measure_in_x_basis(circuit, patch_qubits[helper_site], bits[bit_index])
     if add_barriers:
         circuit.barrier(label="measure helpers")
@@ -552,6 +558,7 @@ def append_14_site_patch_injection_and_cultivation(
     injected_state: InjectedStateName = "Ty",
     cultivated_state: CultivatedStateName = "Ty",
     cultivation_rounds: int = 1,
+    measure_cultivation_flags: bool = True,
     qed_bits: Sequence | None = None,
     add_barriers: bool = True,
 ) -> None:
@@ -568,6 +575,11 @@ def append_14_site_patch_injection_and_cultivation(
     ``None`` to skip those measurements entirely, in which case the classical
     record omits the flag bits and no encoder-flag postselection is available.
 
+    ``measure_cultivation_flags`` chooses each cultivation round's record: true
+    reads the folded root, its H10 root check, and the four fixed-zero ancilla
+    flags; false reads only the folded root and its root check, so
+    ``cultivation_bits`` sequences shrink accordingly.
+
     ``cultivated_state="Ty"`` is the Qiskit default and measures logical
     H_XZ. Pass ``"T"`` to retain logical-H_XY cultivation.
     """
@@ -576,11 +588,13 @@ def append_14_site_patch_injection_and_cultivation(
         raise ValueError(f"encoder_bits must contain at least {encoder_flag_count} bits.")
     if cultivation_rounds < 0:
         raise ValueError("cultivation_rounds must be non-negative.")
+    cultivation_measurement_count = 1 + len(
+        measured_14_site_cultivation_helpers(measure_flags=measure_cultivation_flags)
+    )
     if len(cultivation_bits) != cultivation_rounds:
         raise ValueError(
-            "cultivation_bits must contain exactly one "
-            f"{PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND}-bit sequence per "
-            "cultivation round."
+            f"cultivation_bits must contain exactly one {cultivation_measurement_count}-bit "
+            "sequence per cultivation round."
         )
     if add_qed_round and (
         qed_bits is None or len(qed_bits) != PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND
@@ -638,6 +652,7 @@ def append_14_site_patch_injection_and_cultivation(
             patch_qubits=patch_qubits,
             bits=round_bits,
             cultivated_state=cultivated_state,
+            measure_flags=measure_cultivation_flags,
             add_barriers=add_barriers,
         )
 
@@ -754,12 +769,15 @@ def build_14_site_patch_injection_and_cultivation_circuit(
     encoder: Patch14SiteEncoderName = "abstract_routed",
     cultivated_state: CultivatedStateName = "Ty",
     cultivation_rounds: int = 1,
+    measure_cultivation_flags: bool = True,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
     """Build the register-owning 14-site injection-and-cultivation circuit.
 
     The optional QED register has seven bits: six Steane stabilizers followed
-    by the inferred terminal D2' copy-detour flag.
+    by the inferred terminal D2' copy-detour flag. Each cultivation register
+    holds one bit per measured outcome: six with ``measure_cultivation_flags``,
+    two (folded root and root check) without.
     """
     if cultivation_rounds < 0:
         raise ValueError("cultivation_rounds must be non-negative.")
@@ -774,11 +792,11 @@ def build_14_site_patch_injection_and_cultivation_circuit(
         if add_qed_round
         else None
     )
+    cultivation_measurement_count = 1 + len(
+        measured_14_site_cultivation_helpers(measure_flags=measure_cultivation_flags)
+    )
     cult_cregs = [
-        ClassicalRegister(
-            PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
-            f"cult_{round_index}",
-        )
+        ClassicalRegister(cultivation_measurement_count, f"cult_{round_index}")
         for round_index in range(cultivation_rounds)
     ]
     cregs: list[ClassicalRegister] = []
@@ -798,6 +816,7 @@ def build_14_site_patch_injection_and_cultivation_circuit(
         encoder_bits=(list(enc_flags_creg) if enc_flags_creg is not None else ()),
         cultivation_bits=[list(cult_creg) for cult_creg in cult_cregs],
         cultivation_rounds=cultivation_rounds,
+        measure_cultivation_flags=measure_cultivation_flags,
         qed_bits=(list(qed_creg) if qed_creg is not None else None),
         add_qed_round=add_qed_round,
         add_barriers=add_barriers,
