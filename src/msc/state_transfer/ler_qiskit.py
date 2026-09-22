@@ -43,39 +43,19 @@ class TyLogicalErrorRateConfig:
 
 
 @dataclass(frozen=True)
-class TyMemoryExperimentPoint:
-    """Logical tomography result after one number of memory rounds."""
+class TyLogicalErrorRateSummary:
+    """Per-round tomography summaries and their fitted per-round logical error rate.
 
-    post_transfer_stabilizer_rounds: int
-    tomography: TyTomographySummary
+    ``tomography[i]`` is the postselected logical tomography at memory duration
+    ``post_transfer_stabilizer_rounds[i]``. The fit follows the binary
+    logical-flip convention ``R(N) = R(0) (1 - 2 p_L)**N`` on the per-point
+    Bloch radii ``sqrt(<X_L>**2 + <Z_L>**2)``.
+    """
 
-    @property
-    def bloch_radius_xz(self) -> float:
-        """Return ``sqrt(<X_L>**2 + <Z_L>**2)`` for this sweep point."""
-        return hypot(self.tomography.expectation_x, self.tomography.expectation_z)
-
-
-@dataclass(frozen=True)
-class TyLogicalErrorRateFit:
-    """Bloch-decay fit in the per-round binary logical-error convention."""
-
+    post_transfer_stabilizer_rounds: tuple[int, ...]
+    tomography: tuple[TyTomographySummary, ...]
     zero_round_bloch_radius: float
     logical_error_rate_per_round: float
-
-    def fitted_bloch_radius(self, post_transfer_stabilizer_rounds: int | float) -> float:
-        """Evaluate the fitted ``R(N) = R(0) (1 - 2 p_L)**N`` curve."""
-        return (
-            self.zero_round_bloch_radius
-            * (1.0 - 2.0 * self.logical_error_rate_per_round) ** post_transfer_stabilizer_rounds
-        )
-
-
-@dataclass(frozen=True)
-class TyLogicalErrorRateSummary:
-    """Tomography sweep points and their fitted per-round logical error rate."""
-
-    points: tuple[TyMemoryExperimentPoint, ...]
-    fit: TyLogicalErrorRateFit
 
 
 def load_ty_logical_error_rate_config(
@@ -149,45 +129,46 @@ def analyze_ty_logical_error_rate_counts(
             f"post-transfer rounds {sorted(expected_rounds)}."
         )
 
-    points = tuple(
-        TyMemoryExperimentPoint(
+    tomography_summaries = tuple(
+        analyze_ty_tomography_counts(
+            counts_by_round[round_count],
+            circuit_config_path=TY_TOMOGRAPHY_CONFIG_PATH,
+            target_distance=tomography.target_distance,
+            patch_sites=tomography.patch_sites,
+            merge_schedule=tomography.merge_schedule,
+            full_post_selection=tomography.full_post_selection,
+            persistent_surface_x_post_selection=tomography.persistent_surface_x_post_selection,
+            measure_encoder_flags=tomography.measure_encoder_flags,
+            measure_cultivation_flags=tomography.measure_cultivation_flags,
+            post_injection_qed_checks=tomography.post_injection_qed_checks,
             post_transfer_stabilizer_rounds=round_count,
-            tomography=analyze_ty_tomography_counts(
-                counts_by_round[round_count],
-                circuit_config_path=TY_TOMOGRAPHY_CONFIG_PATH,
-                target_distance=tomography.target_distance,
-                patch_sites=tomography.patch_sites,
-                merge_schedule=tomography.merge_schedule,
-                full_post_selection=tomography.full_post_selection,
-                persistent_surface_x_post_selection=(
-                    tomography.persistent_surface_x_post_selection
-                ),
-                measure_encoder_flags=tomography.measure_encoder_flags,
-                measure_cultivation_flags=tomography.measure_cultivation_flags,
-                post_injection_qed_checks=tomography.post_injection_qed_checks,
-                post_transfer_stabilizer_rounds=round_count,
-            ),
         )
         for round_count in config.post_transfer_stabilizer_rounds
     )
-    fit = fit_ty_logical_error_rate(
-        [point.post_transfer_stabilizer_rounds for point in points],
-        [point.bloch_radius_xz for point in points],
+    zero_round_bloch_radius, logical_error_rate_per_round = fit_ty_logical_error_rate(
+        config.post_transfer_stabilizer_rounds,
+        [hypot(summary.expectation_x, summary.expectation_z) for summary in tomography_summaries],
     )
-    return TyLogicalErrorRateSummary(points=points, fit=fit)
+    return TyLogicalErrorRateSummary(
+        post_transfer_stabilizer_rounds=config.post_transfer_stabilizer_rounds,
+        tomography=tomography_summaries,
+        zero_round_bloch_radius=zero_round_bloch_radius,
+        logical_error_rate_per_round=logical_error_rate_per_round,
+    )
 
 
 def fit_ty_logical_error_rate(
     post_transfer_stabilizer_rounds: Sequence[int],
     bloch_radii_xz: Sequence[float],
-) -> TyLogicalErrorRateFit:
+) -> tuple[float, float]:
     """Fit the Section XIV memory decay and convert it to LER per round.
 
     Supplementary Section XIV and Fig. S22 specify an exponential fit to
     ``R(N) = sqrt(<X_L>**2 + <Z_L>**2)`` but do not print its equation. This
     implementation directly fits the standard binary logical-flip convention
     ``R(N) = A (1 - 2 p_L)**N``. Inputs must be consistently postselected and
-    decoded logical tomography results across all memory durations.
+    decoded logical tomography results across all memory durations. Returns the
+    fitted ``(zero_round_bloch_radius, logical_error_rate_per_round)``.
     """
     rounds = tuple(post_transfer_stabilizer_rounds)
     radii = tuple(bloch_radii_xz)
@@ -235,8 +216,4 @@ def fit_ty_logical_error_rate(
         )[0],
         dtype=float,
     )
-    zero_round_radius, logical_error_rate = float(parameters[0]), float(parameters[1])
-    return TyLogicalErrorRateFit(
-        zero_round_bloch_radius=zero_round_radius,
-        logical_error_rate_per_round=logical_error_rate,
-    )
+    return float(parameters[0]), float(parameters[1])
