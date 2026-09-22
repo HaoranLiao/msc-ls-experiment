@@ -47,14 +47,13 @@ class TyLogicalErrorRateSummary:
     """Per-round tomography summaries and their fitted per-round logical error rate.
 
     ``tomography[i]`` is the postselected logical tomography at memory duration
-    ``post_transfer_stabilizer_rounds[i]``. The fit follows the binary
-    logical-flip convention ``R(N) = R(0) (1 - 2 p_L)**N`` on the per-point
-    Bloch radii ``sqrt(<X_L>**2 + <Z_L>**2)``.
+    ``post_transfer_stabilizer_rounds[i]``. ``logical_error_rate_per_round`` is
+    fit in the binary logical-flip convention ``R(N) = R(0) (1 - 2 p_L)**N`` over
+    the per-point Bloch radii ``sqrt(<X_L>**2 + <Z_L>**2)``.
     """
 
     post_transfer_stabilizer_rounds: tuple[int, ...]
     tomography: tuple[TyTomographySummary, ...]
-    zero_round_bloch_radius: float
     logical_error_rate_per_round: float
 
 
@@ -145,14 +144,13 @@ def analyze_ty_logical_error_rate_counts(
         )
         for round_count in config.post_transfer_stabilizer_rounds
     )
-    zero_round_bloch_radius, logical_error_rate_per_round = fit_ty_logical_error_rate(
+    logical_error_rate_per_round = fit_ty_logical_error_rate(
         config.post_transfer_stabilizer_rounds,
         [hypot(summary.expectation_x, summary.expectation_z) for summary in tomography_summaries],
     )
     return TyLogicalErrorRateSummary(
         post_transfer_stabilizer_rounds=config.post_transfer_stabilizer_rounds,
         tomography=tomography_summaries,
-        zero_round_bloch_radius=zero_round_bloch_radius,
         logical_error_rate_per_round=logical_error_rate_per_round,
     )
 
@@ -160,15 +158,15 @@ def analyze_ty_logical_error_rate_counts(
 def fit_ty_logical_error_rate(
     post_transfer_stabilizer_rounds: Sequence[int],
     bloch_radii_xz: Sequence[float],
-) -> tuple[float, float]:
-    """Fit the Section XIV memory decay and convert it to LER per round.
+) -> float:
+    """Fit the Section XIV memory decay and return the per-round LER ``p_L``.
 
     Supplementary Section XIV and Fig. S22 specify an exponential fit to
     ``R(N) = sqrt(<X_L>**2 + <Z_L>**2)`` but do not print its equation. This
     implementation directly fits the standard binary logical-flip convention
-    ``R(N) = A (1 - 2 p_L)**N``. Inputs must be consistently postselected and
-    decoded logical tomography results across all memory durations. Returns the
-    fitted ``(zero_round_bloch_radius, logical_error_rate_per_round)``.
+    ``R(N) = A (1 - 2 p_L)**N`` and returns ``p_L``; the amplitude ``A`` is a
+    nuisance parameter. Inputs must be consistently postselected and decoded
+    logical tomography results across all memory durations.
     """
     rounds = tuple(post_transfer_stabilizer_rounds)
     radii = tuple(bloch_radii_xz)
@@ -216,4 +214,4 @@ def fit_ty_logical_error_rate(
         )[0],
         dtype=float,
     )
-    return float(parameters[0]), float(parameters[1])
+    return float(parameters[1])
