@@ -1,4 +1,4 @@
-"""Configuration-to-circuit contracts for Qiskit Ty tomography and LER."""
+"""Configuration-to-circuit contracts for Qiskit Ty tomography, LER, and KT."""
 
 from __future__ import annotations
 
@@ -17,6 +17,13 @@ from msc.state_transfer.tomography_qiskit import (
     TomographyTargetDistance,
     analyze_ty_tomography_counts,
     build_ty_tomography_circuits,
+)
+from msc.steane_code.kickback_tomography_qiskit import (
+    KICKBACK_TOMOGRAPHY_CONFIG_PATH,
+    KickbackTomographyConfig,
+    build_kickback_tomography_experiment,
+    load_kickback_tomography_config,
+    resolve_kickback_tomography_config,
 )
 from msc.steane_code.state_injection_common import PostInjectionQedChecks
 
@@ -291,3 +298,72 @@ def test_yaml_rejects_unknown_merge_schedule(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="merge_schedule"):
         build_ty_tomography_circuits(circuit_config_path=config_path)
+
+
+def test_kickback_tomography_yaml_matches_build_defaults() -> None:
+    assert load_kickback_tomography_config() == KickbackTomographyConfig(
+        patch_sites=14,
+        cultivated_state="Ty",
+        injected_state=None,
+        include_prep_cultivation=True,
+        measure_encoder_flags=False,
+        qed_cycle_indices=(1, 3),
+        final_stabilizer_basis="X",
+        add_barriers=True,
+    )
+
+
+def test_kickback_tomography_config_drives_build_and_overrides_win() -> None:
+    config_built = build_kickback_tomography_experiment(add_barriers=False)
+    config_circuit, _ = config_built
+    override_built = build_kickback_tomography_experiment(
+        patch_sites=config_circuit.num_qubits,
+        cultivated_state="Ty",
+        include_prep_cultivation=True,
+        measure_encoder_flags=False,
+        qed_cycle_indices=(1, 3),
+        final_stabilizer_basis="X",
+        add_barriers=False,
+    )
+    assert config_built == override_built
+
+    eleven_circuit, _ = build_kickback_tomography_experiment(patch_sites=11, add_barriers=False)
+    assert eleven_circuit.num_qubits == 11
+
+
+def test_kickback_tomography_resolve_applies_only_supplied_overrides() -> None:
+    resolved = resolve_kickback_tomography_config(patch_sites=11, final_stabilizer_basis="NONE")
+    assert resolved.patch_sites == 11
+    assert resolved.final_stabilizer_basis == "NONE"
+    assert resolved.cultivated_state == "Ty"
+    assert resolved.qed_cycle_indices == (1, 3)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("patch_sites", 7, "patch_sites must be 11 or 14"),
+        ("cultivated_state", "S", "cultivated_state must be 'T' or 'Ty'"),
+        ("qed_cycle_indices", (1, 5), "qed_cycle_indices may only contain"),
+        ("final_stabilizer_basis", "Y", "final_stabilizer_basis must be"),
+        ("add_barriers", "yes", "add_barriers must be true or false"),
+    ],
+)
+def test_kickback_tomography_config_rejects_invalid_fields(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    values: dict[str, object] = {
+        "patch_sites": 14,
+        "cultivated_state": "Ty",
+        "injected_state": None,
+        "include_prep_cultivation": True,
+        "measure_encoder_flags": False,
+        "qed_cycle_indices": (1, 3),
+        "final_stabilizer_basis": "X",
+        "add_barriers": True,
+    }
+    values[field] = value
+    with pytest.raises(ValueError, match=message):
+        KickbackTomographyConfig(**values)

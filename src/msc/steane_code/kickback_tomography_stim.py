@@ -6,14 +6,13 @@ stabilizer proxy. Summaries report the native S-state logical error rate without
 conversion to a magic-state estimate.
 
 The public builders parallel their Qiskit counterparts for both the 11-site
-and 14-site patches. Shared layout and summary dataclasses store Stim
+and 14-site patches. Shared bit-layout and summary dataclasses store Stim
 measurement-record indices, which are zero-based in append order.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
@@ -51,14 +50,6 @@ from msc.steane_code.state_injection_stim import (
 from msc.utils import circuit_stim
 
 
-@dataclass(frozen=True)
-class KickbackTomographyExperiment:
-    """A Stim KT circuit together with its measurement-record bit layout."""
-
-    circuit: stim.Circuit
-    layout: KickbackTomographyBitLayout
-
-
 def build_kickback_tomography_experiment(
     injected_state: StimInjectedStateName = "S",
     *,
@@ -69,7 +60,7 @@ def build_kickback_tomography_experiment(
     qed_cycle_indices: Iterable[int] = KT_DEFAULT_QED_CYCLE_INDICES,
     final_stabilizer_basis: FinalStabilizerMode = "X",
     add_ticks: bool = True,
-) -> KickbackTomographyExperiment:
+) -> tuple[stim.Circuit, KickbackTomographyBitLayout]:
     """Build a logical-Y KT experiment using the Clifford ``|S>`` proxy.
 
     The shared protocol order is
@@ -200,7 +191,7 @@ def build_kickback_tomography_experiment(
             raise ValueError(f"Unsupported patch size: {spec.patch_sites}.")
         record_count += final_record_width
 
-    layout = KickbackTomographyBitLayout(
+    bit_layout = KickbackTomographyBitLayout(
         preparation_round=preparation_bits,
         tomography_measure_round=measurement_bits,
         tomography_check_round=check_bits,
@@ -212,12 +203,12 @@ def build_kickback_tomography_experiment(
         encoder_flags=encoder_flag_positions,
     )
     if circuit.num_measurements != record_count:
-        raise RuntimeError("Kickback-tomography measurement layout does not match the circuit.")
+        raise RuntimeError("Kickback-tomography measurement bit layout does not match the circuit.")
     circuit_stim.append_observable_include(
         circuit,
-        measurement_positions=(layout.tomography_measure_round.folded_root,),
+        measurement_positions=(bit_layout.tomography_measure_round.folded_root,),
     )
-    return KickbackTomographyExperiment(circuit=circuit, layout=layout)
+    return circuit, bit_layout
 
 
 def _append_patch_encoder(
@@ -305,7 +296,7 @@ def _append_patch_projection_round(
 
 def analyze_kickback_tomography_shots(
     shots: np.ndarray,
-    layout: KickbackTomographyBitLayout,
+    bit_layout: KickbackTomographyBitLayout,
     *,
     retain_measure_check_disagreement: bool = True,
 ) -> KickbackTomographySummary:
@@ -322,22 +313,22 @@ def analyze_kickback_tomography_shots(
     if shots.ndim != 2:
         raise ValueError("shots must be a two-dimensional array.")
 
-    measurement_round = layout.tomography_measure_round
-    check_round = layout.tomography_check_round
+    measurement_round = bit_layout.tomography_measure_round
+    check_round = bit_layout.tomography_check_round
     required_positions = (
-        *layout.detector_positions,
+        *bit_layout.detector_positions,
         *measurement_round.all_positions,
         *check_round.all_positions,
     )
     if any(position < 0 or position >= shots.shape[1] for position in required_positions):
-        raise ValueError("layout contains a position outside the shots array.")
+        raise ValueError("bit layout contains a position outside the shots array.")
 
     total_shots = int(shots.shape[0])
 
     # Fixed-zero encoder, preparation, QED, KT-flag, and final-check columns.
     retained = np.ones(total_shots, dtype=bool)
-    if layout.detector_positions:
-        retained &= ~shots[:, layout.detector_positions].any(axis=1)
+    if bit_layout.detector_positions:
+        retained &= ~shots[:, bit_layout.detector_positions].any(axis=1)
 
     # Each repeated-root check must match its round's root.
     measurement_root = shots[:, measurement_round.folded_root]

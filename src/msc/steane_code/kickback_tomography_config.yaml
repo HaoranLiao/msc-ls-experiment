@@ -1,0 +1,22 @@
+# Fig. 3-style Qiskit kickback-tomography (KT) circuit settings.
+patch_sites: 14  # Supported patches: 11 (Rosenfeld encoder), 14 (abstract-routed encoder).
+# KT magic-state axis. 'Ty' measures H_XZ = (X + Z) / sqrt(2); 'T' measures
+# H_XY = (X + Y) / sqrt(2).
+cultivated_state: Ty
+# State injected before encoding. null (default) injects the cultivated state
+# itself; any InjectedStateName (e.g. '0', '+', 'Y+', 'T') injects that state
+# for a Fig. 3 injection-error probe.
+injected_state: null
+# Prepend one preparation cultivation round that postselects a non-eigenstate
+# input onto the measured axis before the KT measure/check rounds.
+include_prep_cultivation: true
+# Measure and postselect the encoder flag qubits (11-site helper sites or
+# 14-site abstract-routed H8-H12). False (default) drops that postselection.
+measure_encoder_flags: false
+# One-based Fig. 3 QED cycles to insert and postselect. [1, 3] (default) is the
+# paper's reduced schedule; [1, 2, 3, 4] runs every cycle; [] omits QED cycles.
+qed_cycle_indices: [1, 3]
+# Final stabilizer check basis. 'X' matches the Fig. 3 detector block; 'Z' is
+# the equivalent CSS basis; 'BOTH' measures all six stabilizers; 'NONE' omits it.
+final_stabilizer_basis: X
+add_barriers: true

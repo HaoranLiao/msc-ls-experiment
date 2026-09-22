@@ -10,8 +10,11 @@ measurement round, and one consistency-check round.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import get_args
 
+import yaml
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
 from msc.steane_code.kickback_tomography_common import (
@@ -44,32 +47,113 @@ from msc.steane_code.state_injection_qiskit import (
 from msc.utils.normalize import qiskit_bit_value
 
 # =============================================================================
-# Classical-bit layout and result summaries
+# Circuit configuration
 # =============================================================================
+
+KICKBACK_TOMOGRAPHY_CONFIG_PATH = Path(__file__).with_name("kickback_tomography_config.yaml")
 
 
 @dataclass(frozen=True)
-class KickbackTomographyExperiment:
-    """A KT circuit together with its classical-bit layout."""
+class KickbackTomographyConfig:
+    """Validated structural settings loaded from a KT circuit YAML file."""
 
-    circuit: QuantumCircuit
-    layout: KickbackTomographyBitLayout
+    patch_sites: KickbackTomographyPatchSites
+    cultivated_state: CultivatedStateName
+    injected_state: InjectedStateName | None
+    include_prep_cultivation: bool
+    measure_encoder_flags: bool
+    qed_cycle_indices: tuple[int, ...]
+    final_stabilizer_basis: FinalStabilizerMode
+    add_barriers: bool
+
+    def __post_init__(self) -> None:
+        if type(self.patch_sites) is not int or self.patch_sites not in (11, 14):
+            raise ValueError("patch_sites must be 11 or 14.")
+        normalize_kickback_tomography_state(self.cultivated_state)
+        injectable_states = get_args(InjectedStateName)
+        if self.injected_state is not None and self.injected_state not in injectable_states:
+            raise ValueError(f"injected_state must be null or one of {injectable_states}.")
+        for name in ("include_prep_cultivation", "measure_encoder_flags", "add_barriers"):
+            if type(getattr(self, name)) is not bool:
+                raise ValueError(f"{name} must be true or false.")
+        normalize_qed_cycle_indices(self.qed_cycle_indices)
+        final_stabilizer_bit_count(self.final_stabilizer_basis)
+
+
+def load_kickback_tomography_config(
+    circuit_config_path: str | Path = KICKBACK_TOMOGRAPHY_CONFIG_PATH,
+) -> KickbackTomographyConfig:
+    """Load and validate one kickback-tomography circuit YAML configuration."""
+    circuit_config_path = Path(circuit_config_path)
+    try:
+        raw_config = yaml.safe_load(circuit_config_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as error:
+        raise ValueError(f"invalid kickback-tomography YAML in {circuit_config_path}") from error
+    if not isinstance(raw_config, dict):
+        raise ValueError(f"kickback-tomography config {circuit_config_path} must be a mapping.")
+
+    expected_fields = set(KickbackTomographyConfig.__annotations__)
+    if set(raw_config) != expected_fields:
+        raise ValueError(
+            f"kickback-tomography config {circuit_config_path} fields must be "
+            f"{sorted(expected_fields)}."
+        )
+    return KickbackTomographyConfig(
+        **{**raw_config, "qed_cycle_indices": tuple(raw_config["qed_cycle_indices"])}
+    )
+
+
+def resolve_kickback_tomography_config(
+    *,
+    circuit_config_path: str | Path = KICKBACK_TOMOGRAPHY_CONFIG_PATH,
+    patch_sites: KickbackTomographyPatchSites | None = None,
+    cultivated_state: CultivatedStateName | None = None,
+    injected_state: InjectedStateName | None = None,
+    include_prep_cultivation: bool | None = None,
+    measure_encoder_flags: bool | None = None,
+    qed_cycle_indices: Iterable[int] | None = None,
+    final_stabilizer_basis: FinalStabilizerMode | None = None,
+    add_barriers: bool | None = None,
+) -> KickbackTomographyConfig:
+    """Load the KT circuit YAML and apply per-call overrides."""
+    config = load_kickback_tomography_config(circuit_config_path)
+    overrides = {
+        name: value
+        for name, value in (
+            ("patch_sites", patch_sites),
+            ("cultivated_state", cultivated_state),
+            ("injected_state", injected_state),
+            ("include_prep_cultivation", include_prep_cultivation),
+            ("measure_encoder_flags", measure_encoder_flags),
+            ("qed_cycle_indices", None if qed_cycle_indices is None else tuple(qed_cycle_indices)),
+            ("final_stabilizer_basis", final_stabilizer_basis),
+            ("add_barriers", add_barriers),
+        )
+        if value is not None
+    }
+    return replace(config, **overrides)
 
 
 def build_kickback_tomography_experiment(
     injected_state: InjectedStateName | None = None,
     *,
-    patch_sites: KickbackTomographyPatchSites = 14,
-    cultivated_state: CultivatedStateName = "Ty",
+    circuit_config_path: str | Path = KICKBACK_TOMOGRAPHY_CONFIG_PATH,
+    patch_sites: KickbackTomographyPatchSites | None = None,
+    cultivated_state: CultivatedStateName | None = None,
     injection_azimuth_angle: float | None = None,
     injection_polar_angle: float | None = None,
-    include_prep_cultivation: bool = True,
-    measure_encoder_flags: bool = False,
-    qed_cycle_indices: Iterable[int] = KT_DEFAULT_QED_CYCLE_INDICES,
-    final_stabilizer_basis: FinalStabilizerMode = "X",
-    add_barriers: bool = True,
-) -> KickbackTomographyExperiment:
+    include_prep_cultivation: bool | None = None,
+    measure_encoder_flags: bool | None = None,
+    qed_cycle_indices: Iterable[int] | None = None,
+    final_stabilizer_basis: FinalStabilizerMode | None = None,
+    add_barriers: bool | None = None,
+) -> tuple[QuantumCircuit, KickbackTomographyBitLayout]:
     """Build a T/Ty kickback-tomography experiment, defaulting to Ty on 14 sites.
+
+    Structural settings load from ``circuit_config_path``
+    (:data:`KICKBACK_TOMOGRAPHY_CONFIG_PATH` by default). Every non-``None``
+    keyword overrides the corresponding YAML field; ``injection_azimuth_angle``
+    and ``injection_polar_angle`` are per-call sweep angles with no config field.
 
     The shared protocol order is
 
@@ -104,8 +188,24 @@ def build_kickback_tomography_experiment(
     Z-only final block also records and postselects the three default
     Bell-partner flags.
     """
-    spec = resolve_kickback_tomography_patch_spec(patch_sites)
-    cultivated_state = normalize_kickback_tomography_state(cultivated_state)
+    config = resolve_kickback_tomography_config(
+        circuit_config_path=circuit_config_path,
+        patch_sites=patch_sites,
+        cultivated_state=cultivated_state,
+        injected_state=injected_state,
+        include_prep_cultivation=include_prep_cultivation,
+        measure_encoder_flags=measure_encoder_flags,
+        qed_cycle_indices=qed_cycle_indices,
+        final_stabilizer_basis=final_stabilizer_basis,
+        add_barriers=add_barriers,
+    )
+    cultivated_state = config.cultivated_state
+    injected_state = config.injected_state
+    include_prep_cultivation = config.include_prep_cultivation
+    final_stabilizer_basis = config.final_stabilizer_basis
+    add_barriers = config.add_barriers
+    spec = resolve_kickback_tomography_patch_spec(config.patch_sites)
+    qed_indices = normalize_qed_cycle_indices(config.qed_cycle_indices)
 
     if (cultivated_state == "T" and injection_polar_angle is not None) or (
         cultivated_state == "Ty" and injection_azimuth_angle is not None
@@ -113,12 +213,11 @@ def build_kickback_tomography_experiment(
         raise ValueError("Injection sweep angle must match the cultivated-state axis.")
     if injected_state is None and injection_azimuth_angle is None and injection_polar_angle is None:
         injected_state = cultivated_state
-    qed_indices = normalize_qed_cycle_indices(qed_cycle_indices)
 
     patch = QuantumRegister(spec.patch_sites, "patch")
     encoder_flags_creg = (
         ClassicalRegister(spec.encoder_flag_count, "enc_flags")
-        if measure_encoder_flags and spec.encoder_flag_count
+        if config.measure_encoder_flags and spec.encoder_flag_count
         else None
     )
     prep_creg = (
@@ -261,7 +360,7 @@ def build_kickback_tomography_experiment(
         if encoder_flags_creg is not None
         else ()
     )
-    layout = KickbackTomographyBitLayout(
+    bit_layout = KickbackTomographyBitLayout(
         preparation_round=preparation_bits,
         tomography_measure_round=cultivation_round_bits_from_positions(
             tuple(circuit.find_bit(bit).index for bit in kt_measure_creg),
@@ -295,21 +394,21 @@ def build_kickback_tomography_experiment(
         "kickback_tomography_bit_layout": {
             "patch_sites": spec.patch_sites,
             "preparation_round": (
-                layout.preparation_round.all_positions if layout.preparation_round else None
+                bit_layout.preparation_round.all_positions if bit_layout.preparation_round else None
             ),
-            "tomography_measure_round": layout.tomography_measure_round.all_positions,
-            "tomography_check_round": layout.tomography_check_round.all_positions,
-            "qed_cycles": layout.qed_cycles,
-            "final_stabilizers": layout.final_stabilizers,
-            "final_bell_partner_flags": layout.final_bell_partner_flags,
-            "final_d2_copy_flag": layout.final_d2_copy_flag,
-            "encoder_flags": layout.encoder_flags,
+            "tomography_measure_round": bit_layout.tomography_measure_round.all_positions,
+            "tomography_check_round": bit_layout.tomography_check_round.all_positions,
+            "qed_cycles": bit_layout.qed_cycles,
+            "final_stabilizers": bit_layout.final_stabilizers,
+            "final_bell_partner_flags": bit_layout.final_bell_partner_flags,
+            "final_d2_copy_flag": bit_layout.final_d2_copy_flag,
+            "encoder_flags": bit_layout.encoder_flags,
             "qed_cycle_indices": qed_indices,
             "cultivated_state": cultivated_state,
             "final_stabilizer_basis": final_stabilizer_basis,
         },
     }
-    return KickbackTomographyExperiment(circuit=circuit, layout=layout)
+    return circuit, bit_layout
 
 
 def _append_patch_encoder(
@@ -438,7 +537,7 @@ def _interpret_cultivation_round(
 
 def analyze_kickback_tomography_counts(
     counts: dict[str, int],
-    layout: KickbackTomographyBitLayout,
+    bit_layout: KickbackTomographyBitLayout,
     *,
     retain_measure_check_disagreement: bool = True,
 ) -> KickbackTomographySummary:
@@ -460,17 +559,17 @@ def analyze_kickback_tomography_counts(
     for bitstring, count in counts.items():
         # Encoder flags, preparation, QED syndromes, KT flags, and the final
         # stabilizer check are fixed-zero postselection detectors.
-        if any(qiskit_bit_value(bitstring, position) for position in layout.detector_positions):
+        if any(qiskit_bit_value(bitstring, position) for position in bit_layout.detector_positions):
             continue
 
         # Each folded root must agree with its repeated-root check.
         measurement_root, measurement_root_check = _interpret_cultivation_round(
             bitstring,
-            layout.tomography_measure_round,
+            bit_layout.tomography_measure_round,
         )
         check_root, check_root_check = _interpret_cultivation_round(
             bitstring,
-            layout.tomography_check_round,
+            bit_layout.tomography_check_round,
         )
         if (measurement_root_check is not None and measurement_root_check != measurement_root) or (
             check_root_check is not None and check_root_check != check_root

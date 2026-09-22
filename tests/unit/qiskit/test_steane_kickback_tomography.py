@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 import pytest
+from qiskit import QuantumCircuit
 from qiskit_aer import AerSimulator
 
 from msc.steane_code.kickback_tomography_common import (
@@ -14,7 +15,6 @@ from msc.steane_code.kickback_tomography_common import (
     KickbackTomographySummary,
 )
 from msc.steane_code.kickback_tomography_qiskit import (
-    KickbackTomographyExperiment,
     analyze_kickback_tomography_counts,
     build_kickback_tomography_experiment,
 )
@@ -29,21 +29,21 @@ from msc.steane_code.state_injection_qiskit import InjectedStateName
 NUM_SHOTS = 2000
 
 
-def _measurement_register_order(experiment: KickbackTomographyExperiment) -> list[str]:
+def _measurement_register_order(circuit: QuantumCircuit) -> list[str]:
     """Return classical-register names in circuit measurement order."""
 
     order: list[str] = []
-    for instruction in experiment.circuit.data:
+    for instruction in circuit.data:
         if instruction.operation.name != "measure":
             continue
-        register = experiment.circuit.find_bit(instruction.clbits[0]).registers[0][0]
+        register = circuit.find_bit(instruction.clbits[0]).registers[0][0]
         if not order or order[-1] != register.name:
             order.append(register.name)
     return order
 
 
 # =============================================================================
-# Test Set 1: Circuit construction and layout
+# Test Set 1: Circuit construction and bit_layout
 # =============================================================================
 
 
@@ -51,21 +51,21 @@ class TestKickbackTomographyCircuitConstruction:
     """KT builders expose the expected Qiskit registers and bit layout."""
 
     def test_default_patch_has_14_sites(self) -> None:
-        experiment = build_kickback_tomography_experiment(add_barriers=False)
-        assert experiment.circuit.num_qubits == 14
+        circuit, _ = build_kickback_tomography_experiment(add_barriers=False)
+        assert circuit.num_qubits == 14
 
     @pytest.mark.parametrize("patch_sites", [11, 14])
     def test_ty_is_the_default_cultivated_state(self, patch_sites: int) -> None:
-        default_experiment = build_kickback_tomography_experiment(
+        default_build = build_kickback_tomography_experiment(
             patch_sites=patch_sites,
             add_barriers=False,
         )
-        ty_experiment = build_kickback_tomography_experiment(
+        ty_build = build_kickback_tomography_experiment(
             patch_sites=patch_sites,
             cultivated_state="Ty",
             add_barriers=False,
         )
-        assert default_experiment == ty_experiment
+        assert default_build == ty_build
 
     def test_unsupported_cultivated_state_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="cultivated_state must be 'T' or 'Ty'"):
@@ -126,13 +126,11 @@ class TestKickbackTomographyCircuitConstruction:
         patch_sites: int,
     ) -> None:
         kwargs = {} if requested_indices is None else {"qed_cycle_indices": requested_indices}
-        experiment = build_kickback_tomography_experiment(
+        circuit, bit_layout = build_kickback_tomography_experiment(
             patch_sites=patch_sites,
             add_barriers=False,
             **kwargs,
         )
-        circuit = experiment.circuit
-        layout = experiment.layout
         metadata = circuit.metadata["kickback_tomography_bit_layout"]
 
         measurements_per_round = {
@@ -151,21 +149,21 @@ class TestKickbackTomographyCircuitConstruction:
             + len(expected_indices) * qed_measurement_count
             + final_measurement_count
         )
-        assert layout.preparation_round is not None
-        assert len(layout.qed_cycles) == len(expected_indices)
-        assert all(len(cycle) == qed_measurement_count for cycle in layout.qed_cycles)
-        assert layout.qed_cycle_indices == expected_indices
-        assert len(layout.final_stabilizers) == 3
-        assert len(layout.final_bell_partner_flags) == (3 if patch_sites == 14 else 0)
+        assert bit_layout.preparation_round is not None
+        assert len(bit_layout.qed_cycles) == len(expected_indices)
+        assert all(len(cycle) == qed_measurement_count for cycle in bit_layout.qed_cycles)
+        assert bit_layout.qed_cycle_indices == expected_indices
+        assert len(bit_layout.final_stabilizers) == 3
+        assert len(bit_layout.final_bell_partner_flags) == (3 if patch_sites == 14 else 0)
         assert metadata["qed_cycle_indices"] == expected_indices
-        assert metadata["final_d2_copy_flag"] == layout.final_d2_copy_flag
+        assert metadata["final_d2_copy_flag"] == bit_layout.final_d2_copy_flag
         if patch_sites == 14:
             expected_measurement_order = [
                 *expected_measurement_order[:-1],
                 *(["final_stab", "final_bell_partner_flags"] * 3),
                 "final_d2_copy_flag",
             ]
-        assert _measurement_register_order(experiment) == expected_measurement_order
+        assert _measurement_register_order(circuit) == expected_measurement_order
 
     @pytest.mark.parametrize(
         ("basis", "expected_bits"),
@@ -178,18 +176,18 @@ class TestKickbackTomographyCircuitConstruction:
         expected_bits: int,
         patch_sites: int,
     ) -> None:
-        experiment = build_kickback_tomography_experiment(
+        _, bit_layout = build_kickback_tomography_experiment(
             patch_sites=patch_sites,
             include_prep_cultivation=False,
             qed_cycle_indices=(),
             final_stabilizer_basis=basis,
             add_barriers=False,
         )
-        assert len(experiment.layout.final_stabilizers) == expected_bits
+        assert len(bit_layout.final_stabilizers) == expected_bits
         expected_bell_partner_bits = (
             KT_STABILIZER_BITS_PER_CYCLE // 2 if patch_sites == 14 and basis in ("X", "Z") else 0
         )
-        assert len(experiment.layout.final_bell_partner_flags) == expected_bell_partner_bits
+        assert len(bit_layout.final_bell_partner_flags) == expected_bell_partner_bits
 
     def test_unsupported_patch_sites_are_rejected(self) -> None:
         with pytest.raises(ValueError, match="patch_sites must be 11 or 14"):
@@ -222,7 +220,7 @@ class TestKickbackTomographyCountsAnalysis:
         round_flag_count: int,
         root_check_index: int,
     ) -> None:
-        experiment = build_kickback_tomography_experiment(
+        circuit, bit_layout = build_kickback_tomography_experiment(
             "T",
             patch_sites=patch_sites,
             measure_encoder_flags=True,
@@ -230,50 +228,51 @@ class TestKickbackTomographyCountsAnalysis:
             final_stabilizer_basis="BOTH",
             add_barriers=False,
         )
-        layout = experiment.layout
-        assert layout.preparation_round is not None
+        assert bit_layout.preparation_round is not None
+        d2_copy_flag = bit_layout.final_d2_copy_flag
+        d2_copy_positions = (d2_copy_flag,) if d2_copy_flag is not None else ()
 
         output_partition = (
-            *layout.encoder_flags,
-            *layout.preparation_round.all_positions,
-            *(position for cycle in layout.qed_cycles for position in cycle),
-            *layout.tomography_measure_round.all_positions,
-            *layout.tomography_check_round.all_positions,
-            *layout.final_stabilizers,
-            *layout.final_bell_partner_flags,
-            *((layout.final_d2_copy_flag,) if layout.final_d2_copy_flag is not None else ()),
+            *bit_layout.encoder_flags,
+            *bit_layout.preparation_round.all_positions,
+            *(position for cycle in bit_layout.qed_cycles for position in cycle),
+            *bit_layout.tomography_measure_round.all_positions,
+            *bit_layout.tomography_check_round.all_positions,
+            *bit_layout.final_stabilizers,
+            *bit_layout.final_bell_partner_flags,
+            *d2_copy_positions,
         )
         expected_detector_positions = (
-            *layout.encoder_flags,
-            *layout.preparation_round.all_positions,
-            *layout.tomography_measure_round.flag_positions,
-            *layout.tomography_check_round.flag_positions,
-            *(position for cycle in layout.qed_cycles for position in cycle),
-            *layout.final_stabilizers,
-            *layout.final_bell_partner_flags,
-            *((layout.final_d2_copy_flag,) if layout.final_d2_copy_flag is not None else ()),
+            *bit_layout.encoder_flags,
+            *bit_layout.preparation_round.all_positions,
+            *bit_layout.tomography_measure_round.flag_positions,
+            *bit_layout.tomography_check_round.flag_positions,
+            *(position for cycle in bit_layout.qed_cycles for position in cycle),
+            *bit_layout.final_stabilizers,
+            *bit_layout.final_bell_partner_flags,
+            *d2_copy_positions,
         )
 
-        assert sorted(output_partition) == list(range(experiment.circuit.num_clbits))
+        assert sorted(output_partition) == list(range(circuit.num_clbits))
         assert len(set(output_partition)) == len(output_partition)
-        assert len(layout.encoder_flags) == encoder_flag_count
-        assert len(layout.preparation_round.all_positions) == round_bit_count
-        assert len(layout.tomography_measure_round.all_positions) == round_bit_count
-        assert len(layout.tomography_check_round.all_positions) == round_bit_count
-        assert len(layout.tomography_measure_round.flag_positions) == round_flag_count
+        assert len(bit_layout.encoder_flags) == encoder_flag_count
+        assert len(bit_layout.preparation_round.all_positions) == round_bit_count
+        assert len(bit_layout.tomography_measure_round.all_positions) == round_bit_count
+        assert len(bit_layout.tomography_check_round.all_positions) == round_bit_count
+        assert len(bit_layout.tomography_measure_round.flag_positions) == round_flag_count
         assert (
-            layout.tomography_measure_round.all_positions[root_check_index]
-            == layout.tomography_measure_round.folded_root_check
+            bit_layout.tomography_measure_round.all_positions[root_check_index]
+            == bit_layout.tomography_measure_round.folded_root_check
         )
-        assert layout.qed_cycle_indices == KT_FULL_QED_CYCLE_INDICES
+        assert bit_layout.qed_cycle_indices == KT_FULL_QED_CYCLE_INDICES
         qed_measurement_count = (
             PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND
             if patch_sites == 14
             else KT_STABILIZER_BITS_PER_CYCLE
         )
-        assert all(len(cycle) == qed_measurement_count for cycle in layout.qed_cycles)
-        assert len(layout.final_stabilizers) == KT_STABILIZER_BITS_PER_CYCLE
-        assert layout.detector_positions == expected_detector_positions
+        assert all(len(cycle) == qed_measurement_count for cycle in bit_layout.qed_cycles)
+        assert len(bit_layout.final_stabilizers) == KT_STABILIZER_BITS_PER_CYCLE
+        assert bit_layout.detector_positions == expected_detector_positions
 
     @pytest.mark.parametrize("patch_sites", [11, 14])
     def test_summary_correctly_postselects_and_classifies_kt_root_outcomes(
@@ -295,16 +294,15 @@ class TestKickbackTomographyCountsAnalysis:
           ``retain_measure_check_disagreement=False``); if they agree at 0 →
           logical success; agree at 1 → logical error.
         """
-        experiment = build_kickback_tomography_experiment(
+        circuit, bit_layout = build_kickback_tomography_experiment(
             patch_sites=patch_sites,
             include_prep_cultivation=False,
             qed_cycle_indices=(),
             final_stabilizer_basis="NONE",
             add_barriers=False,
         )
-        layout = experiment.layout
 
-        n_bits = experiment.circuit.num_clbits
+        n_bits = circuit.num_clbits
 
         def bitstring_with(*positions: int) -> str:
             bits = ["0"] * n_bits
@@ -312,18 +310,20 @@ class TestKickbackTomographyCountsAnalysis:
                 bits[n_bits - 1 - position] = "1"
             return "".join(bits)
 
-        measurement_root = layout.tomography_measure_round.folded_root
-        measurement_root_check = layout.tomography_measure_round.folded_root_check
-        check_root = layout.tomography_check_round.folded_root
-        check_root_check = layout.tomography_check_round.folded_root_check
-        cultivation_flag = layout.tomography_measure_round.flag_positions[0]
+        measurement_root = bit_layout.tomography_measure_round.folded_root
+        measurement_root_check = bit_layout.tomography_measure_round.folded_root_check
+        check_root = bit_layout.tomography_check_round.folded_root
+        check_root_check = bit_layout.tomography_check_round.folded_root_check
+        cultivation_flag = bit_layout.tomography_measure_round.flag_positions[0]
 
         good_success = bitstring_with()
         if measurement_root_check is None:
             assert check_root_check is None
             measurement_check_for_root_one = ()
             check_check_for_root_one = ()
-            rejected_round_check = bitstring_with(layout.tomography_measure_round.flag_positions[3])
+            rejected_round_check = bitstring_with(
+                bit_layout.tomography_measure_round.flag_positions[3]
+            )
         else:
             assert check_root_check is not None
             measurement_check_for_root_one = (measurement_root_check,)
@@ -355,7 +355,7 @@ class TestKickbackTomographyCountsAnalysis:
             rejected_detector: 11,
         }
 
-        summary = analyze_kickback_tomography_counts(counts, layout)
+        summary = analyze_kickback_tomography_counts(counts, bit_layout)
 
         assert summary == KickbackTomographySummary(
             total_shots=32,
@@ -370,7 +370,7 @@ class TestKickbackTomographyCountsAnalysis:
 
         agreement_only_summary = analyze_kickback_tomography_counts(
             counts,
-            layout,
+            bit_layout,
             retain_measure_check_disagreement=False,
         )
         assert agreement_only_summary == KickbackTomographySummary(
@@ -398,7 +398,7 @@ class TestNoiselessKickbackTomography:
         cultivated_state: CultivatedStateName,
         patch_sites: int,
     ) -> None:
-        experiment = build_kickback_tomography_experiment(
+        circuit, bit_layout = build_kickback_tomography_experiment(
             cultivated_state=cultivated_state,
             patch_sites=patch_sites,
             add_barriers=False,
@@ -406,11 +406,11 @@ class TestNoiselessKickbackTomography:
         shots = 10
         counts = (
             AerSimulator()
-            .run(experiment.circuit, shots=shots, seed_simulator=42)
+            .run(circuit, shots=shots, seed_simulator=42)
             .result()
             .get_counts()
         )
-        summary = analyze_kickback_tomography_counts(counts, experiment.layout)
+        summary = analyze_kickback_tomography_counts(counts, bit_layout)
 
         assert summary.retained_shots == shots
         assert summary.logical_error_shots == 0
@@ -446,7 +446,7 @@ class TestNoiselessKickbackTomography:
         patch_sites: int,
     ) -> None:
         """Report one minus the injected state's overlap with the cultivated axis."""
-        experiment = build_kickback_tomography_experiment(
+        circuit, bit_layout = build_kickback_tomography_experiment(
             cultivated_state=cultivated_state,
             patch_sites=patch_sites,
             include_prep_cultivation=False,
@@ -457,11 +457,11 @@ class TestNoiselessKickbackTomography:
         )
         counts = (
             AerSimulator()
-            .run(experiment.circuit, shots=NUM_SHOTS, seed_simulator=42)
+            .run(circuit, shots=NUM_SHOTS, seed_simulator=42)
             .result()
             .get_counts()
         )
-        summary = analyze_kickback_tomography_counts(counts, experiment.layout)
+        summary = analyze_kickback_tomography_counts(counts, bit_layout)
 
         sigma = math.sqrt(expected_error * (1.0 - expected_error) / NUM_SHOTS)
 
@@ -482,7 +482,7 @@ class TestNoiselessKickbackTomography:
         With preparation cultivation, the state is projected to the selected
         +1 magic-state axis and hence has no logical error in KT.
         """
-        experiment = build_kickback_tomography_experiment(
+        circuit, bit_layout = build_kickback_tomography_experiment(
             injected_state="1",
             cultivated_state=cultivated_state,
             patch_sites=patch_sites,
@@ -491,8 +491,8 @@ class TestNoiselessKickbackTomography:
             final_stabilizer_basis="NONE",
             add_barriers=False,
         )
-        counts = AerSimulator().run(experiment.circuit, shots=NUM_SHOTS).result().get_counts()
-        summary = analyze_kickback_tomography_counts(counts, experiment.layout)
+        counts = AerSimulator().run(circuit, shots=NUM_SHOTS).result().get_counts()
+        summary = analyze_kickback_tomography_counts(counts, bit_layout)
 
         assert summary.retained_shots > 0
         assert summary.logical_error_probability == 0.0
