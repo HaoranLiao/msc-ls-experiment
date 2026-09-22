@@ -13,6 +13,10 @@ from qiskit import QuantumCircuit
 from msc.state_transfer import common
 from msc.state_transfer import to_d3_rotated_qiskit as d3
 from msc.state_transfer import to_d5_rotated_qiskit as d5
+from msc.steane_code.state_injection_common import (
+    PostInjectionQedChecks,
+    resolve_post_injection_qed_checks,
+)
 
 TomographyTargetDistance = Literal[3, 5]
 TOMOGRAPHY_BASES: tuple[common.SurfaceReadoutBasis, ...] = ("X", "Z")
@@ -30,6 +34,7 @@ class TyTomographyConfig:
     persistent_surface_x_post_selection: bool
     measure_encoder_flags: bool
     measure_cultivation_flags: bool
+    post_injection_qed_checks: PostInjectionQedChecks
     post_transfer_stabilizer_rounds: int | None
     add_barriers: bool
 
@@ -40,6 +45,8 @@ class TyTomographyConfig:
             raise ValueError("patch_sites must be 11 or 14.")
         if self.merge_schedule not in ("hirano", "minimal_z_only"):
             raise ValueError("merge_schedule must be 'hirano' or 'minimal_z_only'.")
+        if self.post_injection_qed_checks not in ("minimal", "full"):
+            raise ValueError("post_injection_qed_checks must be 'minimal' or 'full'.")
         for name in (
             "full_post_selection",
             "persistent_surface_x_post_selection",
@@ -61,6 +68,11 @@ class TyTomographyConfig:
         if self.post_transfer_stabilizer_rounds is not None:
             return self.post_transfer_stabilizer_rounds
         return 1 if self.full_post_selection else self.target_distance
+
+    @property
+    def resolved_post_injection_qed_checks(self) -> tuple[str, ...] | None:
+        """Concrete post-injection QED check names for the configured preset."""
+        return resolve_post_injection_qed_checks(self.post_injection_qed_checks)
 
 
 @dataclass(frozen=True)
@@ -106,6 +118,7 @@ def resolve_ty_tomography_config(
     persistent_surface_x_post_selection: bool | None = None,
     measure_encoder_flags: bool | None = None,
     measure_cultivation_flags: bool | None = None,
+    post_injection_qed_checks: PostInjectionQedChecks | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
     add_barriers: bool | None = None,
 ) -> TyTomographyConfig:
@@ -121,6 +134,7 @@ def resolve_ty_tomography_config(
             ("persistent_surface_x_post_selection", persistent_surface_x_post_selection),
             ("measure_encoder_flags", measure_encoder_flags),
             ("measure_cultivation_flags", measure_cultivation_flags),
+            ("post_injection_qed_checks", post_injection_qed_checks),
             ("post_transfer_stabilizer_rounds", post_transfer_stabilizer_rounds),
             ("add_barriers", add_barriers),
         )
@@ -139,6 +153,7 @@ def build_ty_tomography_circuits(
     persistent_surface_x_post_selection: bool | None = None,
     measure_encoder_flags: bool | None = None,
     measure_cultivation_flags: bool | None = None,
+    post_injection_qed_checks: PostInjectionQedChecks | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
     add_barriers: bool | None = None,
 ) -> dict[common.SurfaceReadoutBasis, QuantumCircuit]:
@@ -159,6 +174,7 @@ def build_ty_tomography_circuits(
         persistent_surface_x_post_selection=persistent_surface_x_post_selection,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
+        post_injection_qed_checks=post_injection_qed_checks,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         add_barriers=add_barriers,
     )
@@ -178,6 +194,7 @@ def build_ty_tomography_circuits(
             include_cultivation=True,
             measure_encoder_flags=config.measure_encoder_flags,
             measure_cultivation_flags=config.measure_cultivation_flags,
+            post_injection_qed_checks=config.resolved_post_injection_qed_checks,
             surface_readout_basis=basis,
             full_post_selection=config.full_post_selection,
             post_transfer_stabilizer_rounds=(config.resolved_post_transfer_stabilizer_rounds),
@@ -198,6 +215,7 @@ def analyze_ty_tomography_counts(
     persistent_surface_x_post_selection: bool | None = None,
     measure_encoder_flags: bool | None = None,
     measure_cultivation_flags: bool | None = None,
+    post_injection_qed_checks: PostInjectionQedChecks | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
 ) -> TyTomographySummary:
     """Analyze paired counts using the same YAML config as construction."""
@@ -210,6 +228,7 @@ def analyze_ty_tomography_counts(
         persistent_surface_x_post_selection=persistent_surface_x_post_selection,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
+        post_injection_qed_checks=post_injection_qed_checks,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         add_barriers=None,
     )
@@ -238,6 +257,7 @@ def analyze_ty_tomography_counts(
                 include_cultivation=True,
                 measure_encoder_flags=config.measure_encoder_flags,
                 measure_cultivation_flags=config.measure_cultivation_flags,
+                post_injection_qed_checks=config.resolved_post_injection_qed_checks,
                 surface_readout_basis=basis,
                 full_post_selection=config.full_post_selection,
                 persistent_surface_x_post_selection=(config.persistent_surface_x_post_selection),

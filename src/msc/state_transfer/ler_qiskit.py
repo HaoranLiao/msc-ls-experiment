@@ -123,6 +123,7 @@ def build_ty_logical_error_rate_circuits(
             persistent_surface_x_post_selection=tomography.persistent_surface_x_post_selection,
             measure_encoder_flags=tomography.measure_encoder_flags,
             measure_cultivation_flags=tomography.measure_cultivation_flags,
+            post_injection_qed_checks=tomography.post_injection_qed_checks,
             post_transfer_stabilizer_rounds=round_count,
             add_barriers=tomography.add_barriers,
         )
@@ -163,6 +164,7 @@ def analyze_ty_logical_error_rate_counts(
                 ),
                 measure_encoder_flags=tomography.measure_encoder_flags,
                 measure_cultivation_flags=tomography.measure_cultivation_flags,
+                post_injection_qed_checks=tomography.post_injection_qed_checks,
                 post_transfer_stabilizer_rounds=round_count,
             ),
         )

@@ -720,13 +720,15 @@ def append_14_site_patch_superdense_stabilizer_measurement(
     stabilizer_bits: Sequence,
     bell_partner_flag_bits: Sequence | None = None,
     d2_copy_flag_bit=None,
-    basis: PatchStabilizerBasis = "BOTH",
+    basis: PatchStabilizerBasis | Sequence[PatchStabilizerBasis] = "BOTH",
     stabilizer_indices: Sequence[int] | None = None,
     add_barriers: bool = True,
 ) -> None:
     """Append the shared collision-free superdense round on the 14-site patch.
 
-    Selected faces retain the caller's ``stabilizer_indices`` order. In
+    ``basis`` may specify one X/Z/BOTH value per selected face index. Mixed
+    selections share the same extraction schedule. Selected faces retain the
+    caller's ``stabilizer_indices`` order. In
     ``"BOTH"`` mode, each face's X result precedes its Z result, so the default
     six-readout order is ``[X0145, Z0145, X0235, Z0235, X0246, Z0246]``. D1
     remains at ``(1, 5)`` and couples to H8 in both directions.

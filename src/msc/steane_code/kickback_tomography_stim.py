@@ -34,7 +34,7 @@ from msc.steane_code.kickback_tomography_common import (
 )
 from msc.steane_code.magic_state_cultivation_stim import (
     append_11_site_patch_y_projection_round,
-    append_14_site_patch_y_projection_round,
+    append_14_site_patch_projection_round,
 )
 from msc.steane_code.state_injection_common import (
     PatchStabilizerBasis,
@@ -287,9 +287,10 @@ def _append_patch_projection_round(
             running_kt=running_kt,
         )
     elif spec.patch_sites == 14:
-        return append_14_site_patch_y_projection_round(
+        return append_14_site_patch_projection_round(
             circuit,
             patch_qubits=DEFAULT_STIM_14_SITE_PATCH_QUBITS,
+            projection_axis="Y",
             add_ticks=add_ticks,
             running_kt=running_kt,
         )

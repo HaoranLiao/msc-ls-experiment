@@ -18,6 +18,7 @@ from msc.state_transfer.tomography_qiskit import (
     analyze_ty_tomography_counts,
     build_ty_tomography_circuits,
 )
+from msc.steane_code.state_injection_common import PostInjectionQedChecks
 
 TOMOGRAPHY_CONFIG: dict[str, object] = {
     "target_distance": 5,
@@ -27,6 +28,7 @@ TOMOGRAPHY_CONFIG: dict[str, object] = {
     "persistent_surface_x_post_selection": True,
     "measure_encoder_flags": True,
     "measure_cultivation_flags": True,
+    "post_injection_qed_checks": "full",
     "post_transfer_stabilizer_rounds": 2,
     "add_barriers": False,
 }
@@ -249,6 +251,39 @@ def test_ler_yaml_matches_sweep_circuits_and_analysis(tmp_path: Path) -> None:
     assert all(point.tomography.accepted_x_shots == 10 for point in summary.points)
     assert all(point.tomography.accepted_z_shots == 10 for point in summary.points)
     assert summary.fit.logical_error_rate_per_round == pytest.approx(0.0, abs=1e-8)
+
+
+@pytest.mark.parametrize(
+    ("preset", "steane_qed_width"),
+    # 'minimal' keeps the distance-three subset Z_0145, X_0235, Z_0235: face 0145
+    # reads only Z, so it retains a Bell-partner flag alongside Z_0145, while face
+    # 0235 extracts both bases and face 0246 is dropped. 'full' keeps all six
+    # stabilizers plus face 0246's D2-copy flag.
+    (("minimal", 4), ("full", 7)),
+)
+def test_post_injection_qed_preset_selects_the_steane_qed_record(
+    tmp_path: Path,
+    preset: PostInjectionQedChecks,
+    steane_qed_width: int,
+) -> None:
+    """The named QED preset threads consistently through construction and analysis."""
+    config_path = _write_config(tmp_path, patch_sites=14, post_injection_qed_checks=preset)
+    circuits = build_ty_tomography_circuits(circuit_config_path=config_path)
+    steane_qed = next(r for r in circuits["X"].cregs if r.name == "steane_qed")
+    assert len(steane_qed) == steane_qed_width
+
+    summary = analyze_ty_tomography_counts(
+        {basis: {"0" * circuits[basis].num_clbits: 4} for basis in ("X", "Z")},
+        circuit_config_path=config_path,
+    )
+    assert summary.accepted_x_shots == summary.accepted_z_shots == 4
+
+
+def test_yaml_rejects_unknown_post_injection_qed_checks(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path, post_injection_qed_checks="some")
+
+    with pytest.raises(ValueError, match="post_injection_qed_checks"):
+        build_ty_tomography_circuits(circuit_config_path=config_path)
 
 
 def test_yaml_rejects_unknown_merge_schedule(tmp_path: Path) -> None:

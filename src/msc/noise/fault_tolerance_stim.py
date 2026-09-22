@@ -285,15 +285,18 @@ def sample_detector_logical_error_probability(
     experiment_name: str,
     physical_error_probability: float,
     analyzer: DetectorErrorModelShotAnalyzer,
-    shots: int,
+    max_shots: int,
+    target_logical_errors: int | None,
     batch_size: int = 100_000,
     seed: int | None = None,
 ) -> LogicalErrorEstimate:
-    """Estimate logical error rate conditioned on detector-based acceptance.
+    """Estimate a LER up to a shot limit and optional exact error target.
 
-    Detector and observable records are sampled in batches. With partial or no
-    postselection, ``analyzer.postselect_and_decode_samples`` applies the
-    requested rejection policy and PyMatching-decodes accepted detector events.
+    Pass ``target_logical_errors=None`` for a fixed-shot estimate. Otherwise,
+    sampling stops at the target-th logical error or ``max_shots``, whichever
+    comes first. The final batch is truncated at that error, preventing target
+    overshoot. With partial postselection, accepted records are PyMatching-
+    decoded.
 
     Experiments that postselect every detector use a sampling-only fast path:
     Stim returns bit-packed records, an accepted row must have zero detector
@@ -310,12 +313,15 @@ def sample_detector_logical_error_probability(
         │   └── otherwise
         │       ├── sampler.sample(...)
         │       └── analyzer.postselect_and_decode_samples(...)
+        ├── optionally truncate at the target-th logical error
         └── LogicalErrorEstimate
     """
-    if shots <= 0:
-        raise ValueError("shots must be positive.")
+    if max_shots <= 0:
+        raise ValueError("max_shots must be positive.")
     if batch_size <= 0:
         raise ValueError("batch_size must be positive.")
+    if target_logical_errors is not None and target_logical_errors <= 0:
+        raise ValueError("target_logical_errors must be positive or None.")
     sampler = analyzer._circuit.compile_detector_sampler(seed=seed)
     complementary_gap_enabled = analyzer._complementary_gap_postselection_threshold is not None
     all_detectors_postselected = (
@@ -324,8 +330,11 @@ def sample_detector_logical_error_probability(
     can_use_zero_syndrome_fast_path = all_detectors_postselected and not complementary_gap_enabled
     accepted_shots = 0
     logical_errors = 0
-    shots_remaining = shots
-    while shots_remaining:
+    sampled_shots = 0
+    shots_remaining = max_shots
+    while shots_remaining and (
+        target_logical_errors is None or logical_errors < target_logical_errors
+    ):
         current_batch_size = min(batch_size, shots_remaining)
         if can_use_zero_syndrome_fast_path:
             packed_detectors, packed_observables = sampler.sample(
@@ -345,13 +354,21 @@ def sample_detector_logical_error_probability(
                 detection_events,
                 observable_flips,
             )
+        if target_logical_errors is not None:
+            remaining_errors = target_logical_errors - logical_errors
+            error_indices = np.flatnonzero(logical_error_mask)
+            if len(error_indices) >= remaining_errors:
+                current_batch_size = int(error_indices[remaining_errors - 1]) + 1
+                acceptance_mask = acceptance_mask[:current_batch_size]
+                logical_error_mask = logical_error_mask[:current_batch_size]
         accepted_shots += int(np.count_nonzero(acceptance_mask))
         logical_errors += int(np.count_nonzero(logical_error_mask))
+        sampled_shots += current_batch_size
         shots_remaining -= current_batch_size
     return LogicalErrorEstimate(
         experiment_name=experiment_name,
         physical_error_probability=physical_error_probability,
-        sampled_shots=shots,
+        sampled_shots=sampled_shots,
         accepted_shots=accepted_shots,
         logical_errors=logical_errors,
     )
@@ -734,51 +751,28 @@ def _summarize_malignant_pairs(
 def _find_malignant_triple_by_signature(
     faults: Sequence[PhysicalFaultCase],
 ) -> FaultCombinationWitness | None:
-    """Find a malignant triple by a meet-in-the-middle signature search.
+    """Find one weight-three witness without materializing every candidate pair.
 
-    A witness has combined signature ``(D, L) = (0, 1)``. For third fault ``c``,
-    the other two must have ``(D_c, L_c XOR 1)``. Only required pair signatures
-    are stored, and all three locations must differ.
+    For each distinct-location pair, look up a third fault that cancels its
+    detector mask and flips its logical parity. Return as soon as all three
+    locations differ; exhausting other pairs cannot strengthen this witness.
     """
-    detector_masks = [fault.detector_mask for fault in faults]
-    observable_masks = [fault.observable_mask for fault in faults]
-    location_keys = [fault.location_key for fault in faults]
-    fault_count = len(faults)
+    faults_by_signature: dict[tuple[int, int], list[PhysicalFaultCase]] = defaultdict(list)
+    for fault in faults:
+        faults_by_signature[(fault.detector_mask, fault.observable_mask)].append(fault)
 
-    required_pair_signatures = {
-        (detector_masks[index], observable_masks[index] ^ 1) for index in range(fault_count)
-    }
-    pairs_by_signature: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
-    for left_index in range(fault_count):
-        for right_index in range(left_index + 1, fault_count):
-            if location_keys[left_index] == location_keys[right_index]:
+    for left_index, left_fault in enumerate(faults):
+        for right_index in range(left_index + 1, len(faults)):
+            right_fault = faults[right_index]
+            if left_fault.location_key == right_fault.location_key:
                 continue
-            signature = (
-                detector_masks[left_index] ^ detector_masks[right_index],
-                observable_masks[left_index] ^ observable_masks[right_index],
+            required_signature = (
+                left_fault.detector_mask ^ right_fault.detector_mask,
+                left_fault.observable_mask ^ right_fault.observable_mask ^ 1,
             )
-            if signature in required_pair_signatures:
-                pairs_by_signature[signature].append((left_index, right_index))
-
-    for third_index in range(fault_count):
-        required_signature = (
-            detector_masks[third_index],
-            observable_masks[third_index] ^ 1,
-        )
-        for left_index, right_index in pairs_by_signature.get(required_signature, ()):
-            if (
-                len(
-                    {
-                        location_keys[left_index],
-                        location_keys[right_index],
-                        location_keys[third_index],
-                    }
-                )
-                == 3
-            ):
-                return FaultCombinationWitness(
-                    (faults[left_index], faults[right_index], faults[third_index])
-                )
+            for third_fault in faults_by_signature.get(required_signature, ()):
+                if third_fault.location_key not in (left_fault.location_key, right_fault.location_key):
+                    return FaultCombinationWitness((left_fault, right_fault, third_fault))
     return None
 
 

@@ -95,6 +95,7 @@ def transfer_measurement_layout(
     include_cultivation: bool,
     measure_encoder_flags: bool = False,
     measure_cultivation_flags: bool = False,
+    post_injection_qed_checks: Sequence[str] | None = None,
     merge_schedule: common.MergeSchedule = "hirano",
 ) -> TransferMeasurementLayout:
     """Map shared measurement labels into Stim's physical append order.
@@ -117,16 +118,19 @@ def transfer_measurement_layout(
         surface_readout_basis=None,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
+        post_injection_qed_checks=post_injection_qed_checks,
     )
     if patch_sites == 14:
-        # Follow the grouped superdense readout order: same-face X/Z checks
+        # Follow the parallel superdense readout order: same-face X/Z checks
         # share one Bell pair, and the D2' restoration flag follows the 0246
         # Bell-ancilla readouts whenever that face is measured.
         labels["steane_verify"] = tuple(
             f"round{round_index + 1}_{check_name}"
             for round_index, checks in enumerate(patch_spec.merge_verification_rounds)
-            for group in common.group_14_site_superdense_verification_checks(checks)
-            for check_name in group.check_names_in_readout_order
+            for check_name in sorted(
+                checks,
+                key=lambda name: (patch_spec.merge_verification_stabilizer_indices[name], name[0]),
+            )
         )
     measurement_chunks: list[tuple[str, tuple[str, ...]]] = []
     if measure_encoder_flags:
@@ -163,12 +167,16 @@ def transfer_measurement_layout(
             )
         )
         if patch_sites == 14:
-            for group in common.group_14_site_superdense_verification_checks(
-                patch_spec.merge_verification_rounds[round_index]
-            ):
+            stabilizer_bases, stabilizer_indices = common.resolve_14_site_patch_stabilizer_checks(
+                tuple(
+                    f"{name[0]}_{name[1:]}"
+                    for name in patch_spec.merge_verification_rounds[round_index]
+                )
+            )
+            if stabilizer_indices:
                 _, readouts = steane.select_14_site_patch_superdense_measurement_layers(
-                    group.basis,
-                    group.stabilizer_indices,
+                    stabilizer_bases,
+                    stabilizer_indices,
                 )
                 for _, _, readout_role in readouts:
                     if readout_role == "STABILIZER":
@@ -221,21 +229,23 @@ def build_lattice_surgery_circuit(
     *,
     patch_sites: common.SteanePatchSites = 14,
     injected_state: steane.StimInjectedStateName = "S",
+    projection_axis: cultivation.ProjectionAxis = "Y",
     include_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     measure_cultivation_flags: bool = False,
+    post_injection_qed_checks: Sequence[str] | None = None,
     merge_schedule: common.MergeSchedule = "hirano",
     add_ticks: bool = True,
 ) -> stim.Circuit:
-    """Build the detector-annotated logical-Y-proxy transfer circuit.
+    """Build a detector-annotated logical-Pauli projection and transfer circuit.
 
     1. Encode ``injected_state`` on the selected Steane patch and, when
        ``measure_encoder_flags`` is true, measure and postselect its encoder
        flags. The default 14-site path uses the abstract-routed encoder;
        the 11-site path uses Rosenfeld's encoder.
     2. Measure all six Steane stabilizers for post-injection QED.
-    3. Optionally apply logical-Y cultivation, Stim's proxy for H_XY
-       cultivation.
+    3. Optionally project the requested logical Pauli; Y is Stim's proxy for
+       H_XY cultivation, while X and Z are diagnostic projections.
     4. Prepare the surface patch in product ``|+>`` and measure a complete X/Z
        round. Z checks project ``|+_L>`` and establish references; X checks are
        compared with their known +1 values.
@@ -256,9 +266,10 @@ def build_lattice_surgery_circuit(
     Known-+1 initial X results and measured initial Z results seed the surface
     change detectors. Protocol checks are postselected, surface histories are
     decoded, and transfer corrections remain in a classical Pauli frame.
-    Stim uses ``S|+>`` and logical-Y cultivation as Clifford proxies. This
-    serialized helper does not reproduce Hirano's exact concurrent timing,
-    idle noise, later code expansion, or complementary-gap lookup.
+    Y uses ``S|+>`` and logical-Y cultivation as Clifford proxies; X and Z are
+    direct diagnostic projections. This serialized helper does not reproduce
+    Hirano's exact concurrent timing, idle noise, later code expansion, or
+    complementary-gap lookup.
     """
     patch_spec = common.resolve_steane_transfer_patch_spec(
         patch_sites, merge_schedule=merge_schedule
@@ -274,8 +285,12 @@ def build_lattice_surgery_circuit(
             (7 + index % spec.distance, index // spec.distance),
         )
 
-    # 1. Accepted input: injection -> QED -> optional logical-Y cultivation (H_XY proxy).
+    # 1. Accepted input: injection -> QED -> optional logical-Pauli projection.
     if patch_sites == 11:
+        if projection_axis != "Y":
+            raise ValueError("11-site Stim transfer supports only projection_axis='Y'.")
+        if post_injection_qed_checks is not None:
+            raise ValueError("post_injection_qed_checks subsetting requires the 14-site patch.")
         cultivation.append_11_site_patch_injection_and_cultivation(
             circuit,
             patch_qubits=steane_patch,
@@ -292,10 +307,12 @@ def build_lattice_surgery_circuit(
             circuit,
             patch_qubits=steane_patch,
             injected_state=injected_state,
+            projection_axis=projection_axis,
             encoder="abstract_routed",
             cultivation_rounds=int(include_cultivation),
             measure_encoder_flags=measure_encoder_flags,
             measure_cultivation_flags=measure_cultivation_flags,
+            post_injection_qed_checks=post_injection_qed_checks,
             add_qed_round=True,
             add_ticks=add_ticks,
         )
@@ -351,12 +368,15 @@ def build_lattice_surgery_circuit(
                     add_ticks=add_ticks,
                 )
         elif patch_sites == 14:
-            for group in common.group_14_site_superdense_verification_checks(verification_checks):
+            stabilizer_bases, stabilizer_indices = common.resolve_14_site_patch_stabilizer_checks(
+                tuple(f"{name[0]}_{name[1:]}" for name in verification_checks)
+            )
+            if stabilizer_indices:
                 steane.append_14_site_patch_superdense_stabilizer_measurement(
                     circuit,
                     patch_qubits=steane_patch,
-                    basis=group.basis,
-                    stabilizer_indices=group.stabilizer_indices,
+                    basis=stabilizer_bases,
+                    stabilizer_indices=stabilizer_indices,
                     add_ticks=add_ticks,
                 )
         else:  # pragma: no cover - resolved above by the patch specification.
@@ -391,6 +411,7 @@ def build_lattice_surgery_circuit(
         include_cultivation=include_cultivation,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
+        post_injection_qed_checks=post_injection_qed_checks,
         merge_schedule=merge_schedule,
     )
 

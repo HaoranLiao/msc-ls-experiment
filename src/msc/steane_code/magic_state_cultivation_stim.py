@@ -1,4 +1,4 @@
-"""Stim logical-Y cultivation on the Steane patch.
+"""Stim logical-Pauli projection and logical-Y cultivation on the Steane patch.
 
 This module parallels :mod:`magic_state_cultivation_qiskit` for the 11-site
 patch, and provides the parallel 14-site path. The fold schedules, patch
@@ -6,7 +6,8 @@ sites, measurement counts, and optional-CX filtering are shared via
 :mod:`magic_state_cultivation_common`. Both patches replace the non-Clifford
 transversal rotation with ``S``/``S_DAG``, so Stim performs logical-Y
 cultivation (proxy for logical ``H_XY``) and cultivates the logical Pauli-Y
-eigenstate.
+eigenstate. The 14-site round also supports direct logical-X and logical-Z
+diagnostic projections through identity and ``H`` basis changes.
 
 Each 11-site round appends five measurements to Stim's record in this order:
 
@@ -24,6 +25,7 @@ Each 14-site round appends six measurements in this order:
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Literal
 
 import numpy as np
 import stim
@@ -45,6 +47,7 @@ from msc.steane_code.state_injection_common import (
     PATCH_11_SITE_HELPER_SITES,
     PATCH_14_SITE_DATA_SITES,
     PATCH_14_SITE_HELPER_SITES,
+    resolve_14_site_patch_stabilizer_checks,
 )
 from msc.steane_code.state_injection_stim import (
     DEFAULT_STIM_11_SITE_PATCH_QUBITS,
@@ -58,7 +61,9 @@ from msc.steane_code.state_injection_stim import (
     append_14_site_patch_superdense_stabilizer_measurement,
 )
 from msc.utils import circuit_stim
-from msc.utils.normalize import resolve_patch_qubits
+from msc.utils.normalize import normalize_pauli_char, resolve_patch_qubits
+
+ProjectionAxis = Literal["X", "Y", "Z"]
 
 
 def measure_in_x_basis(circuit: stim.Circuit, qubit: int) -> None:
@@ -175,7 +180,7 @@ def append_14_site_patch_unfold_network(
 
 
 # =============================================================================
-# Logical-Y projection round (fold, measure, unfold, measure)
+# Logical projection rounds (fold, measure, unfold, measure)
 # =============================================================================
 
 
@@ -287,25 +292,28 @@ def append_11_site_patch_y_projection_round(
     return measurement_positions
 
 
-def append_14_site_patch_y_projection_round(
+def append_14_site_patch_projection_round(
     circuit: stim.Circuit,
     *,
     patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
+    projection_axis: ProjectionAxis = "Y",
     measure_flags: bool = True,
     add_ticks: bool = True,
     running_kt: bool = False,
 ) -> tuple[int, ...]:
-    """Append one detector-annotated logical-Y cultivation round on the 14-site patch.
+    """Append one detector-annotated logical-Pauli projection on the 14-site patch.
 
-    Reset the active helpers H8-H12 to ``|+>``, apply ``S``/``S_DAG`` to the
-    seven data sites, fold onto H10, measure and reset H10 in the X basis,
-    unfold, then read out the helper checks in site order. H7 is unused. H10's
-    second result must agree with the folded root; the root-agreement detector
-    applies to cultivation and KT, while only cultivation adds a detector that
-    pins the folded root to +1.
+    Reset the active helpers H8-H12 to ``|+>``, rotate the requested logical
+    Pauli onto X, fold onto H10, measure and reset H10 in X, unfold, read out
+    the helper checks, then undo the data rotation. X needs no rotation, Y uses
+    transversal ``S``/``S_DAG``, and Z uses transversal ``H``/``H``. H7 is
+    unused. H10's second result must agree with the folded root.
 
     Parameters
     ----------
+    projection_axis
+        Logical Pauli eigenstate projected to +1. ``"Y"`` is Stim's Clifford
+        cultivation proxy; ``"X"`` and ``"Z"`` are diagnostic projections.
     measure_flags
         Whether to read the four fixed-+1 ancilla flags H8, H9, H11, and H12
         (each an extra postselection detector). When false, only H10 is
@@ -328,17 +336,28 @@ def append_14_site_patch_y_projection_round(
         patch_qubits,
         expected_count=NUM_QUBITS_PATCH_14_SITES,
     )
+    projection_axis = normalize_pauli_char(projection_axis)
+    if projection_axis == "X":
+        before_fold_gate = after_unfold_gate = None
+    elif projection_axis == "Y":
+        before_fold_gate, after_unfold_gate = "S", "S_DAG"
+    elif projection_axis == "Z":
+        before_fold_gate = after_unfold_gate = "H"
+    else:
+        raise ValueError("projection_axis must be 'X', 'Y', or 'Z'.")
     measured_helpers = measured_14_site_cultivation_helpers(measure_flags=measure_flags)
     first_projection_position = circuit.num_measurements
+    data_qubits = [patch_qubits[site] for site in PATCH_14_SITE_DATA_SITES]
 
     for helper_site in PATCH_14_SITE_HELPER_SITES[1:]:
         reset_to_plus(circuit, patch_qubits[helper_site])
     if add_ticks:
         circuit.append("TICK", [])
 
-    circuit.append("S", [patch_qubits[site] for site in PATCH_14_SITE_DATA_SITES])
-    if add_ticks:
-        circuit.append("TICK", [])
+    if before_fold_gate is not None:
+        circuit.append(before_fold_gate, data_qubits)
+        if add_ticks:
+            circuit.append("TICK", [])
 
     append_14_site_patch_fold_network(circuit, patch_qubits, add_ticks=add_ticks)
 
@@ -357,12 +376,10 @@ def append_14_site_patch_y_projection_round(
     if add_ticks:
         circuit.append("TICK", [])
 
-    circuit.append(
-        "S_DAG",
-        [patch_qubits[site] for site in PATCH_14_SITE_DATA_SITES],
-    )
-    if add_ticks:
-        circuit.append("TICK", [])
+    if after_unfold_gate is not None:
+        circuit.append(after_unfold_gate, data_qubits)
+        if add_ticks:
+            circuit.append("TICK", [])
 
     # circuit.num_measurements is the running length of Stim's single global
     # record. Reading it at the top and again here brackets exactly the
@@ -453,28 +470,33 @@ def append_14_site_patch_injection_and_cultivation(
     add_qed_round: bool,
     patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
     injected_state: StimInjectedStateName = "S",
+    projection_axis: ProjectionAxis = "Y",
     encoder: Patch14SiteEncoderName = "abstract_routed",
     cultivation_rounds: int = 1,
     measure_encoder_flags: bool = False,
     measure_cultivation_flags: bool = True,
+    post_injection_qed_checks: Sequence[str] | None = None,
     add_ticks: bool = True,
 ) -> None:
-    """Append selectable 14-site injection, optional QED, and cultivation rounds.
+    """Append selectable 14-site injection, optional QED, and projection rounds.
 
     The default ``abstract_routed`` encoder accepts arbitrary Stim-supported
     inputs. ``hirano`` selects the specialized logical-Y encoder. When
-    ``add_qed_round`` is true, the superdense round measures all three X and
-    Z Steane stabilizers at once (see
-    :func:`append_14_site_patch_superdense_stabilizer_measurement`). When
-    ``measure_encoder_flags`` is true, the record order starts with the
-    selected encoder's flags (five for abstract-routed, six for Hirano),
-    then seven QED outcomes (six stabilizers plus the terminal D2' flag),
-    then per cultivation round the folded H10 root and helper readouts. With
+    ``add_qed_round`` is true, ``post_injection_qed_checks`` selects the QED
+    checks: ``None`` measures all six, ``()`` skips extraction, and names such
+    as ``"X_0145"`` select individual checks. All selected faces share one
+    superdense schedule; single-basis faces retain their Bell-partner flags.
+    Face 0246 also retains the terminal D2-copy flag.
+
+    The Y projection is the cultivation proxy; X/Z are diagnostic Pauli
+    projections. The record starts with optional encoder flags (five for
+    abstract-routed, six for Hirano), followed by selected QED readouts (seven
+    by default), then the folded H10 root and helper readouts per cultivation
+    round. With
     ``measure_cultivation_flags`` true each round reads H8-H12 (six outcomes,
     H10 being the root check); false reads only the folded root and its H10
     root check (two outcomes), omitting the four ancilla flags. Set
-    ``cultivation_rounds=0``
-    to stop after injection and optional QED. Every measured encoder-flag,
+    ``cultivation_rounds=0`` to stop after injection and optional QED. Every measured encoder-flag,
     QED, and cultivation outcome -- including every helper flag -- is
     annotated as a postselection detector.
     """
@@ -510,18 +532,25 @@ def append_14_site_patch_injection_and_cultivation(
         circuit.append("TICK", [])
 
     if add_qed_round:
-        append_14_site_patch_superdense_stabilizer_measurement(
-            circuit,
-            patch_qubits=patch_qubits,
-            add_ticks=add_ticks,
+        stabilizer_bases, stabilizer_indices = resolve_14_site_patch_stabilizer_checks(
+            post_injection_qed_checks
         )
+        if stabilizer_indices:
+            append_14_site_patch_superdense_stabilizer_measurement(
+                circuit,
+                patch_qubits=patch_qubits,
+                basis=stabilizer_bases,
+                stabilizer_indices=stabilizer_indices,
+                add_ticks=add_ticks,
+            )
         if add_ticks:
             circuit.append("TICK", [])
 
     for _ in range(cultivation_rounds):
-        append_14_site_patch_y_projection_round(
+        append_14_site_patch_projection_round(
             circuit,
             patch_qubits=patch_qubits,
+            projection_axis=projection_axis,
             measure_flags=measure_cultivation_flags,
             add_ticks=add_ticks,
         )
@@ -586,12 +615,13 @@ def build_14_site_patch_injection_and_cultivation_circuit(
     injected_state: StimInjectedStateName = "S",
     *,
     add_qed_round: bool,
+    projection_axis: ProjectionAxis = "Y",
     encoder: Patch14SiteEncoderName = "abstract_routed",
     cultivation_rounds: int = 1,
     measure_cultivation_flags: bool = True,
     add_ticks: bool = True,
 ) -> stim.Circuit:
-    """Authoritative 14-site Stim qubit-layout and appending example.
+    """Build a 14-site injection, QED, and logical-Pauli projection circuit.
 
     Circuit-owning counterpart to
     :func:`append_14_site_patch_injection_and_cultivation`. Stim has no
@@ -625,6 +655,7 @@ def build_14_site_patch_injection_and_cultivation_circuit(
         circuit,
         patch_qubits=DEFAULT_STIM_14_SITE_PATCH_QUBITS,
         injected_state=injected_state,
+        projection_axis=projection_axis,
         encoder=encoder,
         cultivation_rounds=cultivation_rounds,
         measure_encoder_flags=True,

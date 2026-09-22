@@ -75,35 +75,75 @@ LOGICAL_EXPECTATIONS = {
 # =============================================================================
 
 
-def test_14_site_verification_groups_reuse_each_bell_pair_once() -> None:
-    """Require simultaneous same-face extraction and skip bare X0145."""
-    assert common.group_14_site_superdense_verification_checks(
-        common.STEANE_MERGE_VERIFICATION_ROUNDS[0]
-    ) == (
-        common.SteaneSuperdenseVerificationGroup("Z", (0,), ("Z0145",)),
-        common.SteaneSuperdenseVerificationGroup(
-            "BOTH",
-            (1, 2),
-            ("X0235", "Z0235", "X0246", "Z0246"),
-        ),
-    )
-    assert common.group_14_site_superdense_verification_checks(
-        common.STEANE_MERGE_VERIFICATION_ROUNDS[1]
-    ) == (
-        common.SteaneSuperdenseVerificationGroup(
-            "Z",
-            (0, 1, 2),
-            ("Z0145", "Z0235", "Z0246"),
-        ),
-    )
-    assert not common.group_14_site_superdense_verification_checks(
-        common.STEANE_MERGE_VERIFICATION_ROUNDS[2]
-    )
+def test_merge_schedules_resolve_to_expected_superdense_extractions() -> None:
+    """Each merge round resolves to one shared superdense extraction per selected face.
+
+    Hirano mixes bases (Z on face 0145, BOTH on faces 0235 and 0246) so each
+    face's Bell pair is reused once per round, and never requests bare X0145,
+    which would anticommute with the active Z1a and Z35bc interface checks. The
+    diagnostic minimal schedule is Z-only.
+    """
+
+    def resolved_extractions(rounds):
+        return [
+            common.resolve_14_site_patch_stabilizer_checks(
+                tuple(f"{name[0]}_{name[1:]}" for name in round_checks)
+            )
+            for round_checks in rounds
+        ]
+
     assert all(
-        check_name != "X0145"
-        for round_checks in common.STEANE_MERGE_VERIFICATION_ROUNDS
-        for check_name in round_checks
+        "X0145" not in round_checks for round_checks in common.STEANE_MERGE_VERIFICATION_ROUNDS
     )
+    assert resolved_extractions(common.STEANE_MERGE_VERIFICATION_ROUNDS) == [
+        (("Z", "BOTH", "BOTH"), (0, 1, 2)),
+        (("Z", "Z", "Z"), (0, 1, 2)),
+        ((), ()),
+    ]
+    assert resolved_extractions(common.MINIMAL_Z_ONLY_MERGE_VERIFICATION_ROUNDS) == [
+        (("Z", "Z"), (0, 1)),
+        (("Z", "Z", "Z"), (0, 1, 2)),
+        ((), ()),
+    ]
+
+    # A selected post-injection QED subset resolves to the same superdense
+    # extraction and must not shift later transfer records: each requested face
+    # reads its X then Z ancilla (an absent parity becomes a Bell-partner flag),
+    # and face 0246 appends its single D2-copy flag. Qiskit cultivation is the
+    # non-Clifford Ty, so this parallel drops cultivation to stay simulable.
+    for measure_encoder_flags in (False, True):
+        for qed_checks, expected_qed_labels in (
+            ((), ()),
+            (
+                ("X_0145", "Z_0145", "Z_0235"),
+                ("X_0145", "Z_0145", "Z_0235_bell_partner_flag", "Z_0235"),
+            ),
+            (
+                None,
+                ("X_0145", "Z_0145", "X_0235", "Z_0235", "X_0246", "Z_0246", "D2_copy_flag"),
+            ),
+        ):
+            circuit = d5.build_steane_to_rotated_d5_lattice_surgery_circuit(
+                injected_state="0",
+                include_cultivation=False,
+                measure_encoder_flags=measure_encoder_flags,
+                post_injection_qed_checks=qed_checks,
+                add_barriers=False,
+            )
+            counts = (
+                AerSimulator(method="stabilizer")
+                .run(circuit, shots=1, seed_simulator=42)
+                .result()
+                .get_counts()
+            )
+            parsed = d5.parse_transfer_measurements(
+                next(iter(counts)),
+                include_cultivation=False,
+                measure_encoder_flags=measure_encoder_flags,
+                post_injection_qed_checks=qed_checks,
+            )
+            assert parsed["post_injection_qed"] == dict.fromkeys(expected_qed_labels, 0)
+            assert not any(parsed["steane_bell_partner_flags"].values())
 
 
 @pytest.mark.parametrize(("module", "build"), TARGETS)

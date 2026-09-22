@@ -48,8 +48,12 @@ def test_full_d5_ty_tomography_measurement_record_is_complete_and_semantic(
     circuit = build_ty_tomography_circuits(
         target_distance=5,
         patch_sites=14,
+        merge_schedule="hirano",
+        full_post_selection=False,
         measure_encoder_flags=True,
         measure_cultivation_flags=True,
+        post_injection_qed_checks="full",
+        post_transfer_stabilizer_rounds=5,
         add_barriers=False,
     )[basis]
     z_labels = (
@@ -199,6 +203,7 @@ def test_full_d5_ty_tomography_measurement_record_is_complete_and_semantic(
     measurements = d5.parse_transfer_measurements(
         bitstring,
         patch_sites=14,
+        merge_schedule="hirano",
         include_cultivation=True,
         measure_encoder_flags=True,
         measure_cultivation_flags=True,
@@ -291,6 +296,12 @@ def test_ty_tomography_builds_full_x_and_z_readout_circuits() -> None:
     circuits = build_ty_tomography_circuits(
         target_distance=3,
         patch_sites=14,
+        merge_schedule="hirano",
+        full_post_selection=False,
+        measure_encoder_flags=True,
+        measure_cultivation_flags=True,
+        post_injection_qed_checks="full",
+        post_transfer_stabilizer_rounds=3,
         add_barriers=False,
     )
 
@@ -304,11 +315,23 @@ def test_ty_tomography_builds_full_x_and_z_readout_circuits() -> None:
 
 @pytest.mark.slow
 def test_noiseless_transferred_ty_tomography_has_unit_fidelity() -> None:
-    """The paired full circuits recover the cultivated Ty Bloch vector."""
-    circuits = build_ty_tomography_circuits(
+    """The paired full circuits recover the cultivated Ty Bloch vector.
+
+    Uses the production ``minimal`` post-injection QED preset so the default
+    protocol is what gets fidelity-checked.
+    """
+    build_and_analysis_params = dict(
         target_distance=3,
-        add_barriers=False,
+        patch_sites=14,
+        merge_schedule="minimal_z_only",
+        full_post_selection=False,
+        persistent_surface_x_post_selection=True,
+        measure_encoder_flags=False,
+        measure_cultivation_flags=False,
+        post_injection_qed_checks="minimal",
+        post_transfer_stabilizer_rounds=3,
     )
+    circuits = build_ty_tomography_circuits(**build_and_analysis_params, add_barriers=False)
     result = (
         AerSimulator(method="matrix_product_state")
         .run(
@@ -320,7 +343,7 @@ def test_noiseless_transferred_ty_tomography_has_unit_fidelity() -> None:
     )
     summary = analyze_ty_tomography_counts(
         {basis: result.get_counts(index) for index, basis in enumerate(TOMOGRAPHY_BASES)},
-        target_distance=3,
+        **build_and_analysis_params,
     )
 
     assert summary.accepted_x_shots == 128

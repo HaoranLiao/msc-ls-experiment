@@ -26,14 +26,16 @@ from msc.steane_code.state_injection_common import (
     NUM_QUBITS_PATCH_14_SITES,
     PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES,
     PATCH_14_SITE_HELPER_SITES,
-    post_injection_qed_stabilizer_labels,
+    PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS,
+    patch_stabilizer_labels,
+    resolve_14_site_patch_stabilizer_checks,
+    select_14_site_patch_superdense_measurement_layers,
 )
 from msc.utils.circuit_common import resolve_logical_measurement_terms
 from msc.utils.normalize import normalize_pauli_char
 
 SurfaceReadoutBasis = Literal["X", "Y", "Z"]
 SteanePatchSites = Literal[11, 14]
-SteaneVerificationBasis = Literal["X", "Z", "BOTH"]
 MergeSchedule = Literal["hirano", "minimal_z_only"]
 LATTICE_SURGERY_ROUNDS = 3
 MergedBoundaryCheck = tuple[str, tuple[str, ...], tuple[str, ...]]
@@ -82,6 +84,9 @@ STEANE_MERGE_VERIFICATION_LABELS: tuple[str, ...] = tuple(
 )
 MINIMAL_Z_ONLY_MERGE_VERIFICATION_ROUNDS: tuple[tuple[str, ...], ...] = (
     ("Z0145", "Z0235"),
+    # Z0246 detects X0X5, which commutes with Z0145 and Z0235. X0 can enter
+    # during cultivation before its closing Z-check boundary, and X5 can enter
+    # during merge; this round-2 check closes that otherwise undetected path.
     ("Z0145", "Z0235", "Z0246"),
     (),
 )
@@ -121,70 +126,6 @@ HIRANO_PATCH_LABEL_BY_GOOGLE_SITE: dict[int, str] = {
     **GOOGLE_SITE_TO_HIRANO_LABEL,
     **{site: label for label, site in STEANE_HELPER_LABEL_TO_GOOGLE_SITE.items()},
 }
-
-
-@dataclass(frozen=True)
-class SteaneSuperdenseVerificationGroup:
-    """One Bell-pair preparation shared by selected 14-site face checks."""
-
-    basis: SteaneVerificationBasis
-    stabilizer_indices: tuple[int, ...]
-    check_names_in_readout_order: tuple[str, ...]
-
-
-def group_14_site_superdense_verification_checks(
-    check_names: Sequence[str],
-) -> tuple[SteaneSuperdenseVerificationGroup, ...]:
-    """Turn the requested checks into physical superdense extractions.
-
-    The input names specify which stabilizers each merge round requires; this
-    helper does not change that logical schedule. It groups same-face X and Z
-    requests into one ``basis="BOTH"`` extraction so one prepared Bell pair
-    measures both checks simultaneously. Without this grouping, the old code
-    measured each requested check separately and recreated the Bell pair
-    between X and Z on the same face.
-    """
-    check_by_basis_and_index: dict[tuple[str, int], str] = {}
-    bases_by_stabilizer_index: dict[int, set[str]] = {}
-    for check_name in check_names:
-        try:
-            stabilizer_index = STEANE_14_SITE_MERGE_VERIFICATION_STABILIZER_INDICES[check_name]
-        except KeyError as error:
-            raise ValueError(f"unknown 14-site verification check {check_name!r}.") from error
-        key = (check_name[0], stabilizer_index)
-        if key in check_by_basis_and_index:
-            raise ValueError(f"duplicate 14-site verification check {check_name!r}.")
-        check_by_basis_and_index[key] = check_name
-        bases_by_stabilizer_index.setdefault(stabilizer_index, set()).add(check_name[0])
-
-    stabilizer_indices_by_basis: dict[SteaneVerificationBasis, list[int]] = {}
-    for stabilizer_index, bases in bases_by_stabilizer_index.items():
-        basis: SteaneVerificationBasis
-        if bases == {"X", "Z"}:
-            basis = "BOTH"
-        elif bases == {"X"}:
-            basis = "X"
-        elif bases == {"Z"}:
-            basis = "Z"
-        else:
-            raise ValueError(f"unsupported verification bases {bases!r}.")
-        stabilizer_indices_by_basis.setdefault(basis, []).append(stabilizer_index)
-
-    groups = []
-    for basis, stabilizer_indices in stabilizer_indices_by_basis.items():
-        readout_bases = ("X", "Z") if basis == "BOTH" else (basis,)
-        groups.append(
-            SteaneSuperdenseVerificationGroup(
-                basis=basis,
-                stabilizer_indices=tuple(stabilizer_indices),
-                check_names_in_readout_order=tuple(
-                    check_by_basis_and_index[(readout_basis, stabilizer_index)]
-                    for stabilizer_index in stabilizer_indices
-                    for readout_basis in readout_bases
-                ),
-            )
-        )
-    return tuple(groups)
 
 
 @dataclass(frozen=True)
@@ -231,7 +172,7 @@ def resolve_steane_transfer_patch_spec(
                 HIRANO_LABEL_TO_GOOGLE_SITE[label] for label in HIRANO_STEANE_DATA_ORDER
             ),
             encoder_flag_labels=("enc_f1", "enc_f2", "enc_f6", "enc_f7"),
-            qed_labels=post_injection_qed_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES),
+            qed_labels=patch_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES),
             cultivation_labels=(
                 "root_x",
                 "cult_f1",
@@ -257,7 +198,7 @@ def resolve_steane_transfer_patch_spec(
                 f"enc_h{site}" for site in PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES
             ),
             qed_labels=(
-                *post_injection_qed_stabilizer_labels(NUM_QUBITS_PATCH_14_SITES),
+                *patch_stabilizer_labels(NUM_QUBITS_PATCH_14_SITES),
                 STEANE_14_SITE_QED_D2_COPY_FLAG_LABEL,
             ),
             cultivation_labels=(
@@ -372,6 +313,7 @@ def transfer_measurement_labels(
     surface_readout_basis: SurfaceReadoutBasis | None,
     measure_encoder_flags: bool = False,
     measure_cultivation_flags: bool = False,
+    post_injection_qed_checks: Sequence[str] | None = None,
     post_transfer_stabilizer_rounds: int = 0,
     full_data_readout: bool = False,
 ) -> dict[str, tuple[str, ...]]:
@@ -386,8 +328,11 @@ def transfer_measurement_labels(
     encoder emits no postselection flags. ``measure_cultivation_flags=False``
     shrinks each ``cult`` round to its folded root and root check, dropping the
     four ancilla flags; this applies only to the 14-site patch and is ignored on
-    the 11-site patch (whose cultivation round is unchanged). Both shift the
-    record layout, so construction and parsing must pass the same values.
+    the 11-site patch (whose cultivation round is unchanged).
+    ``post_injection_qed_checks`` restricts the ``steane_qed`` family to a subset
+    of the six 14-site checks (``None`` keeps all six; only the 14-site patch
+    supports subsetting). All shift the record layout, so construction and
+    parsing must pass the same values.
     """
     patch_spec = resolve_steane_transfer_patch_spec(patch_sites, merge_schedule=merge_schedule)
     if post_transfer_stabilizer_rounds < 0:
@@ -395,7 +340,35 @@ def transfer_measurement_labels(
     labels: dict[str, tuple[str, ...]] = {}
     if measure_encoder_flags:
         labels["enc_flags"] = patch_spec.encoder_flag_labels
-    labels["steane_qed"] = patch_spec.qed_labels
+    if post_injection_qed_checks is None:
+        labels["steane_qed"] = patch_spec.qed_labels
+    elif patch_sites == NUM_QUBITS_PATCH_14_SITES:
+        stabilizer_bases, stabilizer_indices = resolve_14_site_patch_stabilizer_checks(
+            post_injection_qed_checks
+        )
+        qed_labels = []
+        if stabilizer_indices:
+            _, readouts = select_14_site_patch_superdense_measurement_layers(
+                stabilizer_bases, stabilizer_indices
+            )
+            for readout_basis, ancilla_site, readout_role in readouts:
+                if readout_role == "D2_COPY_FLAG":
+                    qed_labels.append(STEANE_14_SITE_QED_D2_COPY_FLAG_LABEL)
+                    continue
+                face_index = next(
+                    index for index, ancilla_pair in enumerate(PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS)
+                    if ancilla_site in ancilla_pair
+                )
+                if readout_role == "STABILIZER":
+                    qed_labels.append(patch_spec.qed_labels[2 * face_index + (readout_basis == "Z")])
+                elif readout_role == "BELL_PARTNER_FLAG":
+                    check_name = patch_spec.qed_labels[2 * face_index + (readout_basis == "X")]
+                    qed_labels.append(f"{check_name}_bell_partner_flag")
+                else:
+                    raise ValueError(f"Unsupported superdense readout role: {readout_role!r}.")
+        labels["steane_qed"] = tuple(qed_labels)
+    else:
+        raise ValueError("post_injection_qed_checks subsetting requires the 14-site patch.")
     if include_cultivation:
         if not measure_cultivation_flags and patch_sites == NUM_QUBITS_PATCH_14_SITES:
             # 14-site only: keep the folded root and its root check (H10 read twice).

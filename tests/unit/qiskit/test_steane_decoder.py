@@ -18,7 +18,7 @@ from msc.steane_code.state_injection_common import (
     PATCH_11_SITE_DEFAULT_LOGICAL_Z,
     PATCH_11_SITE_X_STABILIZERS,
     PATCH_11_SITE_Z_STABILIZERS,
-    post_injection_qed_stabilizer_labels,
+    patch_stabilizer_labels,
 )
 from msc.steane_code.state_injection_qiskit import (
     InjectedStateName,
@@ -98,7 +98,7 @@ def _parse_syndrome_round(
 
 def _build_11_site_decoder() -> SteaneDecoder:
     """Construct the patch-agnostic Steane decoder for the 11-site geometry."""
-    qed_labels = post_injection_qed_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES)
+    qed_labels = patch_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES)
     num_x = len(PATCH_11_SITE_X_STABILIZERS)
     return SteaneDecoder(
         data_sites=PATCH_11_SITE_DATA_SITES,
@@ -151,7 +151,7 @@ def test_one_round_logical_expectations(
     x_raw, z_raw = _parse_syndrome_round(syndrome_counts_key)
     stabilizer_frame = StabilizerFrame()
     stabilizer_frame.record_many(
-        dict.fromkeys(post_injection_qed_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES), 0)
+        dict.fromkeys(patch_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES), 0)
     )
     pauli_frame = PauliFrame()
     pauli_frame.register("L0")
@@ -237,7 +237,7 @@ def test_two_round_logical_expectations(
     # Decode both rounds; the stabilizer frame converts raw values into changes.
     stabilizer_frame = StabilizerFrame()
     stabilizer_frame.record_many(
-        dict.fromkeys(post_injection_qed_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES), 0)
+        dict.fromkeys(patch_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES), 0)
     )
     pauli_frame = PauliFrame()
     pauli_frame.register("L0")

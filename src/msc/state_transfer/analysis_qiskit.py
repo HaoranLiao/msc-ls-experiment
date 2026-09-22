@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from msc.state_transfer.common import (
     MergeSchedule,
     SteanePatchSites,
@@ -20,6 +22,7 @@ def parse_transfer_measurements(
     include_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     measure_cultivation_flags: bool = False,
+    post_injection_qed_checks: Sequence[str] | None = None,
     post_transfer_stabilizer_rounds: int = 0,
     surface_readout_basis: SurfaceReadoutBasis | None = None,
     full_data_readout: bool = False,
@@ -42,6 +45,7 @@ def parse_transfer_measurements(
         merge_schedule=merge_schedule,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
+        post_injection_qed_checks=post_injection_qed_checks,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,
         full_data_readout=full_data_readout,

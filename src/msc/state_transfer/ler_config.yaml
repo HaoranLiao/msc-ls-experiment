@@ -1,8 +1,7 @@
 # Qiskit Ty-state grafted-code memory experiment (Supplementary Fig. S22).
 target_distance: 5
 patch_sites: 14
-# Supported schedules: hirano, minimal_z_only.
-merge_schedule: hirano
+merge_schedule: minimal_z_only  # Supported schedules: hirano, minimal_z_only.
 full_post_selection: false
 persistent_surface_x_post_selection: true
 # Set true to measure and postselect the abstract-routed encoder flags (H8-H12).
@@ -14,6 +13,10 @@ measure_encoder_flags: false
 # keeps them; false (default) drops those measurements while keeping the folded
 # root and its H10 root check. Only affects the 14-site patch; ignored for 11.
 measure_cultivation_flags: false
+# Post-injection Steane QED extent. 'minimal' (default) checks only the
+# distance-three-certified subset Z_0145, X_0235, Z_0235; 'full' checks all six
+# stabilizers. 'minimal' requires the 14-site patch.
+post_injection_qed_checks: minimal
 # Fit sqrt(<X_L>^2 + <Z_L>^2) over these post-transfer QEC round counts.
 post_transfer_stabilizer_rounds: [1, 3, 5, 7, 9, 11, 13, 15]
 add_barriers: true

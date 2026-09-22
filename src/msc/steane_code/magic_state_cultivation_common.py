@@ -16,7 +16,7 @@ from msc.steane_code.state_injection_common import (
     PATCH_11_SITE_HELPER_SITES,
     PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES,
     PATCH_14_SITE_HELPER_SITES,
-    post_injection_qed_stabilizer_labels,
+    patch_stabilizer_labels,
 )
 
 Patch14SiteEncoderName = Literal["abstract", "abstract_routed", "hirano"]
@@ -79,7 +79,7 @@ PATCH_11_SITE_CULTIVATION_ROOT_CHECK_INDEX: int = 1 + PATCH_11_SITE_HELPER_SITES
 )
 PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND: int = 1 + len(PATCH_11_SITE_HELPER_SITES)
 STEANE_QED_MEASUREMENTS_PER_ROUND: int = len(
-    post_injection_qed_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES)
+    patch_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES)
 )
 
 

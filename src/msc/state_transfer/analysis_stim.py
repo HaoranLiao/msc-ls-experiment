@@ -21,6 +21,7 @@ def parse_transfer_measurements(
     include_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     measure_cultivation_flags: bool = False,
+    post_injection_qed_checks: Sequence[str] | None = None,
     merge_schedule: MergeSchedule = "hirano",
 ) -> dict[str, object]:
     """Label one record row, then derive checks, recovery, and Pauli byproducts."""
@@ -33,6 +34,7 @@ def parse_transfer_measurements(
         include_cultivation=include_cultivation,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
+        post_injection_qed_checks=post_injection_qed_checks,
         merge_schedule=merge_schedule,
     )
     if shot.shape[0] != layout.num_measurements:

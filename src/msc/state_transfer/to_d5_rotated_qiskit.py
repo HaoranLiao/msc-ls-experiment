@@ -44,6 +44,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     include_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     measure_cultivation_flags: bool = False,
+    post_injection_qed_checks: Sequence[str] | None = None,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,
     post_transfer_stabilizer_rounds: int | None = None,
@@ -74,6 +75,7 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
         include_cultivation=include_cultivation,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
+        post_injection_qed_checks=post_injection_qed_checks,
         add_barriers=add_barriers,
     )
     if surface_readout_basis is None:
@@ -137,9 +139,6 @@ def append_post_transfer_and_readout(
     ``surface_data_bits`` stores the final data in canonical
     ``a..y`` order. The caller owns these classical registers.
     """
-    surface_readout_basis = normalize_pauli_char(surface_readout_basis)
-    if surface_readout_basis == "Y":
-        raise ValueError("full-data surface readout basis must be X or Z.")
     stabilizer_rounds = common.resolve_post_transfer_stabilizer_rounds(
         distance=TRANSFER_SPEC.distance,
         full_post_selection=full_post_selection,
@@ -183,6 +182,7 @@ def parse_transfer_measurements(
     include_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     measure_cultivation_flags: bool = False,
+    post_injection_qed_checks: Sequence[str] | None = None,
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,
     persistent_surface_x_post_selection: bool = True,
@@ -204,6 +204,7 @@ def parse_transfer_measurements(
         include_cultivation=include_cultivation,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
+        post_injection_qed_checks=post_injection_qed_checks,
         post_transfer_stabilizer_rounds=resolved_stabilizer_rounds,
         surface_readout_basis=surface_readout_basis,
         full_data_readout=surface_readout_basis is not None,

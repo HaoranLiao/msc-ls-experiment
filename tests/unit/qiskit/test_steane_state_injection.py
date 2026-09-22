@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from itertools import combinations
+from itertools import combinations, product
 from typing import NamedTuple
 
 import pytest
@@ -32,6 +32,7 @@ from msc.steane_code.state_injection_common import (
     PATCH_14_SITE_HIRANO_ENCODER_COORDS,
     PATCH_14_SITE_LOGICAL_X_REPRESENTATIVES,
     PATCH_14_SITE_LOGICAL_Z_REPRESENTATIVES,
+    PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS,
     PATCH_14_SITE_X_STABILIZERS,
     PATCH_14_SITE_Z_STABILIZERS,
     X_STABILIZERS,
@@ -1139,3 +1140,154 @@ def test_14_site_superdense_qed_matches_hirano_cx_depth_with_two_fewer_gates() -
     # The fixed-patch encoder already places D1 at its final site, saving the
     # two CXs that Hirano's QED uses to relocate D1 from its injection-stage site.
     assert fixed_patch_qed.count_ops()["cx"] == 34
+
+
+@pytest.mark.parametrize("face_bases", tuple(product((None, "X", "Z", "BOTH"), repeat=3)))
+def test_14_site_superdense_subsets_do_not_exceed_full_round_cx_depth(face_bases) -> None:
+    """Exhaust all 64 subsets, including mixed faces and the empty selection."""
+    selected_indices = tuple(index for index, basis in enumerate(face_bases) if basis is not None)
+    selected_bases = tuple(face_bases[index] for index in selected_indices)
+    full_round = QuantumCircuit(NUM_QUBITS_PATCH_14_SITES, 7)
+    append_14_site_patch_superdense_stabilizer_measurement(
+        full_round, patch_qubits=list(range(14)), stabilizer_bits=list(range(6)),
+        d2_copy_flag_bit=6, add_barriers=False,
+    )
+    selected_round = QuantumCircuit(NUM_QUBITS_PATCH_14_SITES, 7)
+    stabilizer_count = sum(2 if basis == "BOTH" else 1 for basis in selected_bases)
+    partner_flag_count = sum(basis != "BOTH" for basis in selected_bases)
+    if selected_indices:
+        append_14_site_patch_superdense_stabilizer_measurement(
+            selected_round, patch_qubits=list(range(14)),
+            stabilizer_bits=list(range(stabilizer_count)),
+            bell_partner_flag_bits=(
+                list(range(stabilizer_count, stabilizer_count + partner_flag_count))
+                if partner_flag_count else None
+            ),
+            d2_copy_flag_bit=6 if 2 in selected_indices else None,
+            basis=selected_bases, stabilizer_indices=selected_indices, add_barriers=False,
+        )
+    assert two_qubit_depth(full_round) == 8
+    assert two_qubit_depth(selected_round) <= two_qubit_depth(full_round)
+    assert selected_round.count_ops().get("measure", 0) == (
+        2 * len(selected_indices) + (2 in selected_indices)
+    )
+
+
+@pytest.mark.parametrize("face_bases", tuple(product((None, "X", "Z", "BOTH"), repeat=3)))
+def test_14_site_superdense_subsets_prepare_and_read_each_bell_pair_once(face_bases) -> None:
+    """Every subset creates, uncomputes, and reads each active face's Bell pair once.
+
+    A single-basis face records its requested parity in ``stabilizer_bits`` and its
+    partner ancilla in ``bell_partner_flag_bits``; a dual-basis face records both
+    ancillas as stabilizers; an uninvolved face touches neither ancilla.
+    """
+    selected_indices = tuple(index for index, basis in enumerate(face_bases) if basis is not None)
+    selected_bases = tuple(face_bases[index] for index in selected_indices)
+    stabilizer_count = sum(2 if basis == "BOTH" else 1 for basis in selected_bases)
+    partner_flag_count = sum(basis != "BOTH" for basis in selected_bases)
+    circuit = QuantumCircuit(NUM_QUBITS_PATCH_14_SITES, 7)
+    if selected_indices:
+        append_14_site_patch_superdense_stabilizer_measurement(
+            circuit, patch_qubits=list(range(NUM_QUBITS_PATCH_14_SITES)),
+            stabilizer_bits=list(range(stabilizer_count)),
+            bell_partner_flag_bits=(
+                list(range(stabilizer_count, stabilizer_count + partner_flag_count))
+                if partner_flag_count else None
+            ),
+            d2_copy_flag_bit=6 if 2 in selected_indices else None,
+            basis=selected_bases, stabilizer_indices=selected_indices, add_barriers=False,
+        )
+
+    # The (X-ancilla, Z-ancilla) CX appears only in Bell preparation and uncompute,
+    # never in a coupling layer; roles follow the classical bit each readout targets.
+    reset_sites = [
+        circuit.find_bit(instruction.qubits[0]).index
+        for instruction in circuit.data if instruction.operation.name == "reset"
+    ]
+    ancilla_ancilla_cnots = [
+        tuple(circuit.find_bit(qubit).index for qubit in instruction.qubits)
+        for instruction in circuit.data if instruction.operation.name == "cx"
+    ]
+    role_by_measured_site: dict[int, str] = {}
+    measured_sites: list[int] = []
+    for instruction in circuit.data:
+        if instruction.operation.name != "measure":
+            continue
+        site = circuit.find_bit(instruction.qubits[0]).index
+        bit_index = circuit.find_bit(instruction.clbits[0]).index
+        measured_sites.append(site)
+        if bit_index < stabilizer_count:
+            role_by_measured_site[site] = "STABILIZER"
+        elif bit_index < stabilizer_count + partner_flag_count:
+            role_by_measured_site[site] = "BELL_PARTNER_FLAG"
+        else:
+            role_by_measured_site[site] = "D2_COPY_FLAG"
+    touched_sites = {
+        circuit.find_bit(qubit).index
+        for instruction in circuit.data
+        for qubit in instruction.qubits
+    }
+
+    for index, (x_ancilla, z_ancilla) in enumerate(PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS):
+        face_basis = face_bases[index]
+        if face_basis is None:
+            # Uninvolved face: no operation of any kind (reset, H, CX, or measure)
+            # touches either ancilla.
+            assert x_ancilla not in touched_sites and z_ancilla not in touched_sites
+            continue
+        # Bell pair created once (each ancilla reset once) and uncomputed once (its
+        # lone ancilla-ancilla CX appears once in preparation and once in uncompute).
+        assert reset_sites.count(x_ancilla) == reset_sites.count(z_ancilla) == 1
+        assert ancilla_ancilla_cnots.count((x_ancilla, z_ancilla)) == 2
+        # Each ancilla is measured exactly once, into its role's classical bits.
+        assert measured_sites.count(x_ancilla) == measured_sites.count(z_ancilla) == 1
+        if face_basis == "BOTH":
+            assert role_by_measured_site[x_ancilla] == role_by_measured_site[z_ancilla] == "STABILIZER"
+        elif face_basis == "X":
+            assert role_by_measured_site[x_ancilla] == "STABILIZER"
+            assert role_by_measured_site[z_ancilla] == "BELL_PARTNER_FLAG"
+        elif face_basis == "Z":
+            assert role_by_measured_site[x_ancilla] == "BELL_PARTNER_FLAG"
+            assert role_by_measured_site[z_ancilla] == "STABILIZER"
+        else:
+            raise AssertionError(f"Unexpected face basis {face_basis}.")
+
+
+@pytest.mark.parametrize("face_bases", tuple(product((None, "X", "Z", "BOTH"), repeat=3)))
+def test_14_site_superdense_subsets_read_d2_copy_only_with_face_0246(face_bases) -> None:
+    """The D2' copy flag (site 13) is read exactly once when face 0246 is selected, else untouched."""
+    selected_indices = tuple(index for index, basis in enumerate(face_bases) if basis is not None)
+    selected_bases = tuple(face_bases[index] for index in selected_indices)
+    stabilizer_count = sum(2 if basis == "BOTH" else 1 for basis in selected_bases)
+    partner_flag_count = sum(basis != "BOTH" for basis in selected_bases)
+    circuit = QuantumCircuit(NUM_QUBITS_PATCH_14_SITES, 7)
+    if selected_indices:
+        append_14_site_patch_superdense_stabilizer_measurement(
+            circuit, patch_qubits=list(range(NUM_QUBITS_PATCH_14_SITES)),
+            stabilizer_bits=list(range(stabilizer_count)),
+            bell_partner_flag_bits=(
+                list(range(stabilizer_count, stabilizer_count + partner_flag_count))
+                if partner_flag_count else None
+            ),
+            d2_copy_flag_bit=6 if 2 in selected_indices else None,
+            basis=selected_bases, stabilizer_indices=selected_indices, add_barriers=False,
+        )
+    touched_sites = {
+        circuit.find_bit(qubit).index
+        for instruction in circuit.data
+        for qubit in instruction.qubits
+    }
+    d2_copy_measurements = [
+        circuit.find_bit(instruction.clbits[0]).index
+        for instruction in circuit.data
+        if instruction.operation.name == "measure"
+        and circuit.find_bit(instruction.qubits[0]).index == 13
+    ]
+    if face_bases[2] is not None:
+        # Read exactly once into the D2-copy flag bit (6) for X-only, Z-only, and
+        # BOTH: the BOTH detour resets D2' between phases rather than measuring an
+        # intermediate flag.
+        assert d2_copy_measurements == [6]
+    else:
+        # Face 0246 absent: the D2' detour never runs, so site 13 is untouched.
+        assert 13 not in touched_sites

@@ -628,13 +628,15 @@ def append_14_site_patch_superdense_stabilizer_measurement(
     circuit: stim.Circuit,
     *,
     patch_qubits: Sequence[int] = DEFAULT_STIM_14_SITE_PATCH_QUBITS,
-    basis: PatchStabilizerBasis = "BOTH",
+    basis: PatchStabilizerBasis | Sequence[PatchStabilizerBasis] = "BOTH",
     stabilizer_indices: Sequence[int] | None = None,
     add_ticks: bool = True,
 ) -> None:
     """Append selected 14-site Steane checks using superdense Bell ancillas.
 
-    Each face uses one Bell pair to extract its X and Z parity simultaneously.
+    ``basis`` may specify one X/Z/BOTH value per selected face index. Mixed
+    selections share the same extraction schedule. Each face uses one Bell pair
+    to extract its X and Z parity simultaneously.
     The default record order is
     ``[X0145, Z0145, X0235, Z0235, X0246, Z0246]``. Each result receives a
     detector against its known ``+1`` value.
@@ -657,7 +659,8 @@ def append_14_site_patch_superdense_stabilizer_measurement(
     patch_qubits
         Fourteen Stim qubit indices ordered by the 14-site patch labels.
     basis
-        Stabilizer basis to measure (``"X"``, ``"Z"``, or ``"BOTH"``).
+        One basis (``"X"``, ``"Z"``, or ``"BOTH"``) for all selected faces,
+        or a sequence with one basis per selected face.
     stabilizer_indices
         Ordered subset of the three canonical stabilizers to measure. ``None``
         measures all three.

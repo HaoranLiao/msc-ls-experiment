@@ -26,6 +26,8 @@ from msc.steane_code.state_injection_common import (
     PATCH_11_SITE_HELPER_SITES,
     PATCH_14_SITE_DATA_SITES,
     PATCH_14_SITE_HELPER_SITES,
+    resolve_14_site_patch_stabilizer_checks,
+    select_14_site_patch_superdense_measurement_layers,
 )
 from msc.steane_code.state_injection_qiskit import (
     NUM_QUBITS_PATCH_11_SITES,
@@ -560,6 +562,7 @@ def append_14_site_patch_injection_and_cultivation(
     cultivation_rounds: int = 1,
     measure_cultivation_flags: bool = True,
     qed_bits: Sequence | None = None,
+    post_injection_qed_checks: Sequence[str] | None = None,
     add_barriers: bool = True,
 ) -> None:
     """Append 14-site injection, optional QED, and cultivation rounds.
@@ -567,9 +570,14 @@ def append_14_site_patch_injection_and_cultivation(
     ``encoder="abstract_routed"`` is the production default and accepts an
     arbitrary injected state. ``"abstract"`` selects the direct unrouted
     reference encoder, while ``"hirano"`` selects the specialized logical-Y
-    encoder. The optional QED record contains the six Steane stabilizers
-    followed by the terminal D2' copy-detour flag; all seven are postselection
-    data and no recovery is applied.
+    encoder. When ``add_qed_round`` is true, ``post_injection_qed_checks``
+    selects the QED checks: ``None`` measures all six (six stabilizers plus the
+    terminal D2' copy-detour flag), ``()`` skips extraction, and names such as
+    ``"X_0145"`` select individual checks. All selected faces share one
+    superdense schedule; single-basis faces retain their Bell-partner flags, and
+    face 0246 retains its D2-copy flag. ``qed_bits`` must match the selected
+    readout count in readout order. Every QED outcome is postselection data and
+    no recovery is applied.
 
     ``encoder_bits`` receives the encoder-flag postselection outcomes; pass
     ``None`` to skip those measurements entirely, in which case the classical
@@ -595,13 +603,6 @@ def append_14_site_patch_injection_and_cultivation(
         raise ValueError(
             f"cultivation_bits must contain exactly one {cultivation_measurement_count}-bit "
             "sequence per cultivation round."
-        )
-    if add_qed_round and (
-        qed_bits is None or len(qed_bits) != PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND
-    ):
-        raise ValueError(
-            "qed_bits must contain exactly "
-            f"{PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND} bits when add_qed_round is true."
         )
 
     encoder_flags = list(encoder_bits) if encoder_bits is not None and encoder_flag_count else None
@@ -634,15 +635,37 @@ def append_14_site_patch_injection_and_cultivation(
         circuit.barrier(label="state injection")
 
     if add_qed_round:
-        assert qed_bits is not None
-        append_14_site_patch_superdense_stabilizer_measurement(
-            circuit,
-            patch_qubits=patch_qubits,
-            stabilizer_bits=qed_bits[:STEANE_QED_MEASUREMENTS_PER_ROUND],
-            d2_copy_flag_bit=qed_bits[-1],
-            basis="BOTH",
-            add_barriers=add_barriers,
+        stabilizer_bases, stabilizer_indices = resolve_14_site_patch_stabilizer_checks(
+            post_injection_qed_checks
         )
+        _, readouts = (
+            select_14_site_patch_superdense_measurement_layers(stabilizer_bases, stabilizer_indices)
+            if stabilizer_indices
+            else ((), ())
+        )
+        if qed_bits is None or len(qed_bits) != len(readouts):
+            raise ValueError(
+                f"qed_bits must contain exactly {len(readouts)} bits for the selected "
+                "post-injection QED checks."
+            )
+        if stabilizer_indices:
+            # Route the flat readout-order qed_bits into each superdense role group.
+            roles = [role for _, _, role in readouts]
+            qed_bits = list(qed_bits)
+            append_14_site_patch_superdense_stabilizer_measurement(
+                circuit,
+                patch_qubits=patch_qubits,
+                stabilizer_bits=[bit for bit, role in zip(qed_bits, roles) if role == "STABILIZER"],
+                bell_partner_flag_bits=(
+                    [bit for bit, role in zip(qed_bits, roles) if role == "BELL_PARTNER_FLAG"] or None
+                ),
+                d2_copy_flag_bit=next(
+                    (bit for bit, role in zip(qed_bits, roles) if role == "D2_COPY_FLAG"), None
+                ),
+                basis=stabilizer_bases,
+                stabilizer_indices=stabilizer_indices,
+                add_barriers=add_barriers,
+            )
         if add_barriers:
             circuit.barrier(label="post-injection QED")
 

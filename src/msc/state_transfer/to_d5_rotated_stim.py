@@ -8,12 +8,12 @@ Public circuit paths::
         │   └── post_transfer_stim.append_rotated_full_stabilizer_rounds(...)
         └── d5.append_full_data_readout(...)
 
-    end-to-end logical-Y experiment
+    end-to-end logical-Pauli experiment
     ├── append_post_transfer_stabilization(...)
     ├── apply noise through that stabilization phase
-    └── append_ideal_y_verification(...)
+    └── append_ideal_logical_verification(...)
         ├── post_transfer_stim.append_rotated_full_stabilizer_rounds(...)
-        └── destructive logical-Y measurement
+        └── destructive logical-Pauli measurement
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from msc.rotated_surface_code.post_transfer.post_transfer_stim import (
 from msc.state_transfer import analysis_stim as analysis
 from msc.state_transfer import common
 from msc.state_transfer import helper_stim as helper
+from msc.steane_code.magic_state_cultivation_stim import ProjectionAxis
 from msc.steane_code.state_injection_stim import StimInjectedStateName
 from msc.utils.circuit_common import resolve_logical_measurement_terms
 from msc.utils.normalize import normalize_pauli_char
@@ -74,18 +75,21 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
     *,
     patch_sites: common.SteanePatchSites = 14,
     injected_state: StimInjectedStateName = "S",
+    projection_axis: ProjectionAxis = "Y",
     include_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     measure_cultivation_flags: bool = False,
+    post_injection_qed_checks: Sequence[str] | None = None,
     merge_schedule: common.MergeSchedule = "hirano",
     surface_readout_basis: common.SurfaceReadoutBasis | None = None,
     full_post_selection: bool = False,
     add_ticks: bool = True,
 ) -> stim.Circuit:
-    """Build the detector-annotated d=5 transfer using Stim's Clifford proxy.
+    """Build the detector-annotated d=5 transfer for a logical-Pauli projection.
 
-    Stim replaces logical-H_XY cultivation with logical-Y cultivation and the
-    physical T input with ``S|+>``. If ``surface_readout_basis`` is given,
+    Y replaces logical-H_XY cultivation with logical-Y cultivation and the
+    physical T input with ``S|+>``; X and Z are direct diagnostic projections.
+    If ``surface_readout_basis`` is given,
     ``full_post_selection=False`` appends five complete surface rounds before
     full-data readout; ``True`` appends one. ``surface_readout_basis=None`` ends
     at ``m_ab``. Hirano's full-data boundary supports X or Z readout, not Y.
@@ -98,23 +102,23 @@ def build_steane_to_rotated_d5_lattice_surgery_circuit(
         TRANSFER_SPEC,
         patch_sites=patch_sites,
         injected_state=injected_state,
+        projection_axis=projection_axis,
         include_cultivation=include_cultivation,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
+        post_injection_qed_checks=post_injection_qed_checks,
         merge_schedule=merge_schedule,
         add_ticks=add_ticks,
     )
     if surface_readout_basis is None:
         return circuit
-    surface_readout_basis = normalize_pauli_char(surface_readout_basis)
-    if surface_readout_basis == "Y":
-        raise ValueError("Hirano full-data readout basis must be X or Z.")
     transfer_layout = helper.transfer_measurement_layout(
         TRANSFER_SPEC,
         patch_sites=patch_sites,
         include_cultivation=include_cultivation,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
+        post_injection_qed_checks=post_injection_qed_checks,
         merge_schedule=merge_schedule,
     )
     append_post_transfer_and_readout(
@@ -155,8 +159,8 @@ def append_post_transfer_and_readout(
 
     Stabilization is a separate protocol phase because the end-to-end
     experiment applies noise through those rounds and then appends a noiseless
-    logical-Y verification. This X/Z path continues directly from the shared
-    stabilization boundary to destructive readout.
+    logical-Pauli verification. This X/Z path continues directly from the
+    shared stabilization boundary to destructive readout.
     """
     # Select the post-transfer branch and append its complete stabilizer rounds.
     readout_basis = normalize_pauli_char(readout_basis)
@@ -338,28 +342,32 @@ def append_post_transfer_stabilization(
     return post_transfer_layout
 
 
-def append_ideal_y_verification(
+def append_ideal_logical_verification(
     circuit: stim.Circuit,
     *,
     post_transfer_layout: helper.TransferMeasurementLayout,
     stabilizer_rounds: int,
+    basis: common.SurfaceReadoutBasis,
     add_ticks: bool = True,
 ) -> helper.TransferMeasurementLayout:
-    """Append an ideal closing syndrome round and logical-Y verification.
+    """Append an ideal closing syndrome round and logical-Pauli verification.
 
     This follows Hirano's ``SteanePlusSurfaceCode.run``: after the noisy
     stabilization and epilogue rounds, the authors enter ``SuppressNoise`` and
     perform one complete syndrome-extraction round before the perfect logical
     Pauli measurement. The ideal round compares against the final noisy round,
     turning residual output faults into terminal X- and Z-detector events. The
-    logical-Y measurement then supplies the observable; by itself it would not
+    logical measurement then supplies the observable; by itself it would not
     close both stabilizer histories.
 
     Thus the entire suffix is diagnostic, not another noisy QEC phase. It
-    measures the logical-Y eigenvalue of Stim's cultivated ``S|+>`` proxy.
+    measures the requested logical X, Y, or Z eigenvalue.
     """
     if stabilizer_rounds <= 0:
         raise ValueError("stabilizer_rounds must be positive.")
+    basis = normalize_pauli_char(basis)
+    if basis not in ("X", "Y", "Z"):
+        raise ValueError("verification basis must be X, Y, or Z.")
     qubits = helper.transfer_qubits(
         TRANSFER_SPEC,
         patch_sites=post_transfer_layout.patch_sites,
@@ -403,22 +411,22 @@ def append_ideal_y_verification(
     measurement_labels["surface_verify_x"] = TRANSFER_SPEC.x_labels
     measurement_positions["surface_verify_x"] = verification_x_rounds[0]
 
-    # Destructively measure logical Y after the closing syndrome round.
+    # Destructively measure the logical Pauli after the closing syndrome round.
     first_logical_measurement_position = circuit.num_measurements
     TRANSFER_SPEC.surface_code_operations.append_logical_measurement(
         circuit,
-        "Y",
+        basis,
         surface_qubits=surface_qubits,
         destructive=True,
     )
     if add_ticks:
         circuit.append("TICK", [])
     measurement_terms, _ = resolve_logical_measurement_terms(
-        "Y",
+        basis,
         logical_x_support=TRANSFER_SPEC.logical_x,
         logical_z_support=TRANSFER_SPEC.logical_z,
     )
-    logical_family = "surface_logical_y"
+    logical_family = f"surface_logical_{basis.lower()}"
     measurement_labels[logical_family] = tuple(label for label, _ in measurement_terms)
     measurement_positions[logical_family] = tuple(
         range(first_logical_measurement_position, circuit.num_measurements)
@@ -433,10 +441,10 @@ def append_ideal_y_verification(
     helper.append_transfer_logical_observable(
         circuit,
         layout=verification_layout,
-        basis="Y",
+        basis=basis,
     )
     if circuit.num_measurements != verification_layout.num_measurements:
-        raise RuntimeError("logical-Y verification layout does not match the circuit.")
+        raise RuntimeError("logical verification layout does not match the circuit.")
     return verification_layout
 
 
@@ -452,6 +460,7 @@ def parse_transfer_measurements(
     include_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     measure_cultivation_flags: bool = False,
+    post_injection_qed_checks: Sequence[str] | None = None,
     merge_schedule: common.MergeSchedule = "hirano",
 ) -> dict[str, object]:
     """Parse a circuit ending at the ``m_ab`` transfer boundary."""
@@ -462,5 +471,6 @@ def parse_transfer_measurements(
         include_cultivation=include_cultivation,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
+        post_injection_qed_checks=post_injection_qed_checks,
         merge_schedule=merge_schedule,
     )

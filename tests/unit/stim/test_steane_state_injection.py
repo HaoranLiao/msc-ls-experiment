@@ -7,7 +7,7 @@ transpilation have no Stim equivalent.
 
 from __future__ import annotations
 
-from itertools import combinations
+from itertools import combinations, product
 from typing import NamedTuple
 
 import numpy as np
@@ -29,11 +29,13 @@ from msc.steane_code.state_injection_common import (
     PATCH_11_SITE_Z_STABILIZERS,
     PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES,
     PATCH_14_SITE_COORDS,
+    select_14_site_patch_superdense_measurement_layers,
     PATCH_14_SITE_DATA_SITES,
     PATCH_14_SITE_HELPER_SITES,
     PATCH_14_SITE_HIRANO_ENCODER_COORDS,
     PATCH_14_SITE_LOGICAL_X_REPRESENTATIVES,
     PATCH_14_SITE_LOGICAL_Z_REPRESENTATIVES,
+    PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS,
     PATCH_14_SITE_SUPERDENSE_STABILIZER_MEASUREMENT_LAYERS,
     PATCH_14_SITE_X_STABILIZERS,
     PATCH_14_SITE_Z_STABILIZERS,
@@ -1074,6 +1076,11 @@ def test_patch_logical_measurement_can_include_stim_observable(
     assert not observable_flips.any()
 
 
+# ----------------------------------------------------
+# Superdense stabilizer measurement for 14-site patch
+# ----------------------------------------------------
+
+
 def _build_14_site_superdense_circuit(
     encoder: str,
     state: StimInjectedStateName = "S",
@@ -1178,3 +1185,110 @@ def test_14_site_superdense_round_leaves_data_qubit_2_restored(
         simulator.peek_observable_expectation(_pauli_string((13,), "X", NUM_QUBITS_PATCH_14_SITES))
         == 1
     )
+
+
+@pytest.mark.parametrize("face_bases", tuple(product((None, "X", "Z", "BOTH"), repeat=3)))
+def test_14_site_superdense_subsets_do_not_exceed_full_round_cx_depth(face_bases) -> None:
+    """Exhaust all 64 subsets, including mixed faces and the empty selection."""
+    selected_indices = tuple(index for index, basis in enumerate(face_bases) if basis is not None)
+    selected_bases = tuple(face_bases[index] for index in selected_indices)
+    full_round = stim.Circuit()
+    append_14_site_patch_superdense_stabilizer_measurement(full_round)
+    selected_round = stim.Circuit()
+    if selected_indices:
+        append_14_site_patch_superdense_stabilizer_measurement(
+            selected_round, basis=selected_bases, stabilizer_indices=selected_indices,
+        )
+
+    cx_depths = []
+    for circuit in (full_round, selected_round):
+        depth_by_site = [0] * NUM_QUBITS_PATCH_14_SITES
+        for instruction in circuit:
+            if instruction.name == "CX":
+                targets = instruction.targets_copy()
+                for control, target in zip(targets[::2], targets[1::2], strict=True):
+                    depth_by_site[control.value] = depth_by_site[target.value] = (
+                        1 + max(depth_by_site[control.value], depth_by_site[target.value])
+                    )
+        cx_depths.append(max(depth_by_site))
+    assert cx_depths[0] == 8
+    assert cx_depths[1] <= cx_depths[0]
+    assert selected_round.num_measurements == 2 * len(selected_indices) + (2 in selected_indices)
+
+
+@pytest.mark.parametrize("face_bases", tuple(product((None, "X", "Z", "BOTH"), repeat=3)))
+def test_14_site_superdense_subsets_prepare_and_read_each_bell_pair_once(face_bases) -> None:
+    """Every subset creates, uncomputes, and reads each active face's Bell pair once.
+
+    An uninvolved face touches neither ancilla. Stim records the readouts
+    positionally under identical known-zero detectors, so the STABILIZER vs
+    BELL_PARTNER_FLAG role is not visible in the built circuit; the Qiskit
+    parallel checks it through the classical-bit routing.
+    """
+    selected_indices = tuple(index for index, basis in enumerate(face_bases) if basis is not None)
+    selected_bases = tuple(face_bases[index] for index in selected_indices)
+    circuit = stim.Circuit()
+    if selected_indices:
+        append_14_site_patch_superdense_stabilizer_measurement(
+            circuit, basis=selected_bases, stabilizer_indices=selected_indices,
+        )
+
+    # The (X-ancilla, Z-ancilla) CX appears only in Bell preparation and Bell
+    # uncompute, never in a coupling layer.
+    reset_sites: list[int] = []
+    ancilla_ancilla_cnots: list[tuple[int, int]] = []
+    measured_sites: list[int] = []
+    for instruction in circuit:
+        if instruction.name in ("R", "RX"):
+            reset_sites.extend(target.qubit_value for target in instruction.targets_copy())
+        elif instruction.name == "CX":
+            targets = instruction.targets_copy()
+            ancilla_ancilla_cnots.extend(
+                (control.qubit_value, target.qubit_value)
+                for control, target in zip(targets[::2], targets[1::2], strict=True)
+            )
+        elif instruction.name in ("M", "MX"):
+            measured_sites.extend(target.qubit_value for target in instruction.targets_copy())
+
+    for index, (x_ancilla, z_ancilla) in enumerate(PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS):
+        face_basis = face_bases[index]
+        if face_basis is None:
+            # Uninvolved face: no preparation, coupling, uncompute, or readout.
+            assert x_ancilla not in reset_sites and z_ancilla not in reset_sites
+            assert all(x_ancilla not in pair and z_ancilla not in pair for pair in ancilla_ancilla_cnots)
+            assert x_ancilla not in measured_sites and z_ancilla not in measured_sites
+            continue
+        # Bell pair created once (each ancilla reset once) and uncomputed once (its
+        # lone ancilla-ancilla CX appears once in preparation and once in uncompute).
+        assert reset_sites.count(x_ancilla) == reset_sites.count(z_ancilla) == 1
+        assert ancilla_ancilla_cnots.count((x_ancilla, z_ancilla)) == 2
+        # Each ancilla is measured exactly once, in its native basis.
+        assert measured_sites.count(x_ancilla) == measured_sites.count(z_ancilla) == 1
+
+
+@pytest.mark.parametrize("face_bases", tuple(product((None, "X", "Z", "BOTH"), repeat=3)))
+def test_14_site_superdense_subsets_read_d2_copy_only_with_face_0246(face_bases) -> None:
+    """The D2' copy flag (site 13) is read exactly once when face 0246 is selected, else untouched."""
+    selected_indices = tuple(index for index, basis in enumerate(face_bases) if basis is not None)
+    selected_bases = tuple(face_bases[index] for index in selected_indices)
+    layers, readouts = (
+        select_14_site_patch_superdense_measurement_layers(selected_bases, selected_indices)
+        if selected_indices
+        else ((), ())
+    )
+    scheduled_sites = {
+        site
+        for layer in layers
+        for _, operands in layer
+        for operand in operands
+        for site in (operand if isinstance(operand, tuple) else (operand,))
+    }
+    d2_copy_readouts = [ancilla for _, ancilla, role in readouts if role == "D2_COPY_FLAG"]
+    if face_bases[2] is not None:
+        # Read exactly once for X-only, Z-only, and BOTH: the BOTH detour resets D2'
+        # between the Z and X phases rather than measuring an intermediate flag.
+        assert d2_copy_readouts == [13]
+    else:
+        # Face 0246 absent: the D2' detour never runs, so site 13 is untouched.
+        assert 13 not in scheduled_sites
+        assert not d2_copy_readouts

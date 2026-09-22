@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from itertools import zip_longest
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
@@ -19,6 +20,7 @@ def build_lattice_surgery_circuit(
     include_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     measure_cultivation_flags: bool = False,
+    post_injection_qed_checks: Sequence[str] | None = None,
     add_barriers: bool = True,
 ) -> QuantumCircuit:
     """Build injection -> QED/cultivation -> three-round transfer -> ``m_ab``.
@@ -109,6 +111,7 @@ def build_lattice_surgery_circuit(
         surface_readout_basis=None,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
+        post_injection_qed_checks=post_injection_qed_checks,
     )
     cregs = {
         name: ClassicalRegister(len(labels), name) for name, labels in measurement_labels.items()
@@ -117,6 +120,8 @@ def build_lattice_surgery_circuit(
 
     # 1. Accepted Steane input: injection -> QED -> optional magic-state cultivation.
     if patch_sites == 11:
+        if post_injection_qed_checks is not None:
+            raise ValueError("post_injection_qed_checks subsetting requires the 14-site patch.")
         cultivation.append_11_site_patch_injection_and_cultivation(
             circuit,
             patch_qubits=steane_patch,
@@ -140,6 +145,7 @@ def build_lattice_surgery_circuit(
             encoder="abstract_routed",
             encoder_bits=list(cregs["enc_flags"]) if measure_encoder_flags else None,
             qed_bits=list(cregs["steane_qed"]),
+            post_injection_qed_checks=post_injection_qed_checks,
             cultivation_bits=[list(cregs["cult"])] if include_cultivation else [],
             cultivation_rounds=int(include_cultivation),
             measure_cultivation_flags=measure_cultivation_flags,
@@ -240,26 +246,34 @@ def build_lattice_surgery_circuit(
                     add_barriers=False,
                 )
         elif patch_sites == 14:
-            for group in common.group_14_site_superdense_verification_checks(verification_checks):
+            stabilizer_bases, stabilizer_indices = common.resolve_14_site_patch_stabilizer_checks(
+                tuple(f"{name[0]}_{name[1:]}" for name in verification_checks)
+            )
+            if stabilizer_indices:
+                checks_in_readout_order = sorted(
+                    verification_checks,
+                    key=lambda name: (patch_spec.merge_verification_stabilizer_indices[name], name[0]),
+                )
                 measure_d2_copy_flag = (
                     patch_spec.merge_verification_stabilizer_indices["X0246"]
-                    in group.stabilizer_indices
+                    in stabilizer_indices
                 )
                 steane.append_14_site_patch_superdense_stabilizer_measurement(
                     circuit,
                     patch_qubits=steane_patch,
                     stabilizer_bits=[
                         verification_bit_by_label[f"round{round_index + 1}_{check_name}"]
-                        for check_name in group.check_names_in_readout_order
+                        for check_name in checks_in_readout_order
                     ],
                     bell_partner_flag_bits=(
                         [
                             bell_partner_flag_bit_by_label[
                                 f"round{round_index + 1}_{check_name}_bell_partner_flag"
                             ]
-                            for check_name in group.check_names_in_readout_order
+                            for check_name in checks_in_readout_order
+                            if sum(name[1:] == check_name[1:] for name in verification_checks) == 1
                         ]
-                        if group.basis != "BOTH"
+                        if any(basis != "BOTH" for basis in stabilizer_bases)
                         else None
                     ),
                     d2_copy_flag_bit=(
@@ -267,8 +281,8 @@ def build_lattice_surgery_circuit(
                         if measure_d2_copy_flag
                         else None
                     ),
-                    basis=group.basis,
-                    stabilizer_indices=group.stabilizer_indices,
+                    basis=stabilizer_bases,
+                    stabilizer_indices=stabilizer_indices,
                     add_barriers=False,
                 )
         else:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, assert_never
 
 # =============================================================================
 # Shared types and stabilizer selection
@@ -21,7 +21,7 @@ PatchEncoderGateName = Literal[
 PatchStabilizerBasis = Literal["X", "Z", "BOTH"]
 
 
-def resolve_patch_stabilizer_indices(
+def _resolve_patch_stabilizer_indices(
     stabilizer_indices: Sequence[int] | None,
 ) -> tuple[int, ...]:
     """Validate and return an ordered selection of patch stabilizer indices."""
@@ -291,7 +291,7 @@ def select_11_site_patch_stabilizer_measurement_layers(
     basis; face 0345 additionally uses routing ancilla 1 (prepared in the
     opposite basis and left unmeasured).
     """
-    selected_indices = resolve_patch_stabilizer_indices(stabilizer_indices)
+    selected_indices = _resolve_patch_stabilizer_indices(stabilizer_indices)
     selected_schedules = tuple(
         PATCH_11_SITE_Z_STABILIZER_CNOT_LAYERS[index] for index in selected_indices
     )
@@ -614,62 +614,76 @@ PATCH_14_SITE_SUPERDENSE_STABILIZER_MEASUREMENT_LAYERS = (
 
 
 def select_14_site_patch_superdense_measurement_layers(
-    basis: PatchStabilizerBasis,
+    basis: PatchStabilizerBasis | Sequence[PatchStabilizerBasis],
     stabilizer_indices: Sequence[int] | None,
 ):
     """Select superdense layers and label every ancilla readout by its role.
 
-    Unselected faces and opposite-basis coupling phases are removed. For a
-    single-basis extraction, the unused Bell-ancilla result is labeled
+    ``basis`` is one basis for every selected face, or one basis per selected
+    index. Mixed X/Z/BOTH faces share one extraction schedule, not sequential
+    rounds. Unselected faces and opposite-basis coupling phases are removed. For
+    a single-basis extraction, the unused Bell-ancilla result is labeled
     ``BELL_PARTNER_FLAG`` instead of ``STABILIZER``.
 
-    Face 0246 uses a temporary repetition encoding of D2 into D2' (site 13).
-    Its final known-state measurement is labeled ``D2_COPY_FLAG``: Z after a
-    Z-only detour and X otherwise. ``"BOTH"`` omits the intermediate Z flag
-    because D2' is immediately reset for the X detour.
+    Face 0246 uses a temporary repetition encoding of D2 into D2' (site 13) to
+    reach its distant ancilla. The Z detour runs before the X detour, and each
+    copies D2 into D2', couples through it, then uncomputes it. D2' is never
+    measured between detours: a ``"BOTH"`` extraction resets and reuses D2' for
+    the X detour instead of reading an intermediate flag, so even when both
+    parities are extracted D2' is measured only once, at the very end, as a
+    single ``D2_COPY_FLAG`` on its final known state: Z after a Z-only detour and
+    X otherwise (X-only or ``"BOTH"``, whose last detour is X).
     """
-    if basis not in ("X", "Z", "BOTH"):
-        raise ValueError("basis must be 'X', 'Z', or 'BOTH'.")
-    selected_indices = resolve_patch_stabilizer_indices(stabilizer_indices)
-    measure_d2_copy_flag = 2 in selected_indices
-    measure_x_stabilizers = basis in ("X", "BOTH")
-    measure_z_stabilizers = basis in ("Z", "BOTH")
+    selected_indices = _resolve_patch_stabilizer_indices(stabilizer_indices)
+    selected_bases = (basis,) * len(selected_indices) if isinstance(basis, str) else tuple(basis)
+    if len(selected_bases) != len(selected_indices) or any(
+        face_basis not in ("X", "Z", "BOTH") for face_basis in selected_bases
+    ):
+        raise ValueError("basis must select X, Z, or BOTH for each selected face.")
+    basis_by_face = dict(zip(selected_indices, selected_bases, strict=True))
     selected_ancilla_sites = {
         site for index in selected_indices for site in PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS[index]
     }
-    if measure_d2_copy_flag:
-        selected_ancilla_sites.add(13)
-    active_layers: list[tuple[tuple[str, tuple], ...]] = list(_SUPERDENSE_BELL_PREPARATION_LAYERS)
-
-    if measure_z_stabilizers:
-        if measure_d2_copy_flag:
-            active_layers.extend(_SUPERDENSE_D2_Z_COPY_LAYERS)
-        active_layers.extend(_SUPERDENSE_Z_COUPLING_LAYERS)
-        if measure_d2_copy_flag:
-            active_layers.append(_SUPERDENSE_D2_Z_UNCOMPUTE_LAYER)
-
-    if measure_x_stabilizers:
-        if measure_d2_copy_flag:
-            active_layers.extend(_SUPERDENSE_D2_X_COPY_LAYERS)
-        active_layers.extend(_SUPERDENSE_X_COUPLING_LAYERS)
-        if measure_d2_copy_flag:
-            active_layers.append(_SUPERDENSE_D2_X_UNCOMPUTE_LAYER)
-
-    active_layers.append(_SUPERDENSE_BELL_UNCOMPUTE_LAYER)
+    # Filter each parity phase separately, while preparing each face's Bell pair once.
+    active_layers = [(layer, selected_ancilla_sites) for layer in _SUPERDENSE_BELL_PREPARATION_LAYERS]
+    for parity, copy_layers, coupling_layers, uncompute_layer in (
+        (
+            "Z", _SUPERDENSE_D2_Z_COPY_LAYERS, _SUPERDENSE_Z_COUPLING_LAYERS,
+            _SUPERDENSE_D2_Z_UNCOMPUTE_LAYER,
+        ),
+        (
+            "X", _SUPERDENSE_D2_X_COPY_LAYERS, _SUPERDENSE_X_COUPLING_LAYERS,
+            _SUPERDENSE_D2_X_UNCOMPUTE_LAYER,
+        ),
+    ):
+        phase_ancilla_sites = {
+            site
+            for index, face_basis in basis_by_face.items()
+            if face_basis in (parity, "BOTH")
+            for site in PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS[index]
+        }
+        copy_d2 = basis_by_face.get(2) in (parity, "BOTH")
+        if copy_d2:
+            phase_ancilla_sites.add(13)
+            active_layers.extend((layer, phase_ancilla_sites) for layer in copy_layers)
+        active_layers.extend((layer, phase_ancilla_sites) for layer in coupling_layers)
+        if copy_d2:
+            active_layers.append((uncompute_layer, phase_ancilla_sites))
+    active_layers.append((_SUPERDENSE_BELL_UNCOMPUTE_LAYER, selected_ancilla_sites))
 
     selected_layers = []
-    for tick_layer in active_layers:
+    for tick_layer, active_ancilla_sites in active_layers:
         selected_operations = []
         for gate_name, operands in tick_layer:
             if gate_name in ("RESET_X", "RESET_Z"):
                 selected_operands = tuple(
-                    site for site in operands if site in selected_ancilla_sites
+                    site for site in operands if site in active_ancilla_sites
                 )
             elif gate_name == "CX":
                 selected_operands = tuple(
                     pair
                     for pair in operands
-                    if pair[0] in selected_ancilla_sites or pair[1] in selected_ancilla_sites
+                    if pair[0] in active_ancilla_sites or pair[1] in active_ancilla_sites
                 )
             else:
                 raise ValueError(f"Unexpected operation before readout: {gate_name}.")
@@ -678,35 +692,25 @@ def select_14_site_patch_superdense_measurement_layers(
         if selected_operations:
             selected_layers.append(tuple(selected_operations))
 
-    if basis == "X":
-        x_readout_role = "STABILIZER"
-        z_readout_role = "BELL_PARTNER_FLAG"
-    elif basis == "Z":
-        x_readout_role = "BELL_PARTNER_FLAG"
-        z_readout_role = "STABILIZER"
-    elif basis == "BOTH":
-        x_readout_role = "STABILIZER"
-        z_readout_role = "STABILIZER"
-    else:  # pragma: no cover - basis is validated above.
-        raise ValueError(f"Unsupported stabilizer basis: {basis!r}.")
-
     readouts = []
-    for index in selected_indices:
-        x_ancilla, z_ancilla = PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS[index]
-        readouts.append(("X", x_ancilla, x_readout_role))
-        readouts.append(("Z", z_ancilla, z_readout_role))
-    if measure_d2_copy_flag:
-        d2_copy_basis = "Z" if basis == "Z" else "X"
+    for index, face_basis in basis_by_face.items():
+        for readout_basis, ancilla in zip(
+            ("X", "Z"), PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS[index], strict=True
+        ):
+            readout_role = "STABILIZER" if face_basis in (readout_basis, "BOTH") else "BELL_PARTNER_FLAG"
+            readouts.append((readout_basis, ancilla, readout_role))
+    if 2 in basis_by_face:
+        d2_copy_basis = "Z" if basis_by_face[2] == "Z" else "X"
         readouts.append((d2_copy_basis, 13, "D2_COPY_FLAG"))
     return tuple(selected_layers), tuple(readouts)
 
 
 # =============================================================================
-# Shared post-injection QED labels
+# Shared post-injection QED labels / More generally, shared stabilizer labels
 # =============================================================================
 
 
-def post_injection_qed_stabilizer_labels(num_patch_qubits: int) -> tuple[str, ...]:
+def patch_stabilizer_labels(num_patch_qubits: int) -> tuple[str, ...]:
     """Return the six post-injection QED stabilizer labels for a Steane patch.
 
     Cultivation and state transfer measure these checks between injection and
@@ -737,3 +741,58 @@ def post_injection_qed_stabilizer_labels(num_patch_qubits: int) -> tuple[str, ..
         f"{basis}_{''.join(str(site) for site in support)}"
         for basis, support in labeled_stabilizers
     )
+
+
+PATCH_14_SITE_STABILIZER_CHECK_NAMES = patch_stabilizer_labels(NUM_QUBITS_PATCH_14_SITES)
+
+
+def resolve_14_site_patch_stabilizer_checks(
+    check_names: Sequence[str] | None,
+) -> tuple[tuple[PatchStabilizerBasis, ...], tuple[int, ...]]:
+    """Parse named post-injection QED checks into per-face bases and indices.
+
+    The returned ``(bases, indices)`` feed ``select_14_site_patch_superdense_
+    measurement_layers``; unlike ``_resolve_patch_stabilizer_indices``, which only
+    normalizes an integer face selection, this maps ``PATCH_14_SITE_QED_CHECK_NAMES``
+    into that face selection plus its per-face basis. Bases correspond to selected
+    face indices. Same-face X/Z requests use BOTH; a single-basis face shares the
+    schedule and reads its Bell partner as a flag.
+    """
+    if check_names is None:
+        check_names = PATCH_14_SITE_STABILIZER_CHECK_NAMES
+    if len(set(check_names)) != len(check_names) or any(
+            name not in PATCH_14_SITE_STABILIZER_CHECK_NAMES for name in check_names
+    ):
+        raise ValueError(f"QED checks must be distinct names from {PATCH_14_SITE_STABILIZER_CHECK_NAMES}.")
+    bases_by_face: dict[int, set[str]] = {}
+    for name in check_names:
+        bases_by_face.setdefault(PATCH_14_SITE_STABILIZER_CHECK_NAMES.index(name) // 2, set()).add(name[0])
+    selected_indices = tuple(sorted(bases_by_face))
+    selected_bases = tuple(
+        "BOTH" if bases_by_face[index] == {"X", "Z"} else next(iter(bases_by_face[index]))
+        for index in selected_indices
+    )
+    return selected_bases, selected_indices
+
+
+PostInjectionQedChecks = Literal["minimal", "full"]
+
+
+def resolve_post_injection_qed_checks(
+    post_injection_qed_checks: PostInjectionQedChecks,
+) -> tuple[str, ...] | None:
+    """Map a named post-injection QED preset to concrete 14-site check names.
+
+    ``"full"`` keeps all six Steane stabilizers (``None`` downstream, which the
+    11-site patch also accepts). ``"minimal"`` keeps only the distance-three
+    subset Z_0145, X_0235, Z_0235: checking just these on the fully noisy MSC-LS
+    path preserves the certified fault distance of every X/Z/Y probe (verified by
+    the 14-site end-to-end Stim fault-distance scan), and it requires the 14-site
+    patch.
+    """
+    if post_injection_qed_checks == "minimal":
+        return ("Z_0145", "X_0235", "Z_0235")
+    elif post_injection_qed_checks == "full":
+        return None
+    else:
+        assert_never(post_injection_qed_checks)

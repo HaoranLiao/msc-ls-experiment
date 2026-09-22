@@ -1,16 +1,17 @@
-"""End-to-end Stim LER and success-rate analysis for 14-site MSC-LS.
+"""End-to-end Stim LER and direct Pauli-probe circuits for 14-site MSC-LS.
 
-Stim uses ``S|+>`` injection and logical-Y cultivation as the Clifford proxy
-for the physical ``T|+>`` and logical-H_XY protocol. Uniform operation noise
-covers injection, post-injection QED, cultivation, lattice surgery, and five
-post-transfer d=5 surface-code rounds. An ideal diagnostic suffix closes the
-surface syndrome history and reads logical Y.
+The LER analysis uses ``S|+>`` injection and logical-Y cultivation as the
+Clifford proxy for the physical ``T|+>`` and logical-H_XY protocol. The shared
+circuit builder also supports direct X/``|+>`` and Z/``|0>`` diagnostic probes.
+Uniform operation noise covers injection, post-injection QED, projection,
+lattice surgery, and the requested post-transfer d=5 surface-code rounds. An
+ideal suffix closes the surface syndrome history and reads the probed Pauli.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 import numpy as np
 import stim
@@ -23,6 +24,7 @@ from msc.noise.fault_tolerance_stim import LogicalErrorEstimate
 from msc.state_transfer import common
 from msc.state_transfer import helper_stim as transfer_helper
 from msc.state_transfer import to_d5_rotated_stim as transfer
+from msc.utils.normalize import normalize_pauli_char
 
 POST_TRANSFER_STABILIZATION_ROUNDS = transfer.TRANSFER_SPEC.distance
 
@@ -30,34 +32,54 @@ POST_TRANSFER_STABILIZATION_ROUNDS = transfer.TRANSFER_SPEC.distance
 def build_end_to_end_distillation_circuit(
     physical_error_probability: float,
     *,
+    probe_axis: common.SurfaceReadoutBasis = "Y",
     patch_sites: common.SteanePatchSites = 14,
     merge_schedule: common.MergeSchedule = "hirano",
     measure_encoder_flags: bool = False,
     measure_cultivation_flags: bool = False,
+    post_injection_qed_checks: Sequence[str] | None = None,
+    post_transfer_stabilization_rounds: int = POST_TRANSFER_STABILIZATION_ROUNDS,
 ) -> tuple[
     stim.Circuit,
     stim.Circuit,
     transfer_helper.TransferMeasurementLayout,
 ]:
-    """Build sampling, decoder-model, and layout objects for end-to-end MSC-LS.
+    """Build sampling and decoder circuits for one end-to-end Pauli probe.
 
-    All operations from physical-state injection through the fifth d=5
-    post-transfer round receive uniform circuit noise. The ideal final syndrome
-    round and logical-Y measurement diagnose the noisy output and are not part
+    All operations from physical-state injection through the requested d=5
+    post-transfer rounds receive uniform circuit noise. The ideal final syndrome
+    round and logical-Pauli measurement diagnose the noisy output and are not part
     of the distillation gadget. Samples come from the fully noisy circuit. A
     separate decoder-only circuit omits noise from the postselected injection,
     QED, and cultivation prefix so PyMatching can build a graphlike detector
     model; it never supplies samples.
+
+    ``post_injection_qed_checks`` restricts the post-injection Steane QED round
+    to a subset of the six 14-site checks (``None`` measures all six; names are
+    ``"X_0145"``, ``"Z_0145"``, ``"X_0235"``, ``"Z_0235"``, ``"X_0246"``,
+    ``"Z_0246"``). Measuring fewer checks removes their superdense fault
+    locations, which trades injection-error detection for fewer noisy operations.
     """
     if not 0 <= physical_error_probability <= 1:
         raise ValueError("physical_error_probability must be in [0, 1].")
+    probe_axis = normalize_pauli_char(probe_axis)
+    if probe_axis == "X":
+        injected_state = "+"
+    elif probe_axis == "Y":
+        injected_state = "S"
+    elif probe_axis == "Z":
+        injected_state = "0"
+    else:
+        raise ValueError("probe_axis must be X, Y, or Z.")
 
     ideal_circuit = transfer.build_steane_to_rotated_d5_lattice_surgery_circuit(
         patch_sites=patch_sites,
-        injected_state="S",
+        injected_state=injected_state,
+        projection_axis=probe_axis,
         include_cultivation=True,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
+        post_injection_qed_checks=post_injection_qed_checks,
         merge_schedule=merge_schedule,
         surface_readout_basis=None,
         add_ticks=True,
@@ -68,12 +90,13 @@ def build_end_to_end_distillation_circuit(
         include_cultivation=True,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
+        post_injection_qed_checks=post_injection_qed_checks,
         merge_schedule=merge_schedule,
     )
     post_transfer_layout = transfer.append_post_transfer_stabilization(
         ideal_circuit,
         transfer_layout=transfer_layout,
-        stabilizer_rounds=POST_TRANSFER_STABILIZATION_ROUNDS,
+        stabilizer_rounds=post_transfer_stabilization_rounds,
         add_ticks=True,
     )
 
@@ -89,16 +112,18 @@ def build_end_to_end_distillation_circuit(
         transfer_layout=transfer_layout,
         physical_error_probability=physical_error_probability,
     )
-    layout = transfer.append_ideal_y_verification(
+    layout = transfer.append_ideal_logical_verification(
         fully_noisy_sampling_circuit,
         post_transfer_layout=post_transfer_layout,
-        stabilizer_rounds=POST_TRANSFER_STABILIZATION_ROUNDS,
+        stabilizer_rounds=post_transfer_stabilization_rounds,
+        basis=probe_axis,
         add_ticks=True,
     )
-    transfer.append_ideal_y_verification(
+    transfer.append_ideal_logical_verification(
         graphlike_decoder_model_circuit,
         post_transfer_layout=post_transfer_layout,
-        stabilizer_rounds=POST_TRANSFER_STABILIZATION_ROUNDS,
+        stabilizer_rounds=post_transfer_stabilization_rounds,
+        basis=probe_axis,
         add_ticks=True,
     )
     return fully_noisy_sampling_circuit, graphlike_decoder_model_circuit, layout
@@ -198,6 +223,7 @@ def estimate_end_to_end_complementary_gap_curve(
     fully_noisy_sampling_circuit, graphlike_decoder_model_circuit, layout = (
         build_end_to_end_distillation_circuit(
             physical_error_probability,
+            probe_axis="Y",
             patch_sites=patch_sites,
             merge_schedule=merge_schedule,
             measure_encoder_flags=measure_encoder_flags,
@@ -207,6 +233,7 @@ def estimate_end_to_end_complementary_gap_curve(
     analyzer = LatticeSurgeryOnlyShotAnalyzer(
         fully_noisy_sampling_circuit,
         layout=layout,
+        persistent_surface_x_postselection=True,
         postselect_steane_input=True,
         decoder_model_circuit=graphlike_decoder_model_circuit,
         complementary_gap_postselection_threshold=0.0,

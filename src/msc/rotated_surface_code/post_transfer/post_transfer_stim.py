@@ -11,7 +11,7 @@ The d=5 lattice-surgery callers complete that boundary differently::
     ├── append_rotated_full_stabilizer_rounds(...)  # this module
     └── compare round 1 with merge-round and m_ab results
 
-    append_ideal_y_verification(...)
+    append_ideal_logical_verification(...)
     ├── append_rotated_full_stabilizer_rounds(...)  # this module
     └── compare the ideal round with the final noisy round
 """
