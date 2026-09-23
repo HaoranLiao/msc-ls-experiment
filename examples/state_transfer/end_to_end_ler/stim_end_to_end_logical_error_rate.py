@@ -20,7 +20,10 @@ from examples.state_transfer.lattice_surgery_only_ler.stim_logical_error_rate im
     LatticeSurgeryOnlyShotAnalyzer,
 )
 from msc.noise.fault_injection_stim import add_circuit_depolarizing_noise
-from msc.noise.fault_tolerance_stim import LogicalErrorEstimate
+from msc.noise.fault_tolerance_stim import (
+    LogicalErrorEstimate,
+    sample_detector_logical_error_probability,
+)
 from msc.state_transfer import common
 from msc.state_transfer import helper_stim as transfer_helper
 from msc.state_transfer import to_d5_rotated_stim as transfer
@@ -194,10 +197,13 @@ def estimate_end_to_end_complementary_gap_curve(
     *,
     complementary_gap_postselection_thresholds: Iterable[float],
     shots: int,
+    post_injection_qed_checks: Sequence[str] | None,
+    persistent_surface_x_postselection: bool,
     patch_sites: common.SteanePatchSites = 14,
     merge_schedule: common.MergeSchedule = "hirano",
     measure_encoder_flags: bool = False,
     measure_cultivation_flags: bool = False,
+    post_transfer_stabilization_rounds: int = POST_TRANSFER_STABILIZATION_ROUNDS,
     batch_size: int = 100_000,
     seed: int | None = None,
 ) -> list[tuple[float, LogicalErrorEstimate]]:
@@ -228,12 +234,15 @@ def estimate_end_to_end_complementary_gap_curve(
             merge_schedule=merge_schedule,
             measure_encoder_flags=measure_encoder_flags,
             measure_cultivation_flags=measure_cultivation_flags,
+            post_injection_qed_checks=post_injection_qed_checks,
+            post_transfer_stabilization_rounds=post_transfer_stabilization_rounds,
         )
     )
     analyzer = LatticeSurgeryOnlyShotAnalyzer(
         fully_noisy_sampling_circuit,
         layout=layout,
-        persistent_surface_x_postselection=True,
+        full_post_selection=False,
+        persistent_surface_x_postselection=persistent_surface_x_postselection,
         postselect_steane_input=True,
         decoder_model_circuit=graphlike_decoder_model_circuit,
         complementary_gap_postselection_threshold=0.0,
@@ -273,3 +282,50 @@ def estimate_end_to_end_complementary_gap_curve(
         )
         for threshold_index, threshold in enumerate(gap_thresholds)
     ]
+
+
+def estimate_end_to_end_logical_error_probability(
+    physical_error_probability: float,
+    *,
+    max_shots: int,
+    target_logical_errors: int,
+    post_injection_qed_checks: Sequence[str] | None,
+    persistent_surface_x_postselection: bool,
+    patch_sites: common.SteanePatchSites = 14,
+    merge_schedule: common.MergeSchedule = "hirano",
+    measure_encoder_flags: bool = False,
+    measure_cultivation_flags: bool = False,
+    post_transfer_stabilization_rounds: int = POST_TRANSFER_STABILIZATION_ROUNDS,
+    batch_size: int = 100_000,
+    seed: int | None = None,
+) -> LogicalErrorEstimate:
+    """Sample the end-to-end LER to an exact logical-error target."""
+    fully_noisy_sampling_circuit, graphlike_decoder_model_circuit, layout = (
+        build_end_to_end_distillation_circuit(
+            physical_error_probability,
+            probe_axis="Y",
+            patch_sites=patch_sites,
+            merge_schedule=merge_schedule,
+            measure_encoder_flags=measure_encoder_flags,
+            measure_cultivation_flags=measure_cultivation_flags,
+            post_injection_qed_checks=post_injection_qed_checks,
+            post_transfer_stabilization_rounds=post_transfer_stabilization_rounds,
+        )
+    )
+    return sample_detector_logical_error_probability(
+        experiment_name="end_to_end_magic_state",
+        physical_error_probability=physical_error_probability,
+        analyzer=LatticeSurgeryOnlyShotAnalyzer(
+            fully_noisy_sampling_circuit,
+            layout=layout,
+            full_post_selection=False,
+            persistent_surface_x_postselection=persistent_surface_x_postselection,
+            postselect_steane_input=True,
+            decoder_model_circuit=graphlike_decoder_model_circuit,
+            complementary_gap_postselection_threshold=0.0,
+        ),
+        max_shots=max_shots,
+        target_logical_errors=target_logical_errors,
+        batch_size=batch_size,
+        seed=seed,
+    )
