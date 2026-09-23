@@ -35,6 +35,7 @@ from msc.steane_code.state_injection_common import (
     PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_INJECTION_SITE,
     PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_LAYERS,
     PATCH_14_SITE_COORDS,
+    PATCH_14_SITE_DATA_SITES,
     PATCH_14_SITE_DEFAULT_LOGICAL_X,
     PATCH_14_SITE_DEFAULT_LOGICAL_Z,
     PATCH_14_SITE_HELPER_SITES,
@@ -449,6 +450,10 @@ def append_14_site_patch_abstract_routed_encoder(
     layers. H8–H12 return to ``|0>`` and can be measured in Z as known-zero
     routing flags.
 
+    The twelve encoder sites are first reset explicitly to ``|0>``, so circuit
+    noise gives each its preparation fault; the idle H7 and D2' are reset by
+    the later superdense round.
+
     Parameters
     ----------
     measure_flags
@@ -461,6 +466,15 @@ def append_14_site_patch_abstract_routed_encoder(
     )
     for qubit, coords in zip(patch_qubits, PATCH_14_SITE_COORDS, strict=True):
         circuit.append("QUBIT_COORDS", [qubit], coords)
+    circuit.append(
+        "R",
+        [
+            patch_qubits[site]
+            for site in (*PATCH_14_SITE_DATA_SITES, *PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES)
+        ],
+    )
+    if add_ticks:
+        circuit.append("TICK", [])
     prepare_physical_state(
         circuit,
         patch_qubits[PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_INJECTION_SITE],
