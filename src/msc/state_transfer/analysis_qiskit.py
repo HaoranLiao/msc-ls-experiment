@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from msc.state_transfer.common import (
     MergeSchedule,
@@ -28,6 +28,7 @@ def parse_transfer_measurements(
     full_data_readout: bool = False,
     full_post_selection: bool = False,
     persistent_surface_x_post_selection: bool = True,
+    measurement_labels: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, object]:
     """Parse one count key and decode its merge and continuation histories.
 
@@ -38,17 +39,21 @@ def parse_transfer_measurements(
     construction; each ``False`` shrinks the record layout (dropping the
     ``enc_flags`` family, or the four ancilla flags per ``cult`` round).
     """
-    labels = transfer_measurement_labels(
-        spec,
-        patch_sites=patch_sites,
-        include_cultivation=include_cultivation,
-        merge_schedule=merge_schedule,
-        measure_encoder_flags=measure_encoder_flags,
-        measure_cultivation_flags=measure_cultivation_flags,
-        post_injection_qed_checks=post_injection_qed_checks,
-        post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
-        surface_readout_basis=surface_readout_basis,
-        full_data_readout=full_data_readout,
+    labels = (
+        transfer_measurement_labels(
+            spec,
+            patch_sites=patch_sites,
+            include_cultivation=include_cultivation,
+            merge_schedule=merge_schedule,
+            measure_encoder_flags=measure_encoder_flags,
+            measure_cultivation_flags=measure_cultivation_flags,
+            post_injection_qed_checks=post_injection_qed_checks,
+            post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
+            surface_readout_basis=surface_readout_basis,
+            full_data_readout=full_data_readout,
+        )
+        if measurement_labels is None
+        else measurement_labels
     )
     bits = parse_qiskit_registers(bitstring, tuple(labels.items()))
     parsed = interpret_transfer_measurements(

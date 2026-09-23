@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from qiskit import ClassicalRegister, QuantumCircuit
 
@@ -156,6 +156,7 @@ def parse_transfer_measurements(
     full_post_selection: bool = False,
     persistent_surface_x_post_selection: bool = True,
     post_transfer_stabilizer_rounds: int | None = None,
+    measurement_labels: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, object]:
     resolved_stabilizer_rounds = 0
     if surface_readout_basis is not None or include_post_transfer_stabilizer_rounds:
@@ -178,4 +179,5 @@ def parse_transfer_measurements(
         full_data_readout=surface_readout_basis is not None,
         full_post_selection=full_post_selection,
         persistent_surface_x_post_selection=persistent_surface_x_post_selection,
+        measurement_labels=measurement_labels,
     )

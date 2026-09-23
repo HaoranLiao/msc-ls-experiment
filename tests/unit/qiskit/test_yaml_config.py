@@ -15,11 +15,11 @@ from msc.state_transfer.ler_qiskit import (
 )
 from msc.state_transfer.tomography_qiskit import (
     TomographyTargetDistance,
+    TyTomographyConfig,
     analyze_ty_tomography_counts,
     build_ty_tomography_circuits,
 )
 from msc.steane_code.kickback_tomography_qiskit import (
-    KICKBACK_TOMOGRAPHY_CONFIG_PATH,
     KickbackTomographyConfig,
     build_kickback_tomography_experiment,
     load_kickback_tomography_config,
@@ -118,7 +118,10 @@ def test_tomography_yaml_matches_constructed_circuits_and_analysis(
             "X": {"0" * circuits["X"].num_clbits: 4},
             "Z": {"0" * circuits["Z"].num_clbits: 4},
         },
-        circuit_config_path=config_path,
+        tomography_config=TyTomographyConfig(**yaml.safe_load(config_path.read_text())),
+        measurement_schemas={
+            basis: circuit.metadata["measurement_schema"] for basis, circuit in circuits.items()
+        },
     )
     assert summary.accepted_x_shots == summary.accepted_z_shots == 4
 

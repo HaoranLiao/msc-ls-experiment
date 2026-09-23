@@ -18,7 +18,6 @@ import yaml
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
 from msc.steane_code.kickback_tomography_common import (
-    KT_DEFAULT_QED_CYCLE_INDICES,
     KT_STABILIZER_BITS_PER_CYCLE,
     FinalStabilizerMode,
     KickbackCultivationRoundBits,

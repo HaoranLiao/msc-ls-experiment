@@ -655,12 +655,24 @@ def append_14_site_patch_injection_and_cultivation(
             append_14_site_patch_superdense_stabilizer_measurement(
                 circuit,
                 patch_qubits=patch_qubits,
-                stabilizer_bits=[bit for bit, role in zip(qed_bits, roles) if role == "STABILIZER"],
+                stabilizer_bits=[
+                    bit for bit, role in zip(qed_bits, roles, strict=True) if role == "STABILIZER"
+                ],
                 bell_partner_flag_bits=(
-                    [bit for bit, role in zip(qed_bits, roles) if role == "BELL_PARTNER_FLAG"] or None
+                    [
+                        bit
+                        for bit, role in zip(qed_bits, roles, strict=True)
+                        if role == "BELL_PARTNER_FLAG"
+                    ]
+                    or None
                 ),
                 d2_copy_flag_bit=next(
-                    (bit for bit, role in zip(qed_bits, roles) if role == "D2_COPY_FLAG"), None
+                    (
+                        bit
+                        for bit, role in zip(qed_bits, roles, strict=True)
+                        if role == "D2_COPY_FLAG"
+                    ),
+                    None,
                 ),
                 basis=stabilizer_bases,
                 stabilizer_indices=stabilizer_indices,

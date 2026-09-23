@@ -404,12 +404,7 @@ class TestNoiselessKickbackTomography:
             add_barriers=False,
         )
         shots = 10
-        counts = (
-            AerSimulator()
-            .run(circuit, shots=shots, seed_simulator=42)
-            .result()
-            .get_counts()
-        )
+        counts = AerSimulator().run(circuit, shots=shots, seed_simulator=42).result().get_counts()
         summary = analyze_kickback_tomography_counts(counts, bit_layout)
 
         assert summary.retained_shots == shots
@@ -456,10 +451,7 @@ class TestNoiselessKickbackTomography:
             **{injection_argument: injection},
         )
         counts = (
-            AerSimulator()
-            .run(circuit, shots=NUM_SHOTS, seed_simulator=42)
-            .result()
-            .get_counts()
+            AerSimulator().run(circuit, shots=NUM_SHOTS, seed_simulator=42).result().get_counts()
         )
         summary = analyze_kickback_tomography_counts(counts, bit_layout)
 

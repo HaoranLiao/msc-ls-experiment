@@ -78,9 +78,7 @@ PATCH_11_SITE_CULTIVATION_ROOT_CHECK_INDEX: int = 1 + PATCH_11_SITE_HELPER_SITES
     PATCH_11_SITE_FOLDED_MEASUREMENT_SITE
 )
 PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND: int = 1 + len(PATCH_11_SITE_HELPER_SITES)
-STEANE_QED_MEASUREMENTS_PER_ROUND: int = len(
-    patch_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES)
-)
+STEANE_QED_MEASUREMENTS_PER_ROUND: int = len(patch_stabilizer_labels(NUM_QUBITS_PATCH_11_SITES))
 
 
 # =============================================================================

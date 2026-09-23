@@ -356,11 +356,14 @@ def transfer_measurement_labels(
                     qed_labels.append(STEANE_14_SITE_QED_D2_COPY_FLAG_LABEL)
                     continue
                 face_index = next(
-                    index for index, ancilla_pair in enumerate(PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS)
+                    index
+                    for index, ancilla_pair in enumerate(PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS)
                     if ancilla_site in ancilla_pair
                 )
                 if readout_role == "STABILIZER":
-                    qed_labels.append(patch_spec.qed_labels[2 * face_index + (readout_basis == "Z")])
+                    qed_labels.append(
+                        patch_spec.qed_labels[2 * face_index + (readout_basis == "Z")]
+                    )
                 elif readout_role == "BELL_PARTNER_FLAG":
                     check_name = patch_spec.qed_labels[2 * face_index + (readout_basis == "X")]
                     qed_labels.append(f"{check_name}_bell_partner_flag")

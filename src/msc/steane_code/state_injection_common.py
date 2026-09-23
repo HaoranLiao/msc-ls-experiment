@@ -645,14 +645,20 @@ def select_14_site_patch_superdense_measurement_layers(
         site for index in selected_indices for site in PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS[index]
     }
     # Filter each parity phase separately, while preparing each face's Bell pair once.
-    active_layers = [(layer, selected_ancilla_sites) for layer in _SUPERDENSE_BELL_PREPARATION_LAYERS]
+    active_layers = [
+        (layer, selected_ancilla_sites) for layer in _SUPERDENSE_BELL_PREPARATION_LAYERS
+    ]
     for parity, copy_layers, coupling_layers, uncompute_layer in (
         (
-            "Z", _SUPERDENSE_D2_Z_COPY_LAYERS, _SUPERDENSE_Z_COUPLING_LAYERS,
+            "Z",
+            _SUPERDENSE_D2_Z_COPY_LAYERS,
+            _SUPERDENSE_Z_COUPLING_LAYERS,
             _SUPERDENSE_D2_Z_UNCOMPUTE_LAYER,
         ),
         (
-            "X", _SUPERDENSE_D2_X_COPY_LAYERS, _SUPERDENSE_X_COUPLING_LAYERS,
+            "X",
+            _SUPERDENSE_D2_X_COPY_LAYERS,
+            _SUPERDENSE_X_COUPLING_LAYERS,
             _SUPERDENSE_D2_X_UNCOMPUTE_LAYER,
         ),
     ):
@@ -676,9 +682,7 @@ def select_14_site_patch_superdense_measurement_layers(
         selected_operations = []
         for gate_name, operands in tick_layer:
             if gate_name in ("RESET_X", "RESET_Z"):
-                selected_operands = tuple(
-                    site for site in operands if site in active_ancilla_sites
-                )
+                selected_operands = tuple(site for site in operands if site in active_ancilla_sites)
             elif gate_name == "CX":
                 selected_operands = tuple(
                     pair
@@ -697,7 +701,9 @@ def select_14_site_patch_superdense_measurement_layers(
         for readout_basis, ancilla in zip(
             ("X", "Z"), PATCH_14_SITE_SUPERDENSE_ANCILLA_PAIRS[index], strict=True
         ):
-            readout_role = "STABILIZER" if face_basis in (readout_basis, "BOTH") else "BELL_PARTNER_FLAG"
+            readout_role = (
+                "STABILIZER" if face_basis in (readout_basis, "BOTH") else "BELL_PARTNER_FLAG"
+            )
             readouts.append((readout_basis, ancilla, readout_role))
     if 2 in basis_by_face:
         d2_copy_basis = "Z" if basis_by_face[2] == "Z" else "X"
@@ -761,12 +767,16 @@ def resolve_14_site_patch_stabilizer_checks(
     if check_names is None:
         check_names = PATCH_14_SITE_STABILIZER_CHECK_NAMES
     if len(set(check_names)) != len(check_names) or any(
-            name not in PATCH_14_SITE_STABILIZER_CHECK_NAMES for name in check_names
+        name not in PATCH_14_SITE_STABILIZER_CHECK_NAMES for name in check_names
     ):
-        raise ValueError(f"QED checks must be distinct names from {PATCH_14_SITE_STABILIZER_CHECK_NAMES}.")
+        raise ValueError(
+            f"QED checks must be distinct names from {PATCH_14_SITE_STABILIZER_CHECK_NAMES}."
+        )
     bases_by_face: dict[int, set[str]] = {}
     for name in check_names:
-        bases_by_face.setdefault(PATCH_14_SITE_STABILIZER_CHECK_NAMES.index(name) // 2, set()).add(name[0])
+        bases_by_face.setdefault(PATCH_14_SITE_STABILIZER_CHECK_NAMES.index(name) // 2, set()).add(
+            name[0]
+        )
     selected_indices = tuple(sorted(bases_by_face))
     selected_bases = tuple(
         "BOTH" if bases_by_face[index] == {"X", "Z"} else next(iter(bases_by_face[index]))

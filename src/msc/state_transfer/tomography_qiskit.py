@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
@@ -17,6 +17,7 @@ from msc.steane_code.state_injection_common import (
     PostInjectionQedChecks,
     resolve_post_injection_qed_checks,
 )
+from msc.utils.normalize import qiskit_bit_value
 
 TomographyTargetDistance = Literal[3, 5]
 TOMOGRAPHY_BASES: tuple[common.SurfaceReadoutBasis, ...] = ("X", "Z")
@@ -185,8 +186,9 @@ def build_ty_tomography_circuits(
     else:  # pragma: no cover - validated by TyTomographyConfig.
         raise ValueError("target_distance must be 3 or 5.")
 
-    return {
-        basis: build_transfer_circuit(
+    circuits = {}
+    for basis in TOMOGRAPHY_BASES:
+        circuit = build_transfer_circuit(
             patch_sites=config.patch_sites,
             merge_schedule=config.merge_schedule,
             injected_state="Ty",
@@ -200,13 +202,30 @@ def build_ty_tomography_circuits(
             post_transfer_stabilizer_rounds=(config.resolved_post_transfer_stabilizer_rounds),
             add_barriers=config.add_barriers,
         )
-        for basis in TOMOGRAPHY_BASES
-    }
+        measurement_schema = common.transfer_measurement_labels(
+            d3.TRANSFER_SPEC if config.target_distance == 3 else d5.TRANSFER_SPEC,
+            patch_sites=config.patch_sites,
+            include_cultivation=True,
+            merge_schedule=config.merge_schedule,
+            surface_readout_basis=basis,
+            measure_encoder_flags=config.measure_encoder_flags,
+            measure_cultivation_flags=config.measure_cultivation_flags,
+            post_injection_qed_checks=config.resolved_post_injection_qed_checks,
+            post_transfer_stabilizer_rounds=config.resolved_post_transfer_stabilizer_rounds,
+            full_data_readout=True,
+        )
+        circuit.metadata = {
+            **(circuit.metadata or {}),
+            "measurement_schema": measurement_schema,
+        }
+        circuits[basis] = circuit
+    return circuits
 
 
 def analyze_ty_tomography_counts(
     counts_by_basis: Mapping[common.SurfaceReadoutBasis, Mapping[str, int]],
     *,
+    tomography_config: TyTomographyConfig | None = None,
     circuit_config_path: str | Path = TY_TOMOGRAPHY_CONFIG_PATH,
     target_distance: TomographyTargetDistance | None = None,
     patch_sites: common.SteanePatchSites | None = None,
@@ -217,9 +236,12 @@ def analyze_ty_tomography_counts(
     measure_cultivation_flags: bool | None = None,
     post_injection_qed_checks: PostInjectionQedChecks | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
+    measurement_schemas: (
+        Mapping[common.SurfaceReadoutBasis, Mapping[str, Sequence[str]]] | None
+    ) = None,
 ) -> TyTomographySummary:
     """Analyze paired counts using the same YAML config as construction."""
-    config = resolve_ty_tomography_config(
+    config = tomography_config or resolve_ty_tomography_config(
         circuit_config_path=circuit_config_path,
         target_distance=target_distance,
         patch_sites=patch_sites,
@@ -234,8 +256,10 @@ def analyze_ty_tomography_counts(
     )
     if config.target_distance == 3:
         parse_transfer_measurements = d3.parse_transfer_measurements
+        transfer_spec = d3.TRANSFER_SPEC
     elif config.target_distance == 5:
         parse_transfer_measurements = d5.parse_transfer_measurements
+        transfer_spec = d5.TRANSFER_SPEC
     else:  # pragma: no cover - validated by TyTomographyConfig.
         raise ValueError("target_distance must be 3 or 5.")
 
@@ -245,11 +269,66 @@ def analyze_ty_tomography_counts(
     for basis in TOMOGRAPHY_BASES:
         if basis not in counts_by_basis:
             raise ValueError(f"counts_by_basis is missing the {basis} experiment.")
+        labels = (
+            common.transfer_measurement_labels(
+                transfer_spec,
+                patch_sites=config.patch_sites,
+                include_cultivation=True,
+                merge_schedule=config.merge_schedule,
+                surface_readout_basis=basis,
+                measure_encoder_flags=config.measure_encoder_flags,
+                measure_cultivation_flags=config.measure_cultivation_flags,
+                post_injection_qed_checks=config.resolved_post_injection_qed_checks,
+                post_transfer_stabilizer_rounds=(config.resolved_post_transfer_stabilizer_rounds),
+                full_data_readout=True,
+            )
+            if measurement_schemas is None
+            else measurement_schemas[basis]
+        )
+        positions_by_family: dict[str, dict[str, int]] = {}
+        offset = 0
+        for family, family_labels in labels.items():
+            positions_by_family[family] = {
+                label: offset + index for index, label in enumerate(family_labels)
+            }
+            offset += len(family_labels)
+        raw_zero_positions = tuple(
+            position
+            for family in (
+                "enc_flags",
+                "steane_qed",
+                "cult",
+                "steane_verify",
+                "steane_bell_partner_flags",
+            )
+            for position in positions_by_family.get(family, {}).values()
+        )
+        interface_positions = tuple(positions_by_family["interface_z"].values())
+        interface_width = len(transfer_spec.merged_boundary_checks)
+        final_x_positions = {
+            **positions_by_family["steane_x"],
+            **positions_by_family["surface_x_recovery"],
+        }
         counts = counts_by_basis[basis]
         total_shots[basis] = sum(counts.values())
         signed_accepted_shots = 0
         accepted_shots[basis] = 0
         for bitstring, count in counts.items():
+            if any(qiskit_bit_value(bitstring, position) for position in raw_zero_positions):
+                continue
+            if any(
+                qiskit_bit_value(bitstring, interface_positions[index])
+                != qiskit_bit_value(bitstring, interface_positions[index + interface_width])
+                or qiskit_bit_value(bitstring, interface_positions[index])
+                != qiskit_bit_value(bitstring, interface_positions[index + 2 * interface_width])
+                for index in range(interface_width)
+            ):
+                continue
+            if any(
+                sum(qiskit_bit_value(bitstring, final_x_positions[label]) for label in support) % 2
+                for support in common.FINAL_X_VERIFICATION_CHECKS.values()
+            ):
+                continue
             measurements = parse_transfer_measurements(
                 bitstring,
                 patch_sites=config.patch_sites,
@@ -262,6 +341,7 @@ def analyze_ty_tomography_counts(
                 full_post_selection=config.full_post_selection,
                 persistent_surface_x_post_selection=(config.persistent_surface_x_post_selection),
                 post_transfer_stabilizer_rounds=(config.resolved_post_transfer_stabilizer_rounds),
+                measurement_labels=labels,
             )
             if not common.transfer_acceptance_succeeds(measurements):
                 continue

@@ -470,7 +470,10 @@ def append_14_site_patch_abstract_routed_encoder(
         "R",
         [
             patch_qubits[site]
-            for site in (*PATCH_14_SITE_DATA_SITES, *PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES)
+            for site in (
+                *PATCH_14_SITE_DATA_SITES,
+                *PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES,
+            )
         ],
     )
     if add_ticks:

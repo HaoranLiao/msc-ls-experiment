@@ -114,10 +114,14 @@ def build_lattice_surgery_only_circuit(
     )
 
     ideal_input, noisy_suffix = _split_after_ideal_input(circuit, transfer_layout)
-    return ideal_input + add_circuit_depolarizing_noise(
-        noisy_suffix,
-        p=physical_error_probability,
-    ), layout
+    return (
+        ideal_input
+        + add_circuit_depolarizing_noise(
+            noisy_suffix,
+            p=physical_error_probability,
+        ),
+        layout,
+    )
 
 
 def _split_after_ideal_input(
@@ -164,9 +168,7 @@ def _persistent_surface_x_detector_indices(
         + len(layout.positions["surface_init_x"])
         + len(layout.positions["merged_surface_z"])
     )
-    merged_offsets = {
-        label: i for i, label in enumerate(transfer.TRANSFER_SPEC.merged_x_labels)
-    }
+    merged_offsets = {label: i for i, label in enumerate(transfer.TRANSFER_SPEC.merged_x_labels)}
     merged_width = len(transfer.TRANSFER_SPEC.merged_x_labels)
     indices.extend(
         merged_x_start + round_index * merged_width + merged_offsets[label]
@@ -271,9 +273,9 @@ class LatticeSurgeryOnlyShotAnalyzer(DetectorErrorModelShotAnalyzer):
                 frame_positions = transfer_helper.transfer_logical_frame_positions(layout, "Z")
             else:
                 raise ValueError(f"unsupported surface logical readout {logical_family!r}.")
-            global_logical_measurement_positions = layout.positions[
-                logical_family
-            ] + frame_positions
+            global_logical_measurement_positions = (
+                layout.positions[logical_family] + frame_positions
+            )
             detector_circuits = [analyzer_circuit]
             if analyzer_decoder_model_circuit is not None:
                 detector_circuits.append(analyzer_decoder_model_circuit)

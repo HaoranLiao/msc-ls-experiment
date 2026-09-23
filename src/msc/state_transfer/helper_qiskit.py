@@ -252,11 +252,13 @@ def build_lattice_surgery_circuit(
             if stabilizer_indices:
                 checks_in_readout_order = sorted(
                     verification_checks,
-                    key=lambda name: (patch_spec.merge_verification_stabilizer_indices[name], name[0]),
+                    key=lambda name: (
+                        patch_spec.merge_verification_stabilizer_indices[name],
+                        name[0],
+                    ),
                 )
                 measure_d2_copy_flag = (
-                    patch_spec.merge_verification_stabilizer_indices["X0246"]
-                    in stabilizer_indices
+                    patch_spec.merge_verification_stabilizer_indices["X0246"] in stabilizer_indices
                 )
                 steane.append_14_site_patch_superdense_stabilizer_measurement(
                     circuit,

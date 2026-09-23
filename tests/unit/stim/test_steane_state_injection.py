@@ -29,7 +29,6 @@ from msc.steane_code.state_injection_common import (
     PATCH_11_SITE_Z_STABILIZERS,
     PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES,
     PATCH_14_SITE_COORDS,
-    select_14_site_patch_superdense_measurement_layers,
     PATCH_14_SITE_DATA_SITES,
     PATCH_14_SITE_HELPER_SITES,
     PATCH_14_SITE_HIRANO_ENCODER_COORDS,
@@ -41,6 +40,7 @@ from msc.steane_code.state_injection_common import (
     PATCH_14_SITE_Z_STABILIZERS,
     X_STABILIZERS,
     Z_STABILIZERS,
+    select_14_site_patch_superdense_measurement_layers,
 )
 from msc.steane_code.state_injection_stim import (
     StimInjectedStateName,
@@ -1197,7 +1197,9 @@ def test_14_site_superdense_subsets_do_not_exceed_full_round_cx_depth(face_bases
     selected_round = stim.Circuit()
     if selected_indices:
         append_14_site_patch_superdense_stabilizer_measurement(
-            selected_round, basis=selected_bases, stabilizer_indices=selected_indices,
+            selected_round,
+            basis=selected_bases,
+            stabilizer_indices=selected_indices,
         )
 
     cx_depths = []
@@ -1207,8 +1209,8 @@ def test_14_site_superdense_subsets_do_not_exceed_full_round_cx_depth(face_bases
             if instruction.name == "CX":
                 targets = instruction.targets_copy()
                 for control, target in zip(targets[::2], targets[1::2], strict=True):
-                    depth_by_site[control.value] = depth_by_site[target.value] = (
-                        1 + max(depth_by_site[control.value], depth_by_site[target.value])
+                    depth_by_site[control.value] = depth_by_site[target.value] = 1 + max(
+                        depth_by_site[control.value], depth_by_site[target.value]
                     )
         cx_depths.append(max(depth_by_site))
     assert cx_depths[0] == 8
@@ -1230,7 +1232,9 @@ def test_14_site_superdense_subsets_prepare_and_read_each_bell_pair_once(face_ba
     circuit = stim.Circuit()
     if selected_indices:
         append_14_site_patch_superdense_stabilizer_measurement(
-            circuit, basis=selected_bases, stabilizer_indices=selected_indices,
+            circuit,
+            basis=selected_bases,
+            stabilizer_indices=selected_indices,
         )
 
     # The (X-ancilla, Z-ancilla) CX appears only in Bell preparation and Bell
@@ -1255,7 +1259,9 @@ def test_14_site_superdense_subsets_prepare_and_read_each_bell_pair_once(face_ba
         if face_basis is None:
             # Uninvolved face: no preparation, coupling, uncompute, or readout.
             assert x_ancilla not in reset_sites and z_ancilla not in reset_sites
-            assert all(x_ancilla not in pair and z_ancilla not in pair for pair in ancilla_ancilla_cnots)
+            assert all(
+                x_ancilla not in pair and z_ancilla not in pair for pair in ancilla_ancilla_cnots
+            )
             assert x_ancilla not in measured_sites and z_ancilla not in measured_sites
             continue
         # Bell pair created once (each ancilla reset once) and uncomputed once (its
@@ -1268,7 +1274,7 @@ def test_14_site_superdense_subsets_prepare_and_read_each_bell_pair_once(face_ba
 
 @pytest.mark.parametrize("face_bases", tuple(product((None, "X", "Z", "BOTH"), repeat=3)))
 def test_14_site_superdense_subsets_read_d2_copy_only_with_face_0246(face_bases) -> None:
-    """The D2' copy flag (site 13) is read exactly once when face 0246 is selected, else untouched."""
+    """Read the D2' copy flag once exactly when face 0246 is selected."""
     selected_indices = tuple(index for index, basis in enumerate(face_bases) if basis is not None)
     selected_bases = tuple(face_bases[index] for index in selected_indices)
     layers, readouts = (

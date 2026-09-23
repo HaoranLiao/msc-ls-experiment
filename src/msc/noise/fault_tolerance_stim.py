@@ -771,7 +771,10 @@ def _find_malignant_triple_by_signature(
                 left_fault.observable_mask ^ right_fault.observable_mask ^ 1,
             )
             for third_fault in faults_by_signature.get(required_signature, ()):
-                if third_fault.location_key not in (left_fault.location_key, right_fault.location_key):
+                if third_fault.location_key not in (
+                    left_fault.location_key,
+                    right_fault.location_key,
+                ):
                     return FaultCombinationWitness((left_fault, right_fault, third_fault))
     return None
 
