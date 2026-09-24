@@ -4,16 +4,14 @@ Use ``decode_raw_syndromes`` for normal scalar workflows: it advances the
 supplied :class:`StabilizerFrame`, decodes the resulting changes, and updates
 the supplied :class:`PauliFrame`. ``decode`` is the lower-level pure API
 for protocols that already own their change-detection boundaries. The
-spacetime decoder also reports complementary logical-sector gaps and provides
-a logical-parity-only batch path for LER sampling.
+spacetime decoder also provides a logical-parity-only batch path for LER
+sampling.
 """
 
 from __future__ import annotations
 
-import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast
 
 import numpy as np
 import pymatching
@@ -80,21 +78,12 @@ class SpaceTimeRotatedDetectedErrors(_RotatedDetectedErrorsBase):
     just as on :class:`RotatedDetectedErrors`; corrections that use only
     timelike measurement-error edges therefore leave those fields empty. The
     delta fields contain one normalized mapping per decoded round.
-    ``x_complementary_gap`` and ``z_complementary_gap`` compare the best MWPM
-    recovery with the best recovery in the opposite logical sector.
     """
 
     x_error_sites: frozenset[str]
     z_error_sites: frozenset[str]
     z_delta_history: tuple[dict[str, int], ...]
     x_delta_history: tuple[dict[str, int], ...]
-    x_complementary_gap: float
-    z_complementary_gap: float
-
-    @property
-    def complementary_gap(self) -> float:
-        """Return the least confidence gap across the two CSS sectors."""
-        return min(self.x_complementary_gap, self.z_complementary_gap)
 
 
 # =============================================================================
@@ -123,8 +112,8 @@ class _RotatedDecoderBase:
         self._logical_z = frozenset(logical_z)
         self._data_weight = data_weight
         data_index = {label: index for index, label in enumerate(self.data_qubits)}
-        self._logical_x_indices = frozenset(data_index[label] for label in self._logical_x)
-        self._logical_z_indices = frozenset(data_index[label] for label in self._logical_z)
+        self._logical_x_indices = tuple(data_index[label] for label in self._logical_x)
+        self._logical_z_indices = tuple(data_index[label] for label in self._logical_z)
         check_matrices = []
         for stabilizers in (z_stabilizers, x_stabilizers):
             matrix = np.zeros((len(stabilizers), len(self.data_qubits)), dtype=np.uint8)
@@ -289,11 +278,15 @@ class RotatedDecoder(_RotatedDecoderBase):
 
 
 class SpaceTimeRotatedDecoder(_RotatedDecoderBase):
-    """Repeated-round MWPM decoder; prefer ``decode_raw_syndromes``.
+    """Repeated-round MWPM decoder for full or partial delta histories.
 
-    Spatial edges represent data errors and timelike edges represent syndrome-
-    measurement errors. X and Z histories may have different lengths when
-    their preparation boundaries differ.
+    Spatial edges represent data errors; timelike edges represent readout
+    errors. The X and Z delta histories may have different lengths, and a round
+    may omit a check that has no valid comparison in that round; the omitted
+    check then has no detector node in that round of the graph.
+    ``decode_raw_syndromes`` takes raw rounds that contain every check; MSC
+    surgery delta histories, computed from Qiskit hardware counts, go to
+    ``decode``.
     """
 
     def __init__(
@@ -306,12 +299,29 @@ class SpaceTimeRotatedDecoder(_RotatedDecoderBase):
         logical_z: Sequence[str] = (),
         data_weight: float = 1.0,
         measurement_weight: float = 1.0,
+        z_stabilizers_measured_initial_reference: Sequence[str] = (),
+        x_stabilizers_measured_initial_reference: Sequence[str] = (),
     ) -> None:
-        """Store graph weights used to build each requested history length.
+        """Store edge weights and the stabilizers whose initial reference is measured.
 
-        ``data_weight`` has the same spatial-edge meaning as on
-        :class:`RotatedDecoder`; ``measurement_weight`` applies only to the
-        additional timelike edges in repeated-round matching graphs.
+        ``data_weight`` weights spatial edges. ``measurement_weight`` weights
+        readout-error edges: timelike edges and time-boundary edges.
+
+        Each detector is the XOR of two consecutive outcomes of one stabilizer.
+        A stabilizer's first detector is the XOR of the stabilizer's first
+        decoded outcome and the stabilizer's initial reference. If the initial
+        reference is known from preparation, a readout error on the first
+        decoded outcome flips the first two detectors, and the timelike edge
+        between those two detectors represents that readout error. If the
+        initial reference is a measured outcome, a readout error on that
+        measurement flips only the first detector. A time-boundary edge from the
+        first detector represents that readout error; without the time-boundary
+        edge, the decoder would explain the lone detector as a data error.
+
+        In MSC lattice surgery, every Z stabilizer's initial reference is the Z
+        stabilizer's initialization outcome, so the Z delta history starts at
+        merge round 1. X_cd's initial reference is X_cd's first post-surgery
+        outcome, because X_cd is not measured during the merge.
         """
         super().__init__(
             data_qubits=data_qubits,
@@ -322,179 +332,121 @@ class SpaceTimeRotatedDecoder(_RotatedDecoderBase):
             data_weight=data_weight,
         )
         self._measurement_weight = measurement_weight
-
-    def _build_spacetime_matching_graph(
-        self,
-        check_matrix: np.ndarray,
-        repetitions: int,
-    ) -> pymatching.Matching:
-        """Build one CSS sector's matching graph for ``repetitions`` rounds."""
-        return pymatching.Matching.from_check_matrix(
-            check_matrix,
-            weights=self._data_weight,
-            repetitions=repetitions,
-            timelike_weights=self._measurement_weight,
-            use_virtual_boundary_node=True,
-        )
-
-    @staticmethod
-    def _decode_complementary_sectors(
-        matching: pymatching.Matching,
-        syndrome: Sequence[int | bool] | np.ndarray,
-        logical_support: frozenset[int],
-    ) -> tuple[np.ndarray, float]:
-        """Return the ordinary recovery and opposite-logical-sector weight gap.
-
-        A syndrome fixes the endpoints of a recovery chain but not its logical
-        homology class. Two chains with the same endpoints may differ by a
-        logical operator. PyMatching's ordinary decode minimizes over both
-        classes, so obtaining the other class requires an explicit constraint;
-        this is not a request for the second-best unconstrained matching.
-
-        For each edge ``e``, define ``p(e)`` as the parity of its ``fault_ids``
-        on ``logical_support``. A recovery is in one logical sector or the other
-        according to the XOR of ``p(e)`` over its selected edges. We represent
-        this edge parity as a graph cut by coloring every detector node ``v``
-        with a bit ``c(v)`` satisfying
-
-        ``c(u) XOR c(v) = p(e)``
-
-        for every internal edge ``e = (u, v)``. A boundary edge incident to
-        ``v`` then belongs to boundary class ``p(e) XOR c(v)``. Keeping class 0
-        as the ordinary matching boundary and replacing class 1 with one extra
-        detector exposes the recovery's logical-sector parity as that added
-        detector's syndrome bit.
-
-        The physical syndrome determines one consistent value for the added
-        bit. Decoding once with that value and once with its complement forces
-        the minimum-weight recovery in each logical sector while keeping every
-        physical detector unchanged.
-
-        The ordinary MWPM correction is returned to preserve PyMatching's
-        normal tie-breaking. The gap is the absolute difference between the
-        minimum weights in the two constrained sectors; an absent logical
-        support has no complementary sector and therefore has infinite gap.
-        """
-        # First retain PyMatching's ordinary recovery. The augmented graph below
-        # is used only to compare sector weights, not to replace this correction.
-        syndrome_array = np.asarray(syndrome, dtype=np.uint8).reshape(-1)
-        selected_correction = cast(
-            np.ndarray,
-            matching.decode(syndrome_array, return_weight=False),
-        )
-        if not logical_support:
-            return selected_correction, math.inf
-
-        boundary_nodes = matching.boundary
-        matching_edges = tuple(matching.edges())
-
-        # Step 1: turn each internal edge's logical crossing parity p(e) into a
-        # parity-labeled adjacency graph. Boundary edges are handled only after
-        # detector colors have been determined.
-        logical_parity_adjacency: dict[int, list[tuple[int, int]]] = {
-            node: [] for node in range(matching.num_nodes) if node not in boundary_nodes
+        self._stabilizers_measured_initial_reference = {
+            "z": frozenset(z_stabilizers_measured_initial_reference),
+            "x": frozenset(x_stabilizers_measured_initial_reference),
         }
-        for node_a, node_b, edge_data in matching_edges:
-            if node_b is None or node_a in boundary_nodes or node_b in boundary_nodes:
-                continue
-            logical_parity = len(edge_data["fault_ids"] & logical_support) % 2
-            logical_parity_adjacency[node_a].append((node_b, logical_parity))
-            logical_parity_adjacency[node_b].append((node_a, logical_parity))
+        if self._stabilizers_measured_initial_reference["z"] - set(self.z_stabilizer_names) or (
+            self._stabilizers_measured_initial_reference["x"] - set(self.x_stabilizer_names)
+        ):
+            raise ValueError("*_stabilizers_measured_initial_reference must list decoder checks.")
 
-        # Step 2: solve c(u) XOR c(v) = p(e) by graph traversal. Each disconnected
-        # component may choose color 0 at its first node; this fixes only that
-        # component's sector-labeling convention, not the pair of sectors compared.
-        logical_side_by_detector: dict[int, int] = {}
-        for component_start in logical_parity_adjacency:
-            if component_start in logical_side_by_detector:
-                continue
-            logical_side_by_detector[component_start] = 0
-            pending_detectors = [component_start]
-            while pending_detectors:
-                node_a = pending_detectors.pop()
-                for node_b, logical_parity in logical_parity_adjacency[node_a]:
-                    expected_neighbor_side = logical_side_by_detector[node_a] ^ logical_parity
-                    if node_b not in logical_side_by_detector:
-                        logical_side_by_detector[node_b] = expected_neighbor_side
-                        pending_detectors.append(node_b)
-                    elif logical_side_by_detector[node_b] != expected_neighbor_side:
-                        # Conflicting colors mean these edge parities are not a
-                        # valid cut and cannot define two consistent sectors.
-                        raise ValueError(
-                            "logical support cannot define complementary matching sectors."
-                        )
+    def _decode_check_basis(
+        self,
+        check_basis: str,
+        delta_history: Sequence[Mapping[str, int | bool]],
+    ) -> tuple[tuple[dict[str, int], ...], np.ndarray]:
+        """Return one basis's normalized delta history and decoded data correction.
 
-        # Step 3: copy the graph while splitting its matching boundary into two
-        # classes. Class-0 edges remain boundary edges. Class-1 edges terminate
-        # at one synthetic detector, converting their use into a syndrome parity
-        # that PyMatching can constrain.
-        sector_detector = matching.num_detectors
-        constrained_matching = pymatching.Matching()
-        has_complementary_boundary = False
-        for node_a, node_b, edge_data in matching_edges:
-            fault_ids = edge_data["fault_ids"]
-            weight = edge_data["weight"]
-            if node_b is not None and node_a not in boundary_nodes and node_b not in boundary_nodes:
-                constrained_matching.add_edge(
-                    node_a,
-                    node_b,
-                    fault_ids=fault_ids,
-                    weight=weight,
-                )
-                continue
-
-            if node_b is None:
-                detector_node = node_a
-            elif node_a in boundary_nodes:
-                detector_node = node_b
-            else:
-                detector_node = node_a
-            if detector_node in boundary_nodes:
-                raise ValueError("matching edge has no detector endpoint.")
-
-            # c(v) accounts for logical parity accumulated through internal
-            # edges before this path reaches its boundary edge e.
-            logical_parity = len(fault_ids & logical_support) % 2
-            boundary_side = logical_parity ^ logical_side_by_detector[detector_node]
-            if boundary_side:
-                constrained_matching.add_edge(
-                    detector_node,
-                    sector_detector,
-                    fault_ids=fault_ids,
-                    weight=weight,
-                )
-                has_complementary_boundary = True
-            else:
-                constrained_matching.add_boundary_edge(
-                    detector_node,
-                    fault_ids=fault_ids,
-                    weight=weight,
-                )
-        if not has_complementary_boundary:
-            raise ValueError("logical support does not connect opposite matching boundaries.")
-
-        # Step 4: XOR the colors of the physical defects (the 1s in the syndrome).
-        # This is the synthetic detector value consistent with one sector. Only
-        # toggling this added bit leaves the physical syndrome fixed but forces
-        # the opposite boundary parity, and therefore the opposite logical class.
-        sector_bit = (
-            sum(
-                logical_side_by_detector[node] * int(bit) for node, bit in enumerate(syndrome_array)
+        Z-check detectors locate X data errors; X-check detectors locate Z data
+        errors. Each round's detectors are the checks in that round's mapping.
+        """
+        if check_basis == "z":
+            check_names = self.z_stabilizer_names
+        elif check_basis == "x":
+            check_names = self.x_stabilizer_names
+        else:
+            raise ValueError(f"unsupported check basis: {check_basis!r}.")
+        if not delta_history:
+            raise ValueError("delta history must contain at least one round.")
+        if any(set(delta_round) - set(check_names) for delta_round in delta_history):
+            raise ValueError("delta rounds must contain only decoder checks.")
+        # Order each round's checks as in the decoder, matching the graph's node order.
+        delta_history = tuple(
+            self._normalize_syndrome_round(
+                delta_round, [name for name in check_names if name in delta_round]
             )
-            % 2
+            for delta_round in delta_history
         )
-        sector_weights: list[float] = []
-        for constrained_sector_bit in (sector_bit, sector_bit ^ 1):
-            _, weight = constrained_matching.decode(
-                np.append(syndrome_array, constrained_sector_bit),
-                return_weight=True,
-            )
-            sector_weights.append(float(weight))
+        detector_bits = [bit for delta_round in delta_history for bit in delta_round.values()]
+        return delta_history, self._matching_graph(check_basis, delta_history).decode(detector_bits)
 
-        # A small gap means two logical explanations have similar likelihood;
-        # a large gap means the selected logical class is comparatively clear.
-        complementary_gap = abs(sector_weights[0] - sector_weights[1])
-        return selected_correction, complementary_gap
+    def _matching_graph(
+        self,
+        check_basis: str,
+        detector_checks_by_round: Sequence[Collection[str]],
+    ) -> pymatching.Matching:
+        """Build one basis's matching graph from each round's detector checks.
+
+        Detector nodes are numbered round by round, in each round's check
+        order, so the node numbers match the positions of the flattened
+        detector bits.
+        """
+        if check_basis == "z":
+            check_names, check_matrix = self.z_stabilizer_names, self._z_check_matrix
+        elif check_basis == "x":
+            check_names, check_matrix = self.x_stabilizer_names, self._x_check_matrix
+        else:
+            raise ValueError(f"unsupported check basis: {check_basis!r}.")
+        stabilizers_measured_initial_reference = self._stabilizers_measured_initial_reference[
+            check_basis
+        ]
+        check_index_by_name = {name: index for index, name in enumerate(check_names)}
+        matching_graph = pymatching.Matching()
+        detector_node_by_round_check = {}
+        checks_with_earlier_detectors = set()
+        for round_index, checks in enumerate(detector_checks_by_round):
+            for check in checks:
+                detector_node = len(detector_node_by_round_check)
+                detector_node_by_round_check[round_index, check] = detector_node
+                if (
+                    check in stabilizers_measured_initial_reference
+                    and check not in checks_with_earlier_detectors
+                ):
+                    # A readout error on this check's measured initial reference
+                    # flips only this first detector. Adding this time-boundary
+                    # edge, weighted as a readout error, puts that scenario in
+                    # the decoding graph.
+                    matching_graph.add_boundary_edge(detector_node, weight=self._measurement_weight)
+                checks_with_earlier_detectors.add(check)
+            # Spatial edges. The same edge can be added more than once; keep the
+            # lowest-weight copy.
+            for data_index in range(len(self.data_qubits)):
+                detector_nodes = [
+                    detector_node_by_round_check[round_index, check]
+                    for check in checks
+                    if check_matrix[check_index_by_name[check], data_index]
+                ]
+                if len(detector_nodes) == 2:
+                    matching_graph.add_edge(
+                        *detector_nodes,
+                        fault_ids=data_index,
+                        weight=self._data_weight,
+                        merge_strategy="smallest-weight",
+                    )
+                elif len(detector_nodes) == 1:
+                    # Only one check detects this data qubit in this round (patch
+                    # boundary or omitted check), so the edge ends on the boundary.
+                    matching_graph.add_boundary_edge(
+                        detector_nodes[0],
+                        fault_ids=data_index,
+                        weight=self._data_weight,
+                        merge_strategy="smallest-weight",
+                    )
+                elif len(detector_nodes) > 2:
+                    raise ValueError("a data error must touch at most two checks.")
+            # Timelike edges: a readout error in the previous round flips this
+            # check's detectors in both rounds. No edge if the previous round
+            # omitted this check.
+            for check in checks:
+                if (round_index - 1, check) in detector_node_by_round_check:
+                    matching_graph.add_edge(
+                        detector_node_by_round_check[round_index - 1, check],
+                        detector_node_by_round_check[round_index, check],
+                        weight=self._measurement_weight,
+                    )
+        matching_graph.ensure_num_fault_ids(len(self.data_qubits))
+        return matching_graph
 
     def decode(
         self,
@@ -502,54 +454,24 @@ class SpaceTimeRotatedDecoder(_RotatedDecoderBase):
         z_delta_history: Sequence[Mapping[str, int | bool]],
         x_delta_history: Sequence[Mapping[str, int | bool]],
     ) -> SpaceTimeRotatedDetectedErrors:
-        """Decode one shot's named delta histories to its net data correction.
+        """Decode one shot's named delta histories to the shot's net data correction.
 
-        Each sector is a sequence of ``{stabilizer_name: bit}`` mappings and
-        may contain a different number of measurement rounds.
+        Each basis has one chronological ``{check_name: delta_bit}`` mapping per
+        round, holding exactly that round's detectors. Omit a check that has no
+        valid comparison instead of passing 0, which counts as a detector that
+        did not fire.
         """
-        z_delta_history = self._normalize_syndrome_history(z_delta_history, self.z_stabilizer_names)
-        x_delta_history = self._normalize_syndrome_history(x_delta_history, self.x_stabilizer_names)
-        z_delta_history_array = np.asarray(
-            [
-                [delta_round[name] for delta_round in z_delta_history]
-                for name in self.z_stabilizer_names
-            ],
-            dtype=np.uint8,
-        )
-        x_delta_history_array = np.asarray(
-            [
-                [delta_round[name] for delta_round in x_delta_history]
-                for name in self.x_stabilizer_names
-            ],
-            dtype=np.uint8,
-        )
-        x_correction, x_complementary_gap = self._decode_complementary_sectors(
-            self._build_spacetime_matching_graph(
-                self._z_check_matrix,
-                len(z_delta_history),
-            ),
-            z_delta_history_array.T.reshape(-1),
-            self._logical_z_indices,
-        )
-        z_correction, z_complementary_gap = self._decode_complementary_sectors(
-            self._build_spacetime_matching_graph(
-                self._x_check_matrix,
-                len(x_delta_history),
-            ),
-            x_delta_history_array.T.reshape(-1),
-            self._logical_x_indices,
-        )
+        z_delta_history, x_data_correction = self._decode_check_basis("z", z_delta_history)
+        x_delta_history, z_data_correction = self._decode_check_basis("x", x_delta_history)
         return SpaceTimeRotatedDetectedErrors(
             x_error_sites=frozenset(
-                self.data_qubits[index] for index in np.flatnonzero(x_correction)
+                self.data_qubits[index] for index in np.flatnonzero(x_data_correction)
             ),
             z_error_sites=frozenset(
-                self.data_qubits[index] for index in np.flatnonzero(z_correction)
+                self.data_qubits[index] for index in np.flatnonzero(z_data_correction)
             ),
             z_delta_history=z_delta_history,
             x_delta_history=x_delta_history,
-            x_complementary_gap=x_complementary_gap,
-            z_complementary_gap=z_complementary_gap,
         )
 
     def decode_raw_syndromes(
@@ -564,8 +486,9 @@ class SpaceTimeRotatedDecoder(_RotatedDecoderBase):
         """Mutate both frames across raw histories and return the net recovery.
 
         Call structure: advance ``stab_frame`` through every raw round ->
-        :meth:`decode` jointly in spacetime -> apply the decoded logical
-        correction to ``pauli_frame``.
+        :meth:`decode` both delta histories -> apply the logical correction to
+        ``pauli_frame``. Raw rounds must contain every check; delta histories
+        that omit checks go to :meth:`decode`.
         """
         x_raw_history = self._normalize_syndrome_history(x_raw_history, self.x_stabilizer_names)
         z_raw_history = self._normalize_syndrome_history(z_raw_history, self.z_stabilizer_names)
@@ -584,15 +507,14 @@ class SpaceTimeRotatedDecoder(_RotatedDecoderBase):
         z_delta_histories: np.ndarray,
         x_delta_histories: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Speed up logical-error-rate sampling by batch-decoding correction bits.
+        """Speed up logical-error-rate sampling by batch-decoding logical corrections.
 
-        This is not a vectorized :meth:`decode`: it accepts delta-history
-        arrays with axes ``(shots, rounds, checks)`` but returns only the
-        logical parity with which each physical recovery crosses the opposite
-        logical representative.
+        Unlike :meth:`decode`, this method takes ``(shots, rounds, checks)``
+        arrays, so every round must contain every check, and returns only the
+        logical X and Z correction bits of each shot.
         """
         normalized_delta_history_batches = []
-        for sector, delta_history_batch, check_count in (
+        for check_basis, delta_history_batch, check_count in (
             ("z", z_delta_histories, len(self.z_stabilizer_names)),
             ("x", x_delta_histories, len(self.x_stabilizer_names)),
         ):
@@ -604,11 +526,11 @@ class SpaceTimeRotatedDecoder(_RotatedDecoderBase):
                 or delta_history_batch.shape[2] != check_count
             ):
                 raise ValueError(
-                    f"{sector}_delta_histories must have nonempty "
+                    f"{check_basis}_delta_histories must have nonempty "
                     f"(shots, rounds, {check_count}) shape."
                 )
             if not np.all((delta_history_batch == 0) | (delta_history_batch == 1)):
-                raise ValueError(f"{sector}_delta_histories must contain only 0 or 1.")
+                raise ValueError(f"{check_basis}_delta_histories must contain only 0 or 1.")
             normalized_delta_history_batches.append(
                 delta_history_batch.astype(np.uint8, copy=False)
             )
@@ -616,24 +538,19 @@ class SpaceTimeRotatedDecoder(_RotatedDecoderBase):
         if z_delta_histories.shape[0] != x_delta_histories.shape[0]:
             raise ValueError("Z and X delta-history batches must have the same shot count.")
 
-        x_corrections = self._build_spacetime_matching_graph(
-            self._z_check_matrix,
-            z_delta_histories.shape[1],
-        ).decode_batch(
-            z_delta_histories.reshape(len(z_delta_histories), -1),
-            return_weights=False,
+        x_data_corrections, z_data_corrections = (
+            self._matching_graph(
+                check_basis, (check_names,) * delta_history_batch.shape[1]
+            ).decode_batch(
+                delta_history_batch.reshape(len(delta_history_batch), -1),
+                return_weights=False,
+            )
+            for check_basis, delta_history_batch, check_names in (
+                ("z", z_delta_histories, self.z_stabilizer_names),
+                ("x", x_delta_histories, self.x_stabilizer_names),
+            )
         )
-        z_corrections = self._build_spacetime_matching_graph(
-            self._x_check_matrix,
-            x_delta_histories.shape[1],
-        ).decode_batch(
-            x_delta_histories.reshape(len(x_delta_histories), -1),
-            return_weights=False,
-        )
-        data_index = {label: index for index, label in enumerate(self.data_qubits)}
-        logical_x = tuple(data_index[label] for label in self._logical_x)
-        logical_z = tuple(data_index[label] for label in self._logical_z)
         return (
-            np.logical_xor.reduce(x_corrections[:, logical_z], axis=1),
-            np.logical_xor.reduce(z_corrections[:, logical_x], axis=1),
+            np.logical_xor.reduce(x_data_corrections[:, self._logical_z_indices], axis=1),
+            np.logical_xor.reduce(z_data_corrections[:, self._logical_x_indices], axis=1),
         )

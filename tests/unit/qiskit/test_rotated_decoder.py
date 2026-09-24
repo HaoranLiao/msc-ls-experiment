@@ -298,7 +298,7 @@ def test_spacetime_data_faults_use_spatial_edges(
     code: ModuleType,
     withheld_x_labels: set[str],
 ) -> None:
-    """Show persistent data faults use spatial edges in joint-round MWPM.
+    """Show persistent data faults use spatial edges in spacetime MWPM.
 
     A detector event is a *change* in a stabilizer outcome, rather than the raw
     outcome itself. Repeating the checks adds a time direction to the ordinary
@@ -453,28 +453,6 @@ def test_spacetime_measurement_faults_use_timelike_edges(
 
     # Both sectors are explained by measurement faults, so no data recovery.
     assert recovery.is_trivial
-
-
-@pytest.mark.parametrize("code", (d3, d5), ids=("d3", "d5"))
-def test_spacetime_complementary_gap_compares_logical_sectors(code: ModuleType) -> None:
-    """A trivial history is one code distance from either logical sector."""
-    zero_z_deltas = dict.fromkeys(code.Z_STABILIZERS, 0)
-    zero_x_deltas = dict.fromkeys(code.X_STABILIZERS, 0)
-
-    recovery = SpaceTimeRotatedDecoder(
-        data_qubits=code.SURFACE_ORDER,
-        z_stabilizers=code.Z_STABILIZERS,
-        x_stabilizers=code.X_STABILIZERS,
-        logical_x=code.DEFAULT_LOGICAL_X,
-        logical_z=code.DEFAULT_LOGICAL_Z,
-    ).decode(
-        z_delta_history=(zero_z_deltas, zero_z_deltas),
-        x_delta_history=(zero_x_deltas, zero_x_deltas),
-    )
-
-    assert recovery.x_complementary_gap == code.DISTANCE
-    assert recovery.z_complementary_gap == code.DISTANCE
-    assert recovery.complementary_gap == code.DISTANCE
 
 
 @pytest.mark.parametrize(
