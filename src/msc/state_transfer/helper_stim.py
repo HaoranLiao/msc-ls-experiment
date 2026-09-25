@@ -123,40 +123,34 @@ def transfer_measurement_layout(
                 key=lambda name: (patch_spec.merge_verification_stabilizer_indices[name], name[0]),
             )
         )
-    measurement_chunks: list[tuple[str, tuple[str, ...]]] = []
+    family_labels: dict[str, list[str]] = {}
+    family_positions: dict[str, list[int]] = {}
+    next_position = 0
+
+    def record_measurements(name: str, width: int) -> None:
+        """Assign the next chunk of one family's labels to the global Stim record."""
+        nonlocal next_position
+        recorded_labels = family_labels.setdefault(name, [])
+        start = len(recorded_labels)
+        chunk = labels[name][start : start + width]
+        recorded_labels.extend(chunk)
+        family_positions.setdefault(name, []).extend(
+            range(next_position, next_position + len(chunk))
+        )
+        next_position += len(chunk)
+
     if measure_encoder_flags:
-        measurement_chunks.append(("enc_flags", labels["enc_flags"]))
-    measurement_chunks.append(("steane_qed", labels["steane_qed"]))
+        record_measurements("enc_flags", len(labels["enc_flags"]))
+    record_measurements("steane_qed", len(labels["steane_qed"]))
     if include_cultivation:
-        measurement_chunks.append(("cult", labels["cult"]))
-    measurement_chunks.extend((name, labels[name]) for name in ("surface_init_z", "surface_init_x"))
-
-    cursors = {name: 0 for name in labels}
-    for name, chunk in measurement_chunks:
-        cursors[name] += len(chunk)
-
-    def take_measurement_labels(name: str, width: int) -> tuple[str, ...]:
-        start = cursors[name]
-        cursors[name] += width
-        return labels[name][start : start + width]
+        record_measurements("cult", len(labels["cult"]))
+    for name in ("surface_init_z", "surface_init_x"):
+        record_measurements(name, len(labels[name]))
 
     for round_index in range(common.LATTICE_SURGERY_ROUNDS):
-        measurement_chunks.extend(
-            (
-                (
-                    "interface_z",
-                    take_measurement_labels("interface_z", len(spec.merged_boundary_checks)),
-                ),
-                (
-                    "merged_surface_z",
-                    take_measurement_labels("merged_surface_z", len(spec.z_labels)),
-                ),
-                (
-                    "merged_surface_x",
-                    take_measurement_labels("merged_surface_x", len(spec.merged_x_labels)),
-                ),
-            )
-        )
+        record_measurements("interface_z", len(spec.merged_boundary_checks))
+        record_measurements("merged_surface_z", len(spec.z_labels))
+        record_measurements("merged_surface_x", len(spec.merged_x_labels))
         if patch_sites == 14:
             stabilizer_bases, stabilizer_indices = common.resolve_14_site_patch_stabilizer_checks(
                 tuple(
@@ -176,30 +170,15 @@ def transfer_measurement_layout(
                         family = "steane_bell_partner_flags"
                     else:  # pragma: no cover - assigned by the shared selector.
                         raise ValueError(f"Unsupported superdense readout role: {readout_role!r}.")
-                    measurement_chunks.append((family, take_measurement_labels(family, 1)))
+                    record_measurements(family, 1)
         elif patch_sites == 11:
             for _ in patch_spec.merge_verification_rounds[round_index]:
-                verification_chunk = (
-                    "steane_verify",
-                    take_measurement_labels("steane_verify", 1),
-                )
-                measurement_chunks.append(verification_chunk)
+                record_measurements("steane_verify", 1)
         else:  # pragma: no cover - resolved patch specs support only 11/14 sites.
             raise ValueError("patch_sites must be 11 or 14.")
 
-    measurement_chunks.extend(
-        (name, take_measurement_labels(name, len(labels[name])))
-        for name in ("steane_x", "surface_x_recovery")
-    )
-    family_labels: dict[str, list[str]] = {}
-    family_positions: dict[str, list[int]] = {}
-    next_position = 0
-    for name, chunk in measurement_chunks:
-        family_labels.setdefault(name, []).extend(chunk)
-        family_positions.setdefault(name, []).extend(
-            range(next_position, next_position + len(chunk))
-        )
-        next_position += len(chunk)
+    for name in ("steane_x", "surface_x_recovery"):
+        record_measurements(name, len(labels[name]))
     if any(tuple(family_labels[name]) != expected for name, expected in labels.items()):
         raise RuntimeError("Stim measurement order does not cover the shared schema.")
     return TransferMeasurementLayout(

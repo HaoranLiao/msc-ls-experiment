@@ -59,17 +59,13 @@ def merge_counts(counts: Iterable[Mapping[str, int]]) -> dict[str, int]:
     return merged
 
 
-def _flatten_qiskit_bitstring(bitstring: str) -> str:
-    return bitstring.replace(" ", "")
-
-
 def qiskit_bit_value(bitstring: str, position: int) -> int:
     """Return a bit from a Qiskit counts key using Qiskit bit positions.
 
     Qiskit count keys are printed most-significant bit first, so classical bit
     position 0 is the rightmost bit after removing register-separating spaces.
     """
-    bits = _flatten_qiskit_bitstring(bitstring)
+    bits = bitstring.replace(" ", "")
     if position < 0 or position >= len(bits):
         raise ValueError(f"bit position {position} is outside bitstring {bitstring!r}.")
     return int(bits[len(bits) - 1 - position])
@@ -83,7 +79,7 @@ def qiskit_bit_values(bitstrings: Sequence[str]) -> np.ndarray:
     ``i``. Register-separating spaces are ignored, and every key must have the
     same width.
     """
-    flattened = [_flatten_qiskit_bitstring(bitstring) for bitstring in bitstrings]
+    flattened = [bitstring.replace(" ", "") for bitstring in bitstrings]
     width = len(flattened[0]) if flattened else 0
     if any(len(bitstring) != width for bitstring in flattened):
         raise ValueError("every Qiskit counts key must have the same number of bits.")
@@ -101,7 +97,7 @@ def parse_qiskit_bitstring(
     significant bit first).  This reverses the string so that index 0
     corresponds to classical bit 0, then zips with *labels*.
     """
-    flattened = _flatten_qiskit_bitstring(bitstring)
+    flattened = bitstring.replace(" ", "")
     if len(flattened) != len(labels):
         raise ValueError(
             f"bitstring {bitstring!r} has {len(flattened)} bits, "
@@ -127,7 +123,7 @@ def parse_qiskit_registers(
             for (name, labels), chunk in zip(reversed(register_labels), parts, strict=True)
         }
 
-    flattened = _flatten_qiskit_bitstring(bitstring)
+    flattened = bitstring.replace(" ", "")
     expected_width = sum(len(labels) for _, labels in register_labels)
     if len(flattened) != expected_width:
         raise ValueError(

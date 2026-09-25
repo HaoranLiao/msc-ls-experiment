@@ -173,32 +173,28 @@ class DetectorErrorModelShotAnalyzer:
         """
         gap_threshold = self._complementary_gap_postselection_threshold
         if gap_threshold is not None:
-            gap_analysis = self.decode_complementary_gap_samples(
-                detection_events,
-                observable_flips,
+            is_accepted_shot, is_logical_error_shot, complementary_gaps = (
+                self.decode_complementary_gap_samples(detection_events, observable_flips)
             )
-            acceptance_mask, logical_error_mask, complementary_gaps = gap_analysis
-            acceptance_mask &= complementary_gaps >= gap_threshold
-            logical_error_mask &= acceptance_mask
-            return acceptance_mask, logical_error_mask
-        else:
-            detection_events, observable_flips = self._normalize_samples(
-                detection_events,
-                observable_flips,
-            )
-            acceptance_mask = self._postselection_acceptance(detection_events)
-            logical_error_mask = np.zeros(len(detection_events), dtype=bool)
-            accepted_shot_indices = np.flatnonzero(acceptance_mask)
-            if accepted_shot_indices.size == 0:
-                return acceptance_mask, logical_error_mask
+            is_accepted_shot &= complementary_gaps >= gap_threshold
+            is_logical_error_shot &= is_accepted_shot
+            return is_accepted_shot, is_logical_error_shot
+        detection_events, observable_flips = self._normalize_samples(
+            detection_events,
+            observable_flips,
+        )
+        is_accepted_shot = self._postselection_acceptance(detection_events)
+        is_logical_error_shot = np.zeros(len(detection_events), dtype=bool)
+        accepted_shot_indices = np.flatnonzero(is_accepted_shot)
+        if accepted_shot_indices.size:
             predictions = np.asarray(
                 self._matching.decode_batch(detection_events[accepted_shot_indices]),
                 dtype=bool,
             ).reshape(-1)
-            logical_error_mask[accepted_shot_indices] = (
+            is_logical_error_shot[accepted_shot_indices] = (
                 predictions != observable_flips[accepted_shot_indices, 0]
             )
-            return acceptance_mask, logical_error_mask
+        return is_accepted_shot, is_logical_error_shot
 
     def decode_complementary_gap_samples(
         self,
@@ -227,15 +223,15 @@ class DetectorErrorModelShotAnalyzer:
             observable_flips,
         )
         accepted_before_gap_selection = self._postselection_acceptance(detection_events)
-        logical_error_mask = np.zeros(len(detection_events), dtype=bool)
+        is_logical_error_shot = np.zeros(len(detection_events), dtype=bool)
         complementary_gaps = np.full(len(detection_events), np.nan)
         for shot_index in np.flatnonzero(accepted_before_gap_selection):
             prediction, complementary_gap = self._decode_with_complementary_gap(
                 detection_events[shot_index]
             )
-            logical_error_mask[shot_index] = prediction[0] != observable_flips[shot_index, 0]
+            is_logical_error_shot[shot_index] = prediction[0] != observable_flips[shot_index, 0]
             complementary_gaps[shot_index] = complementary_gap
-        return accepted_before_gap_selection, logical_error_mask, complementary_gaps
+        return accepted_before_gap_selection, is_logical_error_shot, complementary_gaps
 
     def _normalize_samples(
         self,
@@ -266,8 +262,6 @@ class DetectorErrorModelShotAnalyzer:
 
     def _postselection_acceptance(self, detection_events: np.ndarray) -> np.ndarray:
         """Accept shots with no events at any hard-postselection detector."""
-        if not self._postselection_detector_indices.size:
-            return np.ones(len(detection_events), dtype=bool)
         selected_detection_events = detection_events[:, self._postselection_detector_indices]
         return ~selected_detection_events.any(axis=1)
 
@@ -376,27 +370,27 @@ def sample_detector_logical_error_probability(
                 separate_observables=True,
                 bit_packed=True,
             )
-            acceptance_mask = ~packed_detectors.any(axis=1)
+            is_accepted_shot = ~packed_detectors.any(axis=1)
             packed_observable_flips = (packed_observables[:, 0] & 1) != 0
-            logical_error_mask = acceptance_mask & packed_observable_flips
+            is_logical_error_shot = is_accepted_shot & packed_observable_flips
         else:
             detection_events, observable_flips = sampler.sample(
                 current_batch_size,
                 separate_observables=True,
             )
-            acceptance_mask, logical_error_mask = analyzer.postselect_and_decode_samples(
+            is_accepted_shot, is_logical_error_shot = analyzer.postselect_and_decode_samples(
                 detection_events,
                 observable_flips,
             )
         if target_logical_errors is not None:
             remaining_errors = target_logical_errors - logical_errors
-            error_indices = np.flatnonzero(logical_error_mask)
-            if len(error_indices) >= remaining_errors:
-                current_batch_size = int(error_indices[remaining_errors - 1]) + 1
-                acceptance_mask = acceptance_mask[:current_batch_size]
-                logical_error_mask = logical_error_mask[:current_batch_size]
-        accepted_shots += int(np.count_nonzero(acceptance_mask))
-        logical_errors += int(np.count_nonzero(logical_error_mask))
+            logical_error_shot_indices = np.flatnonzero(is_logical_error_shot)
+            if len(logical_error_shot_indices) >= remaining_errors:
+                current_batch_size = int(logical_error_shot_indices[remaining_errors - 1]) + 1
+                is_accepted_shot = is_accepted_shot[:current_batch_size]
+                is_logical_error_shot = is_logical_error_shot[:current_batch_size]
+        accepted_shots += int(np.count_nonzero(is_accepted_shot))
+        logical_errors += int(np.count_nonzero(is_logical_error_shot))
         sampled_shots += current_batch_size
         shots_remaining -= current_batch_size
     return LogicalErrorEstimate(

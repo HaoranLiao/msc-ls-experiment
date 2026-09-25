@@ -111,11 +111,10 @@ def build_noisy_aer_simulator(
         p_measure=p_measure,
         p_reset=p_reset,
     )
-    noisy_simulator = AerSimulator(
+    return AerSimulator(
         noise_model=noise_model,
         seed_simulator=seed_simulator,
     )
-    return noisy_simulator
 
 
 # ---------------------------------------------------------------------------
@@ -154,14 +153,8 @@ def append_pauli_faults(
     KeyError / IndexError
         If a qubit key is not found in *qubit_map*.
     """
-    for pauli, key in faults:
-        if qubit_map is None:
-            qubit = key
-        elif isinstance(qubit_map, Mapping):
-            qubit = qubit_map[key]
-        else:
-            qubit = qubit_map[key]
-
+    for pauli, qubit_key in faults:
+        qubit = qubit_key if qubit_map is None else qubit_map[qubit_key]
         pauli = normalize_pauli_char(pauli)
         if pauli == "I":
             circuit.id(qubit)

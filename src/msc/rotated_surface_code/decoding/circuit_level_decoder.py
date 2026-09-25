@@ -27,8 +27,8 @@ Call structure::
                         complementary_gap_threshold=...)
     ├── _build_calibrated_stim_model(...) -> _CalibratedStimModel
     │   ├── rebuild the logical circuit and require the saved schema
-    │   ├── _verify_frames_and_locate_steane_cuts(
-    │   │       _align_wire_operations(...))   # transpiled == logical up to local frames
+    │   ├── _align_wire_operations(...)       # match anchors and group gate blocks
+    │   ├── _verify_frames_and_locate_steane_cuts(...)  # verify local frames
     │   ├── noiseless Stim stand-in for the Steane input
     │   ├── _append_calibrated_suffix(...)     # physical suffix with calibrated noise
     │   └── shared labeled detectors, logical observable, optional gap detector
@@ -145,26 +145,31 @@ class CircuitLevelDecoder:
         """
         keys = list(counts)
         multiplicities = np.fromiter(counts.values(), dtype=np.int64, count=len(keys))
+        record_clbits = list(self.record_clbits)
         logical_zero_shots = logical_one_shots = 0
         for start in range(0, len(keys), _BATCH_SIZE):
             # Hardware keys follow Qiskit bit order; Stim needs its record order.
             clbits = qiskit_bit_values(keys[start : start + _BATCH_SIZE])
-            if clbits.shape[1] != len(self.record_clbits):
-                raise ValueError(f"every count key must contain {len(self.record_clbits)} bits.")
+            if clbits.shape[1] != len(record_clbits):
+                raise ValueError(f"every count key must contain {len(record_clbits)} bits.")
             detection_events, observable_flips = self._converter.convert(
-                measurements=clbits[:, list(self.record_clbits)],
+                measurements=clbits[:, record_clbits],
                 separate_observables=True,
             )
-            accepted, logical_errors = self.analyzer.postselect_and_decode_samples(
+            is_accepted_shot, is_logical_error_shot = self.analyzer.postselect_and_decode_samples(
                 detection_events,
                 observable_flips,
             )
             # The analyzer reports disagreement with the noiseless reference, so
             # undo that offset to recover the logical outcome.
-            logical_ones = logical_errors ^ bool(self.reference_logical_bit)
+            is_logical_one_shot = is_logical_error_shot ^ bool(self.reference_logical_bit)
             batch_multiplicities = multiplicities[start : start + _BATCH_SIZE]
-            logical_zero_shots += int(batch_multiplicities[accepted & ~logical_ones].sum())
-            logical_one_shots += int(batch_multiplicities[accepted & logical_ones].sum())
+            logical_zero_shots += int(
+                batch_multiplicities[is_accepted_shot & ~is_logical_one_shot].sum()
+            )
+            logical_one_shots += int(
+                batch_multiplicities[is_accepted_shot & is_logical_one_shot].sum()
+            )
         return logical_zero_shots, logical_one_shots
 
 
@@ -254,6 +259,7 @@ def _build_calibrated_stim_model(
     ) or submitted_circuit.num_clbits != logical_circuit.num_clbits:
         raise ValueError("the saved measurement schema does not match the rebuilt protocol.")
     clbit_records = [(family, label) for family, labels in schema.items() for label in labels]
+    clbit_by_record = {record: clbit for clbit, record in enumerate(clbit_records)}
 
     # Decide what the noiseless stand-in replaces: the logical Steane input
     # before the first surface or interface operation. It must own exactly the
@@ -282,8 +288,12 @@ def _build_calibrated_stim_model(
     # aligning logical and physical operations wire by wire.
     physical_by_virtual = layout.initial_index_layout()[: logical_circuit.num_qubits]
     steane_wires = physical_by_virtual[:NUM_QUBITS_PATCH_14_SITES]
+    logical_wires, physical_wires = _align_wire_operations(
+        logical_circuit, submitted_circuit, physical_by_virtual
+    )
     steane_cuts = _verify_frames_and_locate_steane_cuts(
-        _align_wire_operations(logical_circuit, submitted_circuit, physical_by_virtual),
+        logical_wires,
+        physical_wires,
         steane_wires=steane_wires,
         steane_input_length=steane_input_length,
     )
@@ -341,7 +351,7 @@ def _build_calibrated_stim_model(
     # measurements.
     standin_detector_count = circuit.num_detectors
     record_clbits = (
-        *(clbit_records.index(record) for record in standin_records),
+        *(clbit_by_record[record] for record in standin_records),
         *_append_calibrated_suffix(
             circuit,
             submitted_circuit,
@@ -431,11 +441,26 @@ class _WireOperation:
     position: int
 
 
+@dataclass
+class _AnchoredWireOperations:
+    """Keep one wire's anchors and intervening gate blocks in circuit order.
+
+    ``blocks[i]`` precedes ``anchors[i]``; the final block follows the last
+    anchor. ``operation_count`` counts the circuit instructions on this wire, so a
+    composite measurement/reset still occupies one position despite supplying two
+    anchors.
+    """
+
+    anchors: list[_WireOperation]
+    blocks: list[list[_WireOperation]]
+    operation_count: int = 0
+
+
 def _align_wire_operations(
     logical_circuit: QuantumCircuit,
     submitted_circuit: QuantumCircuit,
     physical_by_virtual: Sequence[int],
-) -> dict[int, tuple[tuple[_WireOperation, ...], tuple[_WireOperation, ...]]]:
+) -> tuple[dict[int, _AnchoredWireOperations], dict[int, _AnchoredWireOperations]]:
     """Pair each wire's logical and physical operations after matching their anchors.
 
     Logical CX becomes H-CZ-H on its target, a leading reset on a fresh wire is
@@ -465,8 +490,8 @@ def _align_wire_operations(
     # it to the same physical CZ.
     physical_cz_by_logical_cx: dict[int, int] = {}
     for wire in physical_by_virtual:
-        logical_anchors = [op for op in logical_operations[wire] if op.anchor is not None]
-        physical_anchors = [op for op in physical_operations[wire] if op.anchor is not None]
+        logical_anchors = logical_operations[wire].anchors
+        physical_anchors = physical_operations[wire].anchors
         if [op.anchor for op in logical_anchors] != [op.anchor for op in physical_anchors]:
             raise ValueError(f"wire {wire} anchors differ between logical and submitted circuits.")
         for logical_anchor, physical_anchor in zip(logical_anchors, physical_anchors, strict=True):
@@ -475,9 +500,7 @@ def _align_wire_operations(
                 physical_anchor.instruction_index,
             ) != physical_anchor.instruction_index:
                 raise ValueError("a logical CX matches different physical CZs on its wires.")
-    return {
-        wire: (logical_operations[wire], physical_operations[wire]) for wire in physical_by_virtual
-    }
+    return logical_operations, {wire: physical_operations[wire] for wire in physical_by_virtual}
 
 
 def _split_wire_operations(
@@ -485,7 +508,7 @@ def _split_wire_operations(
     wire_labels: Sequence[int],
     *,
     logical: bool,
-) -> dict[int, tuple[_WireOperation, ...]]:
+) -> dict[int, _AnchoredWireOperations]:
     """Split a circuit into ordered single-qubit-gate and anchor operations per physical wire.
 
     ``wire_labels`` maps each circuit qubit index to its physical wire. Logical
@@ -497,27 +520,29 @@ def _split_wire_operations(
     # Track each wire's operation positions, which conversion later compares
     # with the Steane cut, and its previous operation, which decides how a
     # reset is anchored.
-    operations_by_wire: dict[int, list[_WireOperation]] = {wire: [] for wire in wire_labels}
-    operation_counts = dict.fromkeys(wire_labels, 0)
+    operations_by_wire = {wire: _AnchoredWireOperations([], [[]]) for wire in wire_labels}
+    wire_by_qubit = dict(zip(circuit.qubits, wire_labels, strict=True))
+    clbit_indices = {clbit: index for index, clbit in enumerate(circuit.clbits)}
     previous_names: dict[int, str | None] = dict.fromkeys(wire_labels)
     for instruction_index, instruction in enumerate(circuit.data):
         operation = instruction.operation
         name = operation.name
         if name == "barrier":
             continue
-        wires = [wire_labels[circuit.find_bit(qubit).index] for qubit in instruction.qubits]
-        clbits = tuple(circuit.find_bit(clbit).index for clbit in instruction.clbits)
+        wires = [wire_by_qubit[qubit] for qubit in instruction.qubits]
+        clbits = tuple(clbit_indices[clbit] for clbit in instruction.clbits)
         for qubit_position, wire in enumerate(wires):
-            position = operation_counts[wire]
-            operation_counts[wire] += 1
+            wire_operations = operations_by_wire[wire]
+            position = wire_operations.operation_count
+            wire_operations.operation_count += 1
             previous_name = previous_names[wire]
             previous_names[wire] = name
             # Anchors (CZ, measurement, reset) must match exactly; every other
             # operation becomes a matrix compared only up to the local frame.
             if name == ("cx" if logical else "cz"):
-                cz = [(("cz", wires[1 - qubit_position]), None)]
-                is_cx_target = logical and qubit_position == 1
-                entries = [(None, _HADAMARD), *cz, (None, _HADAMARD)] if is_cx_target else cz
+                entries = [(("cz", wires[1 - qubit_position]), None)]
+                if logical and qubit_position == 1:
+                    entries = [(None, _HADAMARD), *entries, (None, _HADAMARD)]
             elif name in ("measure", "measure_2"):
                 entries = [(("measure", clbits), None)]
             elif name == "measure_reset_2" and not logical:
@@ -533,12 +558,20 @@ def _split_wire_operations(
                 entries = [(None, np.asarray(operation.to_matrix(), dtype=complex))]
             else:
                 raise ValueError(f"unsupported {'logical' if logical else 'submitted'} {name!r}.")
-            operations_by_wire[wire].extend(
-                _WireOperation(anchor, unitary, instruction_index, position)
-                for anchor, unitary in entries
-            )
+            # Split each wire into blocks at its anchors. Between consecutive anchors,
+            # logical and physical gates may differ individually but must agree as a
+            # block up to the local frame.
+            for anchor, unitary in entries:
+                wire_operation = _WireOperation(anchor, unitary, instruction_index, position)
+                if anchor is None:
+                    wire_operations.blocks[-1].append(wire_operation)
+                else:
+                    wire_operations.anchors.append(wire_operation)
+                    wire_operations.blocks.append([])
     return {
-        wire: tuple(operations) for wire, operations in operations_by_wire.items() if operations
+        wire: operations
+        for wire, operations in operations_by_wire.items()
+        if operations.anchors or operations.blocks[0]
     }
 
 
@@ -565,7 +598,8 @@ class _SteaneCut:
 
 
 def _verify_frames_and_locate_steane_cuts(
-    wires: Mapping[int, tuple[Sequence[_WireOperation], Sequence[_WireOperation]]],
+    logical_wires: Mapping[int, _AnchoredWireOperations],
+    physical_wires: Mapping[int, _AnchoredWireOperations],
     *,
     steane_wires: Sequence[int],
     steane_input_length: int,
@@ -589,62 +623,37 @@ def _verify_frames_and_locate_steane_cuts(
     composite measurement/reset whose measurement ends the input keeps only its
     reset. Returns one Steane cut per Steane wire that the input touches.
     """
-    # Split each wire into blocks at its anchors. Between consecutive anchors,
-    # logical and physical gates may differ individually but must agree as a
-    # block up to the local frame.
-    blocks: dict[tuple[int, bool], list[tuple[_WireOperation, ...]]] = {}
-    anchors: dict[tuple[int, bool], list[_WireOperation]] = {}
-    for wire, wire_operations in wires.items():
-        for logical, operations in zip((True, False), wire_operations, strict=True):
-            blocks[wire, logical], anchors[wire, logical] = [[]], []
-            for operation in operations:
-                if operation.anchor is None:
-                    blocks[wire, logical][-1].append(operation)
-                else:
-                    anchors[wire, logical].append(operation)
-                    blocks[wire, logical].append([])
-            blocks[wire, logical] = [tuple(block) for block in blocks[wire, logical]]
-
     # Express each Steane wire's cut in the same block coordinates, so the
     # frame walk below knows which block to split.
     cut_locations: dict[int, tuple[int, int]] = {}
     for wire in steane_wires:
-        logical_operations = wires[wire][0]
-        input_operations = [
-            op for op in logical_operations if op.instruction_index < steane_input_length
-        ]
-        if logical_operations[: len(input_operations)] != tuple(input_operations):
-            raise ValueError(f"wire {wire} interleaves Steane input and suffix operations.")
-        if input_operations:
-            input_anchor_indices = [
-                index for index, op in enumerate(input_operations) if op.anchor is not None
-            ]
-            last_input_anchor = input_anchor_indices[-1] if input_anchor_indices else -1
-            cut_locations[wire] = (
-                len(input_anchor_indices),
-                len(input_operations) - last_input_anchor - 1,
-            )
+        logical_wire = logical_wires[wire]
+        input_anchor_count = sum(
+            anchor.instruction_index < steane_input_length for anchor in logical_wire.anchors
+        )
+        input_gate_count = sum(
+            gate.instruction_index < steane_input_length
+            for gate in logical_wire.blocks[input_anchor_count]
+        )
+        if input_anchor_count or input_gate_count:
+            cut_locations[wire] = input_anchor_count, input_gate_count
 
     # Walk state: each wire's running local frame, and the Steane cuts recorded
     # as the walk passes them.
-    frames = dict.fromkeys(wires, _IDENTITY)
+    frames = dict.fromkeys(logical_wires, _IDENTITY)
     steane_cuts: dict[int, _SteaneCut] = {}
 
     def advance_block(wire: int, block_index: int) -> None:
         """Update ``F`` to ``U_physical · F · U_logical^dagger``, splitting a cut block first."""
-        logical_block = blocks[wire, True][block_index]
-        physical_block = blocks[wire, False][block_index]
-        if cut_locations.get(wire, (None,))[0] == block_index:
-            physical_anchors = anchors[wire, False]
+        logical_block = logical_wires[wire].blocks[block_index]
+        physical_block = physical_wires[wire].blocks[block_index]
+        cut_location = cut_locations.get(wire)
+        if cut_location is not None and cut_location[0] == block_index:
             steane_cuts[wire] = _split_block_at_steane_cut(
                 frames[wire],
-                replaced_logical_gates=logical_block[: cut_locations[wire][1]],
-                physical_block=physical_block,
-                previous_physical_anchor=physical_anchors[block_index - 1] if block_index else None,
-                next_physical_anchor=(
-                    physical_anchors[block_index] if block_index < len(physical_anchors) else None
-                ),
-                wire_operation_count=wires[wire][1][-1].position + 1,
+                replaced_logical_gates=logical_block[: cut_location[1]],
+                physical_wire=physical_wires[wire],
+                block_index=block_index,
             )
         frames[wire] = (
             _block_unitary(physical_block) @ frames[wire] @ _block_unitary(logical_block).conj().T
@@ -654,10 +663,10 @@ def _verify_frames_and_locate_steane_cuts(
     # both must be current. A CZ run is compared as one unit, so its later
     # anchors are skipped when the loop reaches them.
     anchor_events: dict[int, list[tuple[int, int]]] = {}
-    for wire in wires:
-        for block_index, anchor in enumerate(anchors[wire, True]):
+    for wire, logical_wire in logical_wires.items():
+        for block_index, anchor in enumerate(logical_wire.anchors):
             anchor_events.setdefault(anchor.instruction_index, []).append((wire, block_index))
-    consumed_anchors = dict.fromkeys(wires, 0)
+    consumed_anchors = dict.fromkeys(logical_wires, 0)
     for instruction_index in sorted(anchor_events):
         participants = anchor_events[instruction_index]
         if any(consumed_anchors[wire] > block_index for wire, block_index in participants):
@@ -665,17 +674,17 @@ def _verify_frames_and_locate_steane_cuts(
         for wire, block_index in participants:
             advance_block(wire, block_index)
         first_wire, first_block_index = participants[0]
-        anchor_kind = anchors[first_wire, True][first_block_index].anchor[0]
+        anchor_kind = logical_wires[first_wire].anchors[first_block_index].anchor[0]
         if anchor_kind == "cz":
             # Transpilation may resynthesize a whole run of CZs on one pair, so
             # extend over the maximal run.
             (wire_a, block_a), (wire_b, block_b) = participants
             run_length = 1
             while (
-                block_a + run_length < len(anchors[wire_a, True])
-                and block_b + run_length < len(anchors[wire_b, True])
-                and anchors[wire_a, True][block_a + run_length].instruction_index
-                == anchors[wire_b, True][block_b + run_length].instruction_index
+                block_a + run_length < len(logical_wires[wire_a].anchors)
+                and block_b + run_length < len(logical_wires[wire_b].anchors)
+                and logical_wires[wire_a].anchors[block_a + run_length].instruction_index
+                == logical_wires[wire_b].anchors[block_b + run_length].instruction_index
             ):
                 run_length += 1
             if any(
@@ -686,38 +695,34 @@ def _verify_frames_and_locate_steane_cuts(
                 raise ValueError("a resynthesized CZ run crosses the Steane cut.")
             # The physical run must equal the logical one up to local frames
             # on either side; an entangling remainder means they differ.
-            physical_run = logical_run = _CZ
-            for offset in range(1, run_length):
-                for logical in (True, False):
+            runs = []
+            for circuit_wires in (logical_wires, physical_wires):
+                run = _CZ
+                for offset in range(1, run_length):
                     run_block = np.kron(
-                        _block_unitary(blocks[wire_a, logical][block_a + offset]),
-                        _block_unitary(blocks[wire_b, logical][block_b + offset]),
+                        _block_unitary(circuit_wires[wire_a].blocks[block_a + offset]),
+                        _block_unitary(circuit_wires[wire_b].blocks[block_b + offset]),
                     )
-                    if logical:
-                        logical_run = _CZ @ run_block @ logical_run
-                    else:
-                        physical_run = _CZ @ run_block @ physical_run
+                    run = _CZ @ run_block @ run
+                runs.append(run)
+            logical_run, physical_run = runs
             frames[wire_a], frames[wire_b] = _product_factors(
                 physical_run @ np.kron(frames[wire_a], frames[wire_b]) @ logical_run.conj().T,
                 context=f"CZ run on wires {wire_a} and {wire_b}",
             )
             consumed_anchors[wire_a] = block_a + run_length
             consumed_anchors[wire_b] = block_b + run_length
-        elif anchor_kind == "measure":
+        elif anchor_kind in ("measure", "reset", "reset_after_measure"):
             ((wire, block_index),) = participants
-            if not _is_diagonal(frames[wire]):
+            if anchor_kind == "measure" and not _is_diagonal(frames[wire]):
                 raise ValueError(f"a measurement on wire {wire} differs from the logical one.")
-            frames[wire] = _IDENTITY
-            consumed_anchors[wire] = block_index + 1
-        elif anchor_kind in ("reset", "reset_after_measure"):
-            ((wire, block_index),) = participants
             frames[wire] = _IDENTITY
             consumed_anchors[wire] = block_index + 1
         else:  # pragma: no cover - anchors are built by _split_wire_operations.
             raise ValueError(f"unsupported anchor kind {anchor_kind!r}.")
     # Close out the gates after each wire's last anchor, where a cut can lie.
-    for wire in wires:
-        advance_block(wire, len(anchors[wire, True]))
+    for wire, logical_wire in logical_wires.items():
+        advance_block(wire, len(logical_wire.anchors))
     return steane_cuts
 
 
@@ -725,19 +730,21 @@ def _split_block_at_steane_cut(
     frame: np.ndarray,
     *,
     replaced_logical_gates: Sequence[_WireOperation],
-    physical_block: Sequence[_WireOperation],
-    previous_physical_anchor: _WireOperation | None,
-    next_physical_anchor: _WireOperation | None,
-    wire_operation_count: int,
+    physical_wire: _AnchoredWireOperations,
+    block_index: int,
 ) -> _SteaneCut:
     """Split the physical block containing one wire's logical Steane cut.
 
     ``frame`` is the local frame entering the block, and
     ``replaced_logical_gates`` are the block's logical gates before the cut.
     The previous and next anchors identify a composite measurement/reset that
-    straddles the cut; ``wire_operation_count`` places the suffix start past the
-    wire's end when the wire has no suffix.
+    straddles the cut; ``physical_wire.operation_count`` places the suffix start
+    past the wire's end when the wire has no suffix.
     """
+    physical_block = physical_wire.blocks[block_index]
+    anchors = physical_wire.anchors
+    previous_physical_anchor = anchors[block_index - 1] if block_index else None
+    next_physical_anchor = anchors[block_index] if block_index < len(anchors) else None
     # The cut separates a composite measurement from its reset: only the
     # reset belongs to the suffix.
     if (
@@ -770,11 +777,12 @@ def _split_block_at_steane_cut(
     )
     if _is_diagonal(cut_frame):
         initial_x_offset = 0
+        z_frame = cut_frame
     elif _is_diagonal(cut_frame @ _PAULI_X):
         initial_x_offset = 1
+        z_frame = cut_frame @ _PAULI_X
     else:
         raise ValueError("the frame at the Steane cut is not a Z rotation times an X.")
-    z_frame = cut_frame @ np.linalg.matrix_power(_PAULI_X, initial_x_offset)
 
     # Conversion resumes at the first physical operation not dropped above.
     if head_length < len(physical_block):
@@ -782,7 +790,7 @@ def _split_block_at_steane_cut(
     elif next_physical_anchor is not None:
         first_position = next_physical_anchor.position
     else:
-        first_position = wire_operation_count
+        first_position = physical_wire.operation_count
     return _SteaneCut(
         first_suffix_position=first_position,
         initial_phase=float(np.angle(z_frame[1, 1] / z_frame[0, 0])),
@@ -863,12 +871,14 @@ def _append_calibrated_suffix(
     ground_states: dict[int, bool] = {}
     wire_positions = dict.fromkeys(active_wires, 0)
     wire_clocks = dict.fromkeys(active_wires, 0.0)
+    qubit_indices = {qubit: index for index, qubit in enumerate(submitted_circuit.qubits)}
+    clbit_indices = {clbit: index for index, clbit in enumerate(submitted_circuit.clbits)}
     suffix_clbits: list[int] = []
     for instruction in submitted_circuit.data:
         operation = instruction.operation
         name = operation.name
-        wires = tuple(submitted_circuit.find_bit(qubit).index for qubit in instruction.qubits)
-        if name == "barrier" or not set(wires) <= set(wire_positions):
+        wires = tuple(qubit_indices[qubit] for qubit in instruction.qubits)
+        if name == "barrier" or any(wire not in wire_positions for wire in wires):
             continue  # Unused device wires carry only delays.
 
         # Advance timing even through the skipped Steane input, so suffix
@@ -905,7 +915,7 @@ def _append_calibrated_suffix(
                 pending_phases[wire] = 0.0 if steane_cut is None else steane_cut.initial_phase
                 ground_states[wire] = steane_cut is None or steane_cut.reset_only
 
-        (wire, *_) = wires
+        wire = wires[0]
         if name == "rz":
             pending_phases[wire] += float(operation.params[0])
         elif name == "sx":
@@ -945,9 +955,7 @@ def _append_calibrated_suffix(
             )
             if name != "reset" and not is_reset_only:
                 lines.append(f"M({readout_error!r}) {wire}")
-                suffix_clbits.extend(
-                    submitted_circuit.find_bit(clbit).index for clbit in instruction.clbits
-                )
+                suffix_clbits.extend(clbit_indices[clbit] for clbit in instruction.clbits)
             resets = name in ("measure_reset_2", "reset")
             if resets:
                 lines.append(f"R {wire}")

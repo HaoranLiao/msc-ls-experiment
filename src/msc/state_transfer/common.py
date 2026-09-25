@@ -892,16 +892,7 @@ def merged_boundary_checks_stable(measurements: dict[str, object]) -> bool:
     interpreted as the logical ``Z_L Z_L`` teleportation outcome.
     """
     rounds = measurements["interface_z_rounds"]
-    if not rounds:
-        return False
-    check_names = tuple(rounds[0])
-    if any(set(round_bits) != set(check_names) for round_bits in rounds[1:]):
-        return False
-    return all(
-        round_bits[check_name] == rounds[0][check_name]
-        for check_name in check_names
-        for round_bits in rounds[1:]
-    )
+    return bool(rounds) and all(round_bits == rounds[0] for round_bits in rounds[1:])
 
 
 def merged_boundary_logical_zz_outcome(measurements: dict[str, object]) -> int:
@@ -1007,21 +998,21 @@ def transfer_pauli_frame(measurements: dict[str, object]) -> PauliFrame:
     corrections. Future logical readout is interpreted through this frame
     instead of applying physical correction gates.
     """
-    frame = PauliFrame()
-    frame.register("surface")
-    frame.update_x("surface", bool(merged_boundary_logical_zz_outcome(measurements)))
-    frame.update_x("surface", bool(measurements["merged_surface_logical_x_byproduct"]))
-    frame.update_z("surface", bool(parity(measurements["steane_x"], HIRANO_STEANE_LOGICAL_X)))
-    frame.update_z("surface", bool(measurements["merged_surface_logical_z_byproduct"]))
-    frame.update_x(
+    pauli_frame = PauliFrame()
+    pauli_frame.register("surface")
+    pauli_frame.update_x("surface", bool(merged_boundary_logical_zz_outcome(measurements)))
+    pauli_frame.update_x("surface", bool(measurements["merged_surface_logical_x_byproduct"]))
+    pauli_frame.update_z("surface", bool(parity(measurements["steane_x"], HIRANO_STEANE_LOGICAL_X)))
+    pauli_frame.update_z("surface", bool(measurements["merged_surface_logical_z_byproduct"]))
+    pauli_frame.update_x(
         "surface",
         bool(measurements.get("post_transfer_surface_logical_x_byproduct", 0)),
     )
-    frame.update_z(
+    pauli_frame.update_z(
         "surface",
         bool(measurements.get("post_transfer_surface_logical_z_byproduct", 0)),
     )
-    return frame
+    return pauli_frame
 
 
 def corrected_surface_logical_readout(
