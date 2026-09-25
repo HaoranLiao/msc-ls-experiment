@@ -11,7 +11,7 @@ import pytest
 from qiskit import ClassicalRegister, QuantumCircuit
 from qiskit_aer import AerSimulator
 
-from msc.noise import build_noisy_aer_simulator
+from msc.noise.fault_injection_qiskit import build_noisy_aer_simulator
 from msc.steane_code.magic_state_cultivation_common import (
     PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
     PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,

@@ -7,6 +7,10 @@ from pathlib import Path
 import pytest
 import yaml
 
+from msc.experiment.results_io import (
+    load_ty_logical_error_rate_result,
+    save_ty_logical_error_rate_result,
+)
 from msc.experiment.ty_tomography_diagnostics import ty_tomography_retainment_breakdown
 from msc.state_transfer import common
 from msc.state_transfer.ler_qiskit import (
@@ -38,6 +42,7 @@ TOMOGRAPHY_CONFIG: dict[str, object] = {
     "post_injection_qed_checks": "full",
     "post_transfer_stabilizer_rounds": 2,
     "add_barriers": False,
+    "complementary_gap_threshold": None,
 }
 
 
@@ -59,7 +64,7 @@ def _bitstring(positions: tuple[int, ...], width: int) -> str:
 
 
 # =============================================================================
-# Tomography full-circuit configuration
+# Ty tomography construction and acceptance
 # =============================================================================
 
 
@@ -122,6 +127,32 @@ def test_tomography_yaml_matches_constructed_circuits_and_analysis(
         measurement_schemas={
             basis: circuit.metadata["measurement_schema"] for basis, circuit in circuits.items()
         },
+    )
+    assert summary.accepted_x_shots == summary.accepted_z_shots == 4
+
+
+@pytest.mark.parametrize(
+    ("preset", "steane_qed_width"),
+    # 'minimal' keeps the distance-three subset Z_0145, X_0235, Z_0235: face 0145
+    # reads only Z, so it retains a Bell-partner flag alongside Z_0145, while face
+    # 0235 extracts both bases and face 0246 is dropped. 'full' keeps all six
+    # stabilizers plus face 0246's D2-copy flag.
+    (("minimal", 4), ("full", 7)),
+)
+def test_post_injection_qed_preset_selects_the_steane_qed_record(
+    tmp_path: Path,
+    preset: PostInjectionQedChecks,
+    steane_qed_width: int,
+) -> None:
+    """The named QED preset threads consistently through construction and analysis."""
+    config_path = _write_config(tmp_path, patch_sites=14, post_injection_qed_checks=preset)
+    circuits = build_ty_tomography_circuits(circuit_config_path=config_path)
+    steane_qed = next(r for r in circuits["X"].cregs if r.name == "steane_qed")
+    assert len(steane_qed) == steane_qed_width
+
+    summary = analyze_ty_tomography_counts(
+        {basis: {"0" * circuits[basis].num_clbits: 4} for basis in ("X", "Z")},
+        circuit_config_path=config_path,
     )
     assert summary.accepted_x_shots == summary.accepted_z_shots == 4
 
@@ -220,30 +251,9 @@ def test_postselection_yaml_controls_acceptance(
     assert breakdown.retained_shots == retained_shots
 
 
-@pytest.mark.parametrize(
-    ("preset", "steane_qed_width"),
-    # 'minimal' keeps the distance-three subset Z_0145, X_0235, Z_0235: face 0145
-    # reads only Z, so it retains a Bell-partner flag alongside Z_0145, while face
-    # 0235 extracts both bases and face 0246 is dropped. 'full' keeps all six
-    # stabilizers plus face 0246's D2-copy flag.
-    (("minimal", 4), ("full", 7)),
-)
-def test_post_injection_qed_preset_selects_the_steane_qed_record(
-    tmp_path: Path,
-    preset: PostInjectionQedChecks,
-    steane_qed_width: int,
-) -> None:
-    """The named QED preset threads consistently through construction and analysis."""
-    config_path = _write_config(tmp_path, patch_sites=14, post_injection_qed_checks=preset)
-    circuits = build_ty_tomography_circuits(circuit_config_path=config_path)
-    steane_qed = next(r for r in circuits["X"].cregs if r.name == "steane_qed")
-    assert len(steane_qed) == steane_qed_width
-
-    summary = analyze_ty_tomography_counts(
-        {basis: {"0" * circuits[basis].num_clbits: 4} for basis in ("X", "Z")},
-        circuit_config_path=config_path,
-    )
-    assert summary.accepted_x_shots == summary.accepted_z_shots == 4
+# =============================================================================
+# Ty tomography config validation
+# =============================================================================
 
 
 def test_yaml_rejects_unknown_post_injection_qed_checks(tmp_path: Path) -> None:
@@ -260,8 +270,24 @@ def test_yaml_rejects_unknown_merge_schedule(tmp_path: Path) -> None:
         build_ty_tomography_circuits(circuit_config_path=config_path)
 
 
+def test_complementary_gap_threshold_requires_a_nonnegative_circuit_level_setting(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="nonnegative"):
+        build_ty_tomography_circuits(
+            circuit_config_path=_write_config(tmp_path, complementary_gap_threshold=-1.0)
+        )
+
+    # Simulated logical circuits have no calibration, so no gap filter applies.
+    with pytest.raises(ValueError, match="requires circuit-level decoding inputs"):
+        analyze_ty_tomography_counts(
+            {"X": {}, "Z": {}},
+            circuit_config_path=_write_config(tmp_path, complementary_gap_threshold=1.0),
+        )
+
+
 # =============================================================================
-# LER full-circuit configuration
+# Ty LER sweep configuration and saved results
 # =============================================================================
 
 
@@ -311,6 +337,18 @@ def test_ler_yaml_matches_sweep_circuits_and_analysis(tmp_path: Path) -> None:
     assert all(point.accepted_x_shots == 10 for point in summary.tomography)
     assert all(point.accepted_z_shots == 10 for point in summary.tomography)
     assert summary.logical_error_rate_per_round == pytest.approx(0.0, abs=1e-8)
+
+    # The saved result round-trips the per-point counts and the fitted summary.
+    result_path = save_ty_logical_error_rate_result(
+        counts_by_round=counts_by_round,
+        summary=summary,
+        metadata={"backend": "aer"},
+        directory=tmp_path / "results",
+    )
+    saved_result = load_ty_logical_error_rate_result(result_path)
+    assert saved_result["counts_by_round"] == counts_by_round
+    assert saved_result["summary"] == summary
+    assert saved_result["metadata"]["backend"] == "aer"
 
 
 # =============================================================================

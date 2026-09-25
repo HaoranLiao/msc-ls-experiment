@@ -6,7 +6,7 @@ Public circuit paths::
     └── append_post_transfer_and_readout(...)
         ├── append_post_transfer_stabilization(...)
         │   └── post_transfer_stim.append_rotated_full_stabilizer_rounds(...)
-        └── d5.append_full_data_readout(...)
+        └── destructive full-data readout and common.readout_boundary_detectors(...)
 
     end-to-end logical-Pauli experiment
     ├── append_post_transfer_stabilization(...)
@@ -172,28 +172,22 @@ def append_post_transfer_and_readout(
         add_ticks=add_ticks,
     )
 
-    # Read every data qubit and close the compatible syndrome boundary.
+    # Read every data qubit in canonical surface order.
     qubits = helper.transfer_qubits(
         TRANSFER_SPEC,
         patch_sites=transfer_layout.patch_sites,
     )
     surface_qubits = [qubits[label] for label in TRANSFER_SPEC.surface_order]
     if readout_basis == "X":
-        compatible_family = POST_TRANSFER_SURFACE_X_FAMILY
+        data_measurement = "MX"
     elif readout_basis == "Z":
-        compatible_family = POST_TRANSFER_SURFACE_Z_FAMILY
+        data_measurement = "M"
     else:
         raise ValueError("post-transfer destructive readout supports only X or Z.")
-    compatible_stabilizer_positions = post_transfer_layout.rounds(
-        compatible_family,
-        stabilizer_rounds,
-    )[-1]
-    data_readout_positions = d5.append_full_data_readout(
-        circuit,
-        readout_basis,
-        surface_qubits=surface_qubits,
-        previous_stabilizer_measurement_positions=compatible_stabilizer_positions,
+    data_readout_positions = tuple(
+        range(circuit.num_measurements, circuit.num_measurements + len(surface_qubits))
     )
+    circuit.append(data_measurement, surface_qubits)
     if add_ticks:
         circuit.append("TICK", [])
     data_readout_family = f"surface_data_{readout_basis.lower()}"
@@ -217,15 +211,26 @@ def append_post_transfer_and_readout(
         data_readout_by_label[label] for label, _ in measurement_terms
     )
 
-    # Combine that support with the lattice-surgery Pauli-frame records.
+    # Close the compatible syndrome boundary, then combine the logical support
+    # with the lattice-surgery Pauli-frame records.
     readout_layout = helper.TransferMeasurementLayout(
         patch_sites=transfer_layout.patch_sites,
         labels=measurement_labels,
         positions=measurement_positions,
         num_measurements=circuit.num_measurements,
     )
+    helper.append_labeled_detectors(
+        circuit,
+        layout=readout_layout,
+        detectors=common.readout_boundary_detectors(
+            TRANSFER_SPEC,
+            surface_readout_basis=readout_basis,
+            post_transfer_stabilizer_rounds=stabilizer_rounds,
+        ),
+    )
     helper.append_transfer_logical_observable(
         circuit,
+        spec=TRANSFER_SPEC,
         layout=readout_layout,
         basis=readout_basis,
     )
@@ -247,7 +252,8 @@ def append_post_transfer_stabilization(
     This wrapper remains in the state-transfer module because it anchors the
     first Z round to merge round 3, anchors compatible X checks to merge round
     3, anchors ``X_ab`` to ``m_ab``, and leaves the previously withheld
-    ``X_cd`` without a detector in round 1. It also extends the transfer
+    ``X_cd`` without a detector in round 1, following the shared
+    ``common.post_transfer_detectors`` rule. It also extends the transfer
     measurement layout. These are lattice-surgery boundary semantics, not
     generic rotated-patch behavior.
 
@@ -277,41 +283,6 @@ def append_post_transfer_stabilization(
         add_ticks=add_ticks,
     )
 
-    # Anchor the first Z round to the final merge round, then compare in time.
-    surface_helper.append_stabilizer_detectors(
-        circuit,
-        rounds=z_measurement_rounds,
-        first_round_reference=transfer_layout.rounds("merged_surface_z")[-1],
-    )
-
-    # Anchor compatible X checks to merge round 3 and X_ab to m_ab. X_cd has no
-    # post-merge reference, so its first full-round result starts a new stream.
-    x_reference_by_label = dict(
-        zip(
-            TRANSFER_SPEC.merged_x_labels,
-            transfer_layout.rounds("merged_surface_x")[-1],
-            strict=True,
-        )
-    )
-    x_reference_by_label.update(transfer_layout.by_label("surface_x_recovery"))
-    first_x_round_by_label = dict(zip(TRANSFER_SPEC.x_labels, x_measurement_rounds[0], strict=True))
-    referenced_x_labels = tuple(
-        label for label in TRANSFER_SPEC.x_labels if label in x_reference_by_label
-    )
-    referenced_first_x_round = tuple(first_x_round_by_label[label] for label in referenced_x_labels)
-    first_x_round_reference = tuple(x_reference_by_label[label] for label in referenced_x_labels)
-    surface_helper.append_stabilizer_detectors(
-        circuit,
-        rounds=(referenced_first_x_round,),
-        first_round_reference=first_x_round_reference,
-    )
-    if len(x_measurement_rounds) > 1:
-        surface_helper.append_stabilizer_detectors(
-            circuit,
-            rounds=x_measurement_rounds[1:],
-            first_round_reference=x_measurement_rounds[0],
-        )
-
     # Record every post-transfer result by round and stabilizer label.
     measurement_labels = dict(transfer_layout.labels)
     measurement_positions = dict(transfer_layout.positions)
@@ -339,6 +310,16 @@ def append_post_transfer_stabilization(
     )
     if circuit.num_measurements != post_transfer_layout.num_measurements:
         raise RuntimeError("post-transfer stabilization layout does not match the circuit.")
+
+    # Anchor round 1 to merge round 3 and m_ab, then compare later rounds in time.
+    helper.append_labeled_detectors(
+        circuit,
+        layout=post_transfer_layout,
+        detectors=common.post_transfer_detectors(
+            TRANSFER_SPEC,
+            post_transfer_stabilizer_rounds=stabilizer_rounds,
+        ),
+    )
     return post_transfer_layout
 
 
@@ -440,6 +421,7 @@ def append_ideal_logical_verification(
     )
     helper.append_transfer_logical_observable(
         circuit,
+        spec=TRANSFER_SPEC,
         layout=verification_layout,
         basis=basis,
     )

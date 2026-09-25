@@ -2,7 +2,7 @@
 
 from msc.decoding.pauli_frame import PauliFrame
 from msc.decoding.stabilizer_frame import StabilizerFrame
-from msc.rotated_surface_code.decoding.decoder import (
+from msc.rotated_surface_code.decoding.phenomenological_decoder import (
     RotatedDecoder,
     RotatedDetectedErrors,
     SpaceTimeRotatedDecoder,

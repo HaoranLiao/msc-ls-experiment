@@ -12,7 +12,7 @@ from qiskit.quantum_info import SparsePauliOp, Statevector
 from qiskit.transpiler.passes import RemoveBarriers
 from qiskit_aer import AerSimulator
 
-from msc.noise import append_pauli_faults
+from msc.noise.fault_injection_qiskit import append_pauli_faults
 from msc.steane_code.state_injection_common import (
     LOGICAL_X_REPRESENTATIVES,
     LOGICAL_Z_REPRESENTATIVES,

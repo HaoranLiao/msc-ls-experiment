@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from typing import TypeVar
 
+import numpy as np
+
 _QubitT = TypeVar("_QubitT")
 
 
@@ -71,6 +73,22 @@ def qiskit_bit_value(bitstring: str, position: int) -> int:
     if position < 0 or position >= len(bits):
         raise ValueError(f"bit position {position} is outside bitstring {bitstring!r}.")
     return int(bits[len(bits) - 1 - position])
+
+
+def qiskit_bit_values(bitstrings: Sequence[str]) -> np.ndarray:
+    """Vectorize :func:`qiskit_bit_value` over many count keys and every bit position.
+
+    Decoding whole count dictionaries needs every bit of every key at once:
+    row ``k`` holds ``bitstrings[k]`` and column ``i`` holds classical bit
+    ``i``. Register-separating spaces are ignored, and every key must have the
+    same width.
+    """
+    flattened = [_flatten_qiskit_bitstring(bitstring) for bitstring in bitstrings]
+    width = len(flattened[0]) if flattened else 0
+    if any(len(bitstring) != width for bitstring in flattened):
+        raise ValueError("every Qiskit counts key must have the same number of bits.")
+    characters = np.frombuffer("".join(flattened).encode("ascii"), dtype=np.uint8)
+    return characters.reshape(len(flattened), width)[:, ::-1] == ord("1")
 
 
 def parse_qiskit_bitstring(

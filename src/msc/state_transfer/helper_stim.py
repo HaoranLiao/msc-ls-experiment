@@ -6,20 +6,11 @@ from itertools import zip_longest
 
 import stim
 
-from msc.rotated_surface_code import helper_stim as surface_helper
 from msc.state_transfer import common
 from msc.steane_code import magic_state_cultivation_stim as cultivation
 from msc.steane_code import state_injection_stim as steane
 from msc.utils import circuit_stim
 from msc.utils.normalize import normalize_pauli_char
-
-_STEANE_POSTSELECTION_DETECTOR_FAMILIES = (
-    "enc_flags",
-    "steane_qed",
-    "cult",
-    "steane_verify",
-    "steane_bell_partner_flags",
-)
 
 
 # =============================================================================
@@ -415,46 +406,14 @@ def build_lattice_surgery_circuit(
         merge_schedule=merge_schedule,
     )
 
-    # 6. Hard-postselect color/interface checks, then retain surface history for decoding.
+    # 6. Steane-local checks were annotated inline; append the shared transfer
+    # detectors: postselected color/interface checks, then decodable surface history.
     local_detector_count = sum(
-        len(layout.positions[name])
-        for name in _STEANE_POSTSELECTION_DETECTOR_FAMILIES
-        if name in layout.positions
+        len(layout.positions.get(name, ())) for name in common.STEANE_POSTSELECTION_FAMILIES
     )
     if circuit.num_detectors != local_detector_count:
         raise RuntimeError("transfer-local detector annotations are inconsistent.")
-    interface_rounds = layout.rounds("interface_z")
-    surface_helper.append_stabilizer_detectors(
-        circuit,
-        rounds=interface_rounds[1:],
-        first_round_reference=interface_rounds[0],
-    )
-    final_x_positions = layout.by_label("steane_x") | layout.by_label("surface_x_recovery")
-    for support in common.FINAL_X_VERIFICATION_CHECKS.values():
-        circuit_stim.append_detector(
-            circuit,
-            measurement_positions=tuple(final_x_positions[label] for label in support),
-        )
-    if circuit.num_detectors != num_transfer_protocol_postselection_detectors(layout):
-        raise RuntimeError("transfer protocol detector layout is inconsistent.")
-
-    surface_helper.append_stabilizer_detectors(
-        circuit,
-        rounds=(layout.positions["surface_init_x"],),
-    )
-    merged_z_rounds = layout.rounds("merged_surface_z")
-    surface_helper.append_stabilizer_detectors(
-        circuit,
-        rounds=merged_z_rounds,
-        first_round_reference=layout.positions["surface_init_z"],
-    )
-    surface_helper.append_stabilizer_detectors(
-        circuit,
-        rounds=layout.rounds("merged_surface_x"),
-        first_round_reference=tuple(
-            layout.by_label("surface_init_x")[label] for label in spec.merged_x_labels
-        ),
-    )
+    append_labeled_detectors(circuit, layout=layout, detectors=common.transfer_detectors(spec))
     if circuit.num_measurements != layout.num_measurements:
         raise RuntimeError("transfer measurement layout does not match the Stim circuit.")
     return circuit
@@ -513,6 +472,23 @@ def append_interface_z_round(
 # =============================================================================
 
 
+def append_labeled_detectors(
+    circuit: stim.Circuit,
+    *,
+    layout: TransferMeasurementLayout,
+    detectors: Sequence[common.TransferDetector],
+) -> None:
+    """Resolve shared ``(family, label)`` detector rules into Stim record positions."""
+    positions_by_family = {name: layout.by_label(name) for name in layout.labels}
+    for records, _ in detectors:
+        circuit_stim.append_detector(
+            circuit,
+            measurement_positions=tuple(
+                positions_by_family[family][label] for family, label in records
+            ),
+        )
+
+
 def num_transfer_protocol_postselection_detectors(layout: TransferMeasurementLayout) -> int:
     """Return the hard-postselection prefix length before surface history.
 
@@ -520,9 +496,7 @@ def num_transfer_protocol_postselection_detectors(layout: TransferMeasurementLay
     interface rounds, and the three final X checks reconstructed at demolition.
     """
     steane_detector_count = sum(
-        len(layout.positions[name])
-        for name in _STEANE_POSTSELECTION_DETECTOR_FAMILIES
-        if name in layout.positions
+        len(layout.positions.get(name, ())) for name in common.STEANE_POSTSELECTION_FAMILIES
     )
     interface_width = len(layout.rounds("interface_z")[0])
     return (
@@ -535,6 +509,7 @@ def num_transfer_protocol_postselection_detectors(layout: TransferMeasurementLay
 def append_transfer_logical_observable(
     circuit: stim.Circuit,
     *,
+    spec: common.SurfaceCodeTransferSpec,
     layout: TransferMeasurementLayout,
     basis: common.SurfaceReadoutBasis,
     observable_index: int = 0,
@@ -560,23 +535,19 @@ def append_transfer_logical_observable(
         circuit,
         measurement_positions=(
             layout.positions[f"surface_logical_{basis.lower()}"]
-            + transfer_logical_frame_positions(layout, basis)
+            + transfer_logical_frame_positions(spec, layout, basis)
         ),
         observable_index=observable_index,
     )
 
 
 def transfer_logical_frame_positions(
+    spec: common.SurfaceCodeTransferSpec,
     layout: TransferMeasurementLayout,
     basis: common.SurfaceReadoutBasis,
 ) -> tuple[int, ...]:
-    """Return the transfer records that correct one logical readout basis.
-
-    Steane-X demolition determines the logical Z byproduct, the accepted final
-    interface outcome determines the logical X byproduct, and Y needs both.
-    """
-    basis = normalize_pauli_char(basis)
-    interface = layout.rounds("interface_z")[-1]
-    steane_x = layout.by_label("steane_x")
-    demolition = tuple(steane_x[label] for label in common.HIRANO_STEANE_LOGICAL_X)
-    return demolition if basis == "X" else interface if basis == "Z" else interface + demolition
+    """Resolve the shared transfer-frame records that correct one readout basis."""
+    return tuple(
+        layout.by_label(family)[label]
+        for family, label in common.transfer_logical_frame_records(spec, basis)
+    )

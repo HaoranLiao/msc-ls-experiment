@@ -152,53 +152,6 @@ def _split_after_ideal_input(
     return cast(stim.Circuit, circuit[:split_index]), cast(stim.Circuit, circuit[split_index:])
 
 
-def _persistent_surface_x_detector_indices(
-    layout: transfer_helper.TransferMeasurementLayout,
-    *,
-    protocol_postselection_count: int,
-) -> tuple[int, ...]:
-    """Locate the persistent X_bcgh/X_fgkl detector streams."""
-    labels = transfer.HIRANO_POSTSELECTED_SURFACE_X_LABELS
-    initial_x_start = protocol_postselection_count
-    initial_offsets = {label: i for i, label in enumerate(layout.labels["surface_init_x"])}
-    indices = [initial_x_start + initial_offsets[label] for label in labels]
-
-    merged_x_start = (
-        initial_x_start
-        + len(layout.positions["surface_init_x"])
-        + len(layout.positions["merged_surface_z"])
-    )
-    merged_offsets = {label: i for i, label in enumerate(transfer.TRANSFER_SPEC.merged_x_labels)}
-    merged_width = len(transfer.TRANSFER_SPEC.merged_x_labels)
-    indices.extend(
-        merged_x_start + round_index * merged_width + merged_offsets[label]
-        for round_index in range(common.LATTICE_SURGERY_ROUNDS)
-        for label in labels
-    )
-
-    post_transfer_z_start = merged_x_start + len(layout.positions["merged_surface_x"])
-    post_transfer_x_start = post_transfer_z_start + len(
-        layout.positions[transfer.POST_TRANSFER_SURFACE_Z_FAMILY]
-    )
-    first_round_reference_labels = {
-        *transfer.TRANSFER_SPEC.merged_x_labels,
-        *layout.labels["surface_x_recovery"],
-    }
-    emitted_labels = tuple(
-        label
-        for label in layout.labels[transfer.POST_TRANSFER_SURFACE_X_FAMILY]
-        if not label.startswith("round1_")
-        or label.removeprefix("round1_") in first_round_reference_labels
-    )
-    post_transfer_offsets = {label: i for i, label in enumerate(emitted_labels)}
-    indices.extend(
-        post_transfer_x_start + post_transfer_offsets[f"round{round_index + 1}_{label}"]
-        for round_index in range(transfer.TRANSFER_SPEC.distance)
-        for label in labels
-    )
-    return tuple(indices)
-
-
 class LatticeSurgeryOnlyShotAnalyzer(DetectorErrorModelShotAnalyzer):
     """Apply the selected hard postselection policy and surface decoder.
 
@@ -229,32 +182,39 @@ class LatticeSurgeryOnlyShotAnalyzer(DetectorErrorModelShotAnalyzer):
         analyzer_decoder_model_circuit = (
             None if decoder_model_circuit is None else decoder_model_circuit.copy()
         )
-        if full_post_selection:
-            postselection_detector_indices = range(circuit.num_detectors)
-        else:
-            protocol_postselection_count = (
-                transfer_helper.num_transfer_protocol_postselection_detectors(layout)
-            )
-            ideal_input_detector_count = sum(
-                len(layout.positions.get(name, ())) for name in ("enc_flags", "steane_qed")
-            )
-            first_protocol_postselection_detector = (
-                0 if postselect_steane_input else ideal_input_detector_count
-            )
-            postselection_detector_indices = (
-                *range(
-                    first_protocol_postselection_detector,
-                    protocol_postselection_count,
-                ),
-                *(
-                    _persistent_surface_x_detector_indices(
-                        layout,
-                        protocol_postselection_count=protocol_postselection_count,
-                    )
-                    if persistent_surface_x_postselection
-                    else ()
+        # Shared detector roles in circuit order; trailing readout or ideal
+        # verification detectors are decodable surface history.
+        post_transfer_rounds = len(
+            layout.labels.get(transfer.POST_TRANSFER_SURFACE_Z_FAMILY, ())
+        ) // len(transfer.TRANSFER_SPEC.z_labels)
+        detector_roles: list[common.TransferDetectorRole] = [
+            "protocol"
+            for name in common.STEANE_POSTSELECTION_FAMILIES
+            for _ in layout.positions.get(name, ())
+        ]
+        detector_roles.extend(
+            role
+            for _, role in (
+                *common.transfer_detectors(transfer.TRANSFER_SPEC),
+                *common.post_transfer_detectors(
+                    transfer.TRANSFER_SPEC,
+                    post_transfer_stabilizer_rounds=post_transfer_rounds,
                 ),
             )
+        )
+        detector_roles.extend("surface" for _ in range(circuit.num_detectors - len(detector_roles)))
+        ideal_input_detector_count = sum(
+            len(layout.positions.get(name, ())) for name in ("enc_flags", "steane_qed")
+        )
+        postselection_detector_indices = tuple(
+            index
+            for index in common.transfer_postselection_detector_indices(
+                detector_roles,
+                full_post_selection=full_post_selection,
+                persistent_surface_x_post_selection=persistent_surface_x_postselection,
+            )
+            if full_post_selection or postselect_steane_input or index >= ideal_input_detector_count
+        )
         if complementary_gap_postselection_threshold is not None:
             logical_families = tuple(
                 name for name in layout.positions if name.startswith("surface_logical_")
@@ -266,11 +226,17 @@ class LatticeSurgeryOnlyShotAnalyzer(DetectorErrorModelShotAnalyzer):
             logical_family = logical_families[0]
             readout_basis_name = logical_family.removeprefix("surface_logical_").upper()
             if readout_basis_name == "X":
-                frame_positions = transfer_helper.transfer_logical_frame_positions(layout, "X")
+                frame_positions = transfer_helper.transfer_logical_frame_positions(
+                    transfer.TRANSFER_SPEC, layout, "X"
+                )
             elif readout_basis_name == "Y":
-                frame_positions = transfer_helper.transfer_logical_frame_positions(layout, "Y")
+                frame_positions = transfer_helper.transfer_logical_frame_positions(
+                    transfer.TRANSFER_SPEC, layout, "Y"
+                )
             elif readout_basis_name == "Z":
-                frame_positions = transfer_helper.transfer_logical_frame_positions(layout, "Z")
+                frame_positions = transfer_helper.transfer_logical_frame_positions(
+                    transfer.TRANSFER_SPEC, layout, "Z"
+                )
             else:
                 raise ValueError(f"unsupported surface logical readout {logical_family!r}.")
             global_logical_measurement_positions = (

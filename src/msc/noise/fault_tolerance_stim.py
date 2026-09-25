@@ -44,7 +44,8 @@ class DetectorErrorModelShotAnalyzer:
     detectors reject shots; accepted shots are logical errors when the decoded
     and sampled observable flips disagree. ``decoder_model_circuit`` may
     provide a graphlike detector model with the same detector and observable
-    layout while samples still come from the fully noisy circuit. When a
+    layout while samples still come from the fully noisy circuit. Matching uses
+    only faults that survive hard postselection. When a
     complementary-gap threshold is supplied, the circuit's final detector must
     be the complementary-gap detector.
 
@@ -112,8 +113,41 @@ class DetectorErrorModelShotAnalyzer:
             raise ValueError("decoder_model_circuit must have the same number of detectors.")
         if decoder_model_circuit.num_observables != circuit.num_observables:
             raise ValueError("decoder_model_circuit must have the same number of observables.")
-        detector_error_model = decoder_model_circuit.detector_error_model(decompose_errors=True)
-        self._matching = pymatching.Matching.from_detector_error_model(detector_error_model)
+        # Only faults that survive hard postselection are ever decoded, so match
+        # just those. Each must split into graphlike components that already
+        # occur elsewhere: a newly introduced remnant edge on the complementary-gap
+        # detector would let matching change sector cheaply, which degrades the
+        # prediction and caps the gap.
+        decomposed_error_model = decoder_model_circuit.detector_error_model(
+            decompose_errors=True,
+            ignore_decomposition_failures=True,
+            block_decomposition_from_introducing_remnant_edges=True,
+        )
+        postselected_detectors = set(postselection_indices)
+        matching_error_model = stim.DetectorErrorModel()
+        for instruction in decomposed_error_model.flattened():
+            if instruction.type != "error":
+                continue
+            components: list[list[int]] = [[]]
+            for target in instruction.targets_copy():
+                if target.is_separator():
+                    components.append([])
+                elif target.is_relative_detector_id():
+                    components[-1].append(target.val)
+            if any(postselected_detectors.intersection(component) for component in components):
+                continue
+            if any(len(component) > 2 for component in components):
+                raise ValueError(f"a fault surviving postselection is not graphlike: {instruction}")
+            matching_error_model.append(instruction)
+        # Declaring the last detector and the observable keeps every node in the
+        # graph even when no surviving fault flips it.
+        matching_error_model.append(
+            "detector", [], [stim.target_relative_detector_id(circuit.num_detectors - 1)]
+        )
+        matching_error_model.append(
+            "logical_observable", [], [stim.target_logical_observable_id(0)]
+        )
+        self._matching = pymatching.Matching.from_detector_error_model(matching_error_model)
         self._num_detectors = self._circuit.num_detectors
         self._postselection_detector_indices = np.asarray(
             postselection_indices,

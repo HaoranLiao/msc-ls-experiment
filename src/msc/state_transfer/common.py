@@ -16,7 +16,7 @@ from typing import Literal, assert_never
 from msc.decoding.pauli_frame import PauliFrame
 from msc.decoding.stabilizer_frame import StabilizerFrame
 from msc.rotated_surface_code import common as surface_common
-from msc.rotated_surface_code.decoding.decoder import SpaceTimeRotatedDecoder
+from msc.rotated_surface_code.decoding.phenomenological_decoder import SpaceTimeRotatedDecoder
 from msc.steane_code.magic_state_cultivation_common import (
     PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX,
     PATCH_14_SITE_FOLDED_MEASUREMENT_SITE,
@@ -650,6 +650,234 @@ def _round_bits(
         {label: bits[f"round{round_index + 1}_{label}"] for label in labels}
         for round_index in range(rounds)
     ]
+
+
+# =============================================================================
+# Labeled detectors, logical observables, and detector postselection
+# =============================================================================
+
+
+# Every record in these Steane families is a known-zero postselection check.
+STEANE_POSTSELECTION_FAMILIES: tuple[str, ...] = (
+    "enc_flags",
+    "steane_qed",
+    "cult",
+    "steane_verify",
+    "steane_bell_partner_flags",
+)
+MeasurementRecord = tuple[str, str]
+TransferDetectorRole = Literal["protocol", "persistent_surface_x", "surface"]
+# One detector: the parity of shared-schema ``(family, label)`` records and its
+# postselection role. Protocol detectors always reject, persistent-surface-X
+# detectors reject when that policy is enabled, and surface detectors are
+# decoded unless every detector is postselected.
+TransferDetector = tuple[tuple[MeasurementRecord, ...], TransferDetectorRole]
+
+
+def transfer_detectors(spec: SurfaceCodeTransferSpec) -> tuple[TransferDetector, ...]:
+    """Return the transfer detectors that follow the Steane-local checks.
+
+    Stim builders and the Qiskit circuit-level bridge resolve these labeled
+    rules into their own record positions. Circuit order is:
+
+    1. changes between consecutive interface rounds;
+    2. final X checks reconstructed from Steane-X demolition and ``m_ab``;
+    3. known-+1 initial surface X checks (random initial Z results are only
+       references);
+    4. merged Z rounds, referenced to the initial Z round;
+    5. merged compatible X rounds, referenced to the initial X round.
+    """
+    detectors = [
+        (
+            (
+                ("interface_z", f"round{round_index - 1}_{name}"),
+                ("interface_z", f"round{round_index}_{name}"),
+            ),
+            "protocol",
+        )
+        for round_index in range(2, LATTICE_SURGERY_ROUNDS + 1)
+        for name, _, _ in spec.merged_boundary_checks
+    ]
+    final_x_records = {
+        **{label: ("steane_x", label) for label in HIRANO_STEANE_DATA_ORDER},
+        **{label: ("surface_x_recovery", label) for label in SURFACE_RECOVERY_X_LABELS},
+    }
+    detectors.extend(
+        (tuple(final_x_records[label] for label in support), "protocol")
+        for support in FINAL_X_VERIFICATION_CHECKS.values()
+    )
+    detectors.extend(
+        ((("surface_init_x", label),), _surface_detector_role(label))
+        for label in spec.x_labels
+    )
+    detectors.extend(
+        _stabilizer_change_detectors(
+            "merged_surface_z",
+            spec.z_labels,
+            rounds=LATTICE_SURGERY_ROUNDS,
+            first_round_references={label: ("surface_init_z", label) for label in spec.z_labels},
+        )
+    )
+    detectors.extend(
+        _stabilizer_change_detectors(
+            "merged_surface_x",
+            spec.merged_x_labels,
+            rounds=LATTICE_SURGERY_ROUNDS,
+            first_round_references={
+                label: ("surface_init_x", label) for label in spec.merged_x_labels
+            },
+        )
+    )
+    return tuple(detectors)
+
+
+def post_transfer_detectors(
+    spec: SurfaceCodeTransferSpec,
+    *,
+    post_transfer_stabilizer_rounds: int,
+) -> tuple[TransferDetector, ...]:
+    """Return merge-to-full continuity detectors for the complete surface rounds.
+
+    Round-1 Z checks compare with merge round 3. Compatible X checks compare
+    with merge round 3 and ``X_ab`` with ``m_ab``. The withheld ``X_cd`` has no
+    post-merge reference, so its first full-round result starts a new stream
+    without a detector. Later rounds compare every check with the round before.
+    All Z detectors precede all X detectors.
+    """
+    final_merge_round = f"round{LATTICE_SURGERY_ROUNDS}_"
+    return (
+        *_stabilizer_change_detectors(
+            "post_transfer_surface_z",
+            spec.z_labels,
+            rounds=post_transfer_stabilizer_rounds,
+            first_round_references={
+                label: ("merged_surface_z", final_merge_round + label) for label in spec.z_labels
+            },
+        ),
+        *_stabilizer_change_detectors(
+            "post_transfer_surface_x",
+            spec.x_labels,
+            rounds=post_transfer_stabilizer_rounds,
+            first_round_references={
+                **{
+                    label: ("merged_surface_x", final_merge_round + label)
+                    for label in spec.merged_x_labels
+                },
+                **{label: ("surface_x_recovery", label) for label in SURFACE_RECOVERY_X_LABELS},
+            },
+        ),
+    )
+
+
+def readout_boundary_detectors(
+    spec: SurfaceCodeTransferSpec,
+    *,
+    surface_readout_basis: SurfaceReadoutBasis,
+    post_transfer_stabilizer_rounds: int,
+) -> tuple[TransferDetector, ...]:
+    """Compare stabilizers reconstructed from full-data readout with the last round."""
+    surface_readout_basis = normalize_pauli_char(surface_readout_basis)
+    if surface_readout_basis == "X":
+        stabilizers = spec.x_stabilizers
+    elif surface_readout_basis == "Z":
+        stabilizers = spec.z_stabilizers
+    else:
+        raise ValueError("full-data surface readout basis must be X or Z.")
+    basis_name = surface_readout_basis.lower()
+    return tuple(
+        (
+            (
+                (
+                    f"post_transfer_surface_{basis_name}",
+                    f"round{post_transfer_stabilizer_rounds}_{label}",
+                ),
+                *((f"surface_data_{basis_name}", data_label) for data_label in support),
+            ),
+            "surface",
+        )
+        for label, support in stabilizers.items()
+    )
+
+
+def _stabilizer_change_detectors(
+    family: str,
+    labels: Sequence[str],
+    *,
+    rounds: int,
+    first_round_references: Mapping[str, MeasurementRecord],
+) -> list[TransferDetector]:
+    """Compare each round with the previous one; round 1 uses referenced labels only."""
+    detectors = []
+    for round_index in range(1, rounds + 1):
+        for label in labels:
+            if round_index == 1 and label not in first_round_references:
+                continue
+            previous = (
+                first_round_references[label]
+                if round_index == 1
+                else (family, f"round{round_index - 1}_{label}")
+            )
+            detectors.append(
+                (
+                    (previous, (family, f"round{round_index}_{label}")),
+                    _surface_detector_role(label),
+                )
+            )
+    return detectors
+
+
+def _surface_detector_role(label: str) -> TransferDetectorRole:
+    """Mark Hirano's persistently postselected X streams; other surface checks decode."""
+    if label in PERSISTENT_POSTSELECTED_SURFACE_X_LABELS:
+        return "persistent_surface_x"
+    return "surface"
+
+
+def transfer_logical_frame_records(
+    spec: SurfaceCodeTransferSpec,
+    basis: SurfaceReadoutBasis,
+) -> tuple[MeasurementRecord, ...]:
+    """Return the transfer records whose parity is one readout basis's byproduct.
+
+    Steane-X demolition ``X146`` determines the logical Z byproduct, the final
+    interface round determines the logical X byproduct, and Y needs both. A
+    logical observable adds these records to its readout support exactly once.
+    """
+    basis = normalize_pauli_char(basis)
+    interface = tuple(
+        ("interface_z", f"round{LATTICE_SURGERY_ROUNDS}_{name}")
+        for name, _, _ in spec.merged_boundary_checks
+    )
+    demolition = tuple(("steane_x", label) for label in HIRANO_STEANE_LOGICAL_X)
+    if basis == "X":
+        return demolition
+    elif basis == "Y":
+        return interface + demolition
+    elif basis == "Z":
+        return interface
+    else:  # pragma: no cover - normalize_pauli_char admits only X, Y, and Z.
+        raise ValueError(f"Unsupported logical readout basis: {basis!r}.")
+
+
+def transfer_postselection_detector_indices(
+    roles: Sequence[TransferDetectorRole],
+    *,
+    full_post_selection: bool,
+    persistent_surface_x_post_selection: bool,
+) -> tuple[int, ...]:
+    """Select hard-postselection detectors from roles listed in circuit order.
+
+    Full postselection rejects every listed detector. Otherwise protocol
+    detectors always reject and the persistent ``X_bcgh``/``X_fgkl`` streams
+    reject when enabled; the remaining surface detectors are decoded.
+    """
+    return tuple(
+        index
+        for index, role in enumerate(roles)
+        if full_post_selection
+        or role == "protocol"
+        or (persistent_surface_x_post_selection and role == "persistent_surface_x")
+    )
 
 
 # =============================================================================
