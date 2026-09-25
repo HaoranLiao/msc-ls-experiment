@@ -14,7 +14,7 @@ from msc.noise.fault_injection_stim import append_pauli_faults
 from msc.rotated_surface_code import d3_stim as d3
 from msc.rotated_surface_code import d5_stim as d5
 from msc.rotated_surface_code import helper_stim as helper
-from msc.rotated_surface_code.decoding.decoder import (
+from msc.rotated_surface_code.decoding.phenomenological_decoder import (
     RotatedDecoder,
     SpaceTimeRotatedDecoder,
 )

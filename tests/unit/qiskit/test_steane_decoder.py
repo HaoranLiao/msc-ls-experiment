@@ -10,7 +10,7 @@ from qiskit.quantum_info import SparsePauliOp
 from qiskit_aer import AerSimulator
 
 from msc.decoding import PauliFrame, StabilizerFrame, SteaneDecoder
-from msc.noise import append_pauli_faults
+from msc.noise.fault_injection_qiskit import append_pauli_faults
 from msc.steane_code.state_injection_common import (
     NUM_QUBITS_PATCH_11_SITES,
     PATCH_11_SITE_DATA_SITES,

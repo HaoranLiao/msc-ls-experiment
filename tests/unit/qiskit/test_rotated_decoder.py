@@ -10,7 +10,7 @@ from qiskit_aer import AerSimulator
 
 import msc.rotated_surface_code.d3_qiskit as d3
 import msc.rotated_surface_code.d5_qiskit as d5
-from msc.noise import append_pauli_faults
+from msc.noise.fault_injection_qiskit import append_pauli_faults
 from msc.rotated_surface_code.decoding import (
     PauliFrame,
     RotatedDecoder,

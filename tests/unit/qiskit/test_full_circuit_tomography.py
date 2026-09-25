@@ -8,7 +8,9 @@ from typing import cast
 import pytest
 from qiskit_aer import AerSimulator
 
-from msc.rotated_surface_code.decoding.decoder import SpaceTimeRotatedDetectedErrors
+from msc.rotated_surface_code.decoding.phenomenological_decoder import (
+    SpaceTimeRotatedDetectedErrors,
+)
 from msc.state_transfer import common
 from msc.state_transfer import to_d5_rotated_qiskit as d5
 from msc.state_transfer.tomography_qiskit import (

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import pairwise
 from math import exp, hypot, isfinite
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import yaml
@@ -21,6 +22,9 @@ from msc.state_transfer.tomography_qiskit import (
     analyze_ty_tomography_counts,
     build_ty_tomography_circuits,
 )
+
+if TYPE_CHECKING:
+    from msc.experiment.results_io import DeviceCalibration
 
 TY_LOGICAL_ERROR_RATE_CONFIG_PATH = Path(__file__).with_name("ler_config.yaml")
 
@@ -74,13 +78,24 @@ def load_ty_logical_error_rate_config(
         raise ValueError(
             f"logical-error-rate config {config_path} fields must be {sorted(expected_fields)}."
         )
+    return parse_ty_logical_error_rate_config(raw_config)
+
+
+def parse_ty_logical_error_rate_config(
+    raw_config: Mapping[str, object],
+) -> TyLogicalErrorRateConfig:
+    """Split a flat LER mapping into tomography settings and memory durations.
+
+    The YAML loader and the saved-hardware-job loader share this layout: the
+    tomography fields with ``post_transfer_stabilizer_rounds`` as a list.
+    """
     rounds = raw_config["post_transfer_stabilizer_rounds"]
     if not isinstance(rounds, list):
         raise ValueError("post_transfer_stabilizer_rounds must be a YAML list.")
-    tomography_values = dict(raw_config)
-    tomography_values["post_transfer_stabilizer_rounds"] = None
     return TyLogicalErrorRateConfig(
-        tomography=TyTomographyConfig(**tomography_values),
+        tomography=TyTomographyConfig(
+            **{**raw_config, "post_transfer_stabilizer_rounds": None},
+        ),
         post_transfer_stabilizer_rounds=tuple(rounds),
     )
 
@@ -117,10 +132,27 @@ def analyze_ty_logical_error_rate_counts(
     ],
     *,
     config_path: str | Path = TY_LOGICAL_ERROR_RATE_CONFIG_PATH,
+    logical_error_rate_config: TyLogicalErrorRateConfig | None = None,
+    measurement_schemas_by_round: (
+        Mapping[int, Mapping[common.SurfaceReadoutBasis, Mapping[str, Sequence[str]]]] | None
+    ) = None,
+    submitted_circuits_by_round: (
+        Mapping[int, Mapping[common.SurfaceReadoutBasis, QuantumCircuit]] | None
+    ) = None,
+    calibrations_by_round: (
+        Mapping[int, Mapping[common.SurfaceReadoutBasis, DeviceCalibration]] | None
+    ) = None,
 ) -> TyLogicalErrorRateSummary:
-    """Analyze an X/Z tomography sweep and fit its per-round logical error rate."""
-    config = load_ty_logical_error_rate_config(config_path)
-    tomography = config.tomography
+    """Analyze an X/Z tomography sweep and fit its per-round logical error rate.
+
+    Every memory duration is analyzed as one tomography point with the
+    tomography settings of this config at that point's round count. Hardware
+    sweeps are decoded circuit-level when submitted circuits, calibrations, and
+    measurement schemas are passed by round count; each point then builds its
+    own calibrated model, and the configured complementary-gap threshold
+    applies.
+    """
+    config = logical_error_rate_config or load_ty_logical_error_rate_config(config_path)
     expected_rounds = set(config.post_transfer_stabilizer_rounds)
     if set(counts_by_round) != expected_rounds:
         raise ValueError(
@@ -131,16 +163,23 @@ def analyze_ty_logical_error_rate_counts(
     tomography_summaries = tuple(
         analyze_ty_tomography_counts(
             counts_by_round[round_count],
-            circuit_config_path=TY_TOMOGRAPHY_CONFIG_PATH,
-            target_distance=tomography.target_distance,
-            patch_sites=tomography.patch_sites,
-            merge_schedule=tomography.merge_schedule,
-            full_post_selection=tomography.full_post_selection,
-            persistent_surface_x_post_selection=tomography.persistent_surface_x_post_selection,
-            measure_encoder_flags=tomography.measure_encoder_flags,
-            measure_cultivation_flags=tomography.measure_cultivation_flags,
-            post_injection_qed_checks=tomography.post_injection_qed_checks,
-            post_transfer_stabilizer_rounds=round_count,
+            tomography_config=replace(
+                config.tomography,
+                post_transfer_stabilizer_rounds=round_count,
+            ),
+            measurement_schemas=(
+                None
+                if measurement_schemas_by_round is None
+                else measurement_schemas_by_round[round_count]
+            ),
+            submitted_circuits_by_basis=(
+                None
+                if submitted_circuits_by_round is None
+                else submitted_circuits_by_round[round_count]
+            ),
+            calibrations_by_basis=(
+                None if calibrations_by_round is None else calibrations_by_round[round_count]
+            ),
         )
         for round_count in config.post_transfer_stabilizer_rounds
     )
