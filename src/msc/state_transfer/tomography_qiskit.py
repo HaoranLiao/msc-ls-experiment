@@ -105,6 +105,16 @@ class TyTomographySummary:
     total_z_shots: int
 
 
+@dataclass(frozen=True)
+class CircuitLevelTomographyVariant:
+    """Inputs needed to decode one submitted circuit variant."""
+
+    counts: Mapping[str, int]
+    submitted_circuit: QuantumCircuit
+    calibration: DeviceCalibration
+    measurement_schema: Mapping[str, Sequence[str]]
+
+
 def load_ty_tomography_config(
     circuit_config_path: str | Path = TY_TOMOGRAPHY_CONFIG_PATH,
 ) -> TyTomographyConfig:
@@ -278,6 +288,9 @@ def analyze_ty_tomography_counts(
     ) = None,
     submitted_circuits_by_basis: Mapping[common.SurfaceReadoutBasis, QuantumCircuit] | None = None,
     calibrations_by_basis: Mapping[common.SurfaceReadoutBasis, DeviceCalibration] | None = None,
+    circuit_level_variants_by_basis: (
+        Mapping[common.SurfaceReadoutBasis, Sequence[CircuitLevelTomographyVariant]] | None
+    ) = None,
 ) -> TyTomographySummary:
     """Analyze paired counts using the same YAML config as construction.
 
@@ -301,11 +314,18 @@ def analyze_ty_tomography_counts(
         add_barriers=None,
         complementary_gap_threshold=complementary_gap_threshold,
     )
-    circuit_level = submitted_circuits_by_basis is not None or calibrations_by_basis is not None
+    circuit_level = (
+        submitted_circuits_by_basis is not None
+        or calibrations_by_basis is not None
+        or circuit_level_variants_by_basis is not None
+    )
     if circuit_level and (
-        submitted_circuits_by_basis is None
-        or calibrations_by_basis is None
-        or measurement_schemas is None
+        circuit_level_variants_by_basis is None
+        and (
+            submitted_circuits_by_basis is None
+            or calibrations_by_basis is None
+            or measurement_schemas is None
+        )
     ):
         raise ValueError(
             "circuit-level decoding requires submitted circuits, calibrations, and "
@@ -322,7 +342,24 @@ def analyze_ty_tomography_counts(
             raise ValueError(f"counts_by_basis is missing the {basis} experiment.")
         counts = counts_by_basis[basis]
         total_shots[basis] = sum(counts.values())
-        if circuit_level:
+        if circuit_level_variants_by_basis is not None:
+            logical_zero_shots = 0
+            logical_one_shots = 0
+            variants = circuit_level_variants_by_basis[basis]
+            for variant in variants:
+                variant_zero_shots, variant_one_shots = CircuitLevelDecoder(
+                    variant.submitted_circuit,
+                    calibration=variant.calibration,
+                    tomography_config=config,
+                    measurement_schema=variant.measurement_schema,
+                    readout_basis=basis,
+                    complementary_gap_threshold=config.complementary_gap_threshold,
+                ).decode_counts(variant.counts)
+                logical_zero_shots += variant_zero_shots
+                logical_one_shots += variant_one_shots
+            if sum(sum(variant.counts.values()) for variant in variants) != total_shots[basis]:
+                raise ValueError(f"{basis}-basis variant counts do not match pooled counts.")
+        elif circuit_level:
             logical_zero_shots, logical_one_shots = CircuitLevelDecoder(
                 submitted_circuits_by_basis[basis],
                 calibration=calibrations_by_basis[basis],

@@ -15,6 +15,7 @@ from msc.rotated_surface_code.decoding.circuit_level_decoder import CircuitLevel
 from msc.state_transfer import common
 from msc.state_transfer import to_d5_rotated_qiskit as d5
 from msc.state_transfer.tomography_qiskit import TOMOGRAPHY_BASES, analyze_ty_tomography_counts
+from msc.state_transfer.tomography_qiskit import CircuitLevelTomographyVariant
 from msc.utils.normalize import qiskit_bit_values
 
 SAVED_JOB_DIRECTORY = HARDWARE_RUNS_DIR / "tomography_20260923T202524"
@@ -71,6 +72,46 @@ def _flip_records(
             characters[position] = "1" if characters[position] == "0" else "0"
         flipped_counts["".join(characters)] = count
     return flipped_counts
+
+
+def test_twirled_counts_are_decoded_with_each_submitted_circuit(
+    monkeypatch: pytest.MonkeyPatch,
+    saved_job: SavedHardwareJob,
+) -> None:
+    decoded_circuits = []
+
+    class FakeDecoder:
+        def __init__(self, submitted_circuit, **kwargs):
+            decoded_circuits.append(submitted_circuit)
+
+        def decode_counts(self, counts):
+            return sum(counts.values()), 0
+
+    monkeypatch.setattr(
+        "msc.state_transfer.tomography_qiskit.CircuitLevelDecoder",
+        FakeDecoder,
+    )
+    variants = {
+        basis: tuple(
+            CircuitLevelTomographyVariant(
+                counts={"0": shots},
+                submitted_circuit=f"{basis}-{index}",
+                calibration=saved_job.calibrations_by_basis[basis],
+                measurement_schema=saved_job.measurement_schemas_by_basis[basis],
+            )
+            for index, shots in enumerate((2, 3))
+        )
+        for basis in TOMOGRAPHY_BASES
+    }
+
+    summary = analyze_ty_tomography_counts(
+        {basis: {"0": 5} for basis in TOMOGRAPHY_BASES},
+        tomography_config=saved_job.config,
+        circuit_level_variants_by_basis=variants,
+    )
+
+    assert decoded_circuits == ["X-0", "X-1", "Z-0", "Z-1"]
+    assert summary.accepted_x_shots == summary.accepted_z_shots == 5
 
 
 # =============================================================================

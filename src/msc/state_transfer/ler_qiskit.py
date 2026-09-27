@@ -16,6 +16,7 @@ from scipy.optimize import curve_fit
 
 from msc.state_transfer import common
 from msc.state_transfer.tomography_qiskit import (
+    CircuitLevelTomographyVariant,
     TY_TOMOGRAPHY_CONFIG_PATH,
     TyTomographyConfig,
     TyTomographySummary,
@@ -146,6 +147,13 @@ def analyze_ty_logical_error_rate_counts(
     calibrations_by_round: (
         Mapping[int, Mapping[common.SurfaceReadoutBasis, DeviceCalibration]] | None
     ) = None,
+    circuit_level_variants_by_round: (
+        Mapping[
+            int,
+            Mapping[common.SurfaceReadoutBasis, Sequence[CircuitLevelTomographyVariant]],
+        ]
+        | None
+    ) = None,
     bootstrap_samples: int = 10_000,
     bootstrap_seed: int = 0,
 ) -> TyLogicalErrorRateSummary:
@@ -185,6 +193,11 @@ def analyze_ty_logical_error_rate_counts(
             ),
             calibrations_by_basis=(
                 None if calibrations_by_round is None else calibrations_by_round[round_count]
+            ),
+            circuit_level_variants_by_basis=(
+                None
+                if circuit_level_variants_by_round is None
+                else circuit_level_variants_by_round[round_count]
             ),
         )
         for round_count in config.post_transfer_stabilizer_rounds
