@@ -53,12 +53,16 @@ class TyLogicalErrorRateSummary:
     ``tomography[i]`` is the postselected logical tomography at memory duration
     ``post_transfer_stabilizer_rounds[i]``. ``logical_error_rate_per_round`` is
     fit in the binary logical-flip convention ``R(N) = R(0) (1 - 2 p_L)**N`` over
-    the per-point Bloch radii ``sqrt(<X_L>**2 + <Z_L>**2)``.
+    the per-point Bloch radii ``sqrt(<X_L>**2 + <Z_L>**2)``. The 95% interval
+    propagates accepted-shot noise through the radii and nonlinear fit.
     """
 
     post_transfer_stabilizer_rounds: tuple[int, ...]
     tomography: tuple[TyTomographySummary, ...]
     logical_error_rate_per_round: float
+    logical_error_rate_confidence_interval_95: tuple[float, float]
+    bootstrap_samples: int
+    bootstrap_seed: int
 
 
 def load_ty_logical_error_rate_config(
@@ -142,6 +146,8 @@ def analyze_ty_logical_error_rate_counts(
     calibrations_by_round: (
         Mapping[int, Mapping[common.SurfaceReadoutBasis, DeviceCalibration]] | None
     ) = None,
+    bootstrap_samples: int = 10_000,
+    bootstrap_seed: int = 0,
 ) -> TyLogicalErrorRateSummary:
     """Analyze an X/Z tomography sweep and fit its per-round logical error rate.
 
@@ -187,10 +193,23 @@ def analyze_ty_logical_error_rate_counts(
         config.post_transfer_stabilizer_rounds,
         [hypot(summary.expectation_x, summary.expectation_z) for summary in tomography_summaries],
     )
+    logical_error_rate_confidence_interval_95 = (
+        bootstrap_ty_logical_error_rate_confidence_interval(
+            config.post_transfer_stabilizer_rounds,
+            tomography_summaries,
+            bootstrap_samples=bootstrap_samples,
+            bootstrap_seed=bootstrap_seed,
+        )
+    )
     return TyLogicalErrorRateSummary(
         post_transfer_stabilizer_rounds=config.post_transfer_stabilizer_rounds,
         tomography=tomography_summaries,
         logical_error_rate_per_round=logical_error_rate_per_round,
+        logical_error_rate_confidence_interval_95=(
+            logical_error_rate_confidence_interval_95
+        ),
+        bootstrap_samples=bootstrap_samples,
+        bootstrap_seed=bootstrap_seed,
     )
 
 
@@ -254,3 +273,65 @@ def fit_ty_logical_error_rate(
         dtype=float,
     )
     return float(parameters[1])
+
+
+def bootstrap_ty_logical_error_rate_confidence_interval(
+    post_transfer_stabilizer_rounds: Sequence[int],
+    tomography_summaries: Sequence[TyTomographySummary],
+    *,
+    bootstrap_samples: int = 10_000,
+    bootstrap_seed: int = 0,
+) -> tuple[float, float]:
+    """Estimate a 95% LER interval from accepted logical X/Z shot noise.
+
+    Each bootstrap replicate draws accepted logical outcomes from the measured
+    binomial distributions, recomputes the XZ Bloch radii, and repeats the full
+    nonlinear decay fit. The interval is conditional on the accepted ensemble
+    and does not include decoder-model or calibration uncertainty.
+    """
+    rounds = tuple(post_transfer_stabilizer_rounds)
+    summaries = tuple(tomography_summaries)
+    if len(rounds) != len(summaries):
+        raise ValueError("post-transfer round and tomography-summary sequences must match.")
+    if type(bootstrap_samples) is not int or bootstrap_samples < 1:
+        raise ValueError("bootstrap_samples must be a positive integer.")
+
+    random_number_generator = np.random.default_rng(bootstrap_seed)
+    expectation_x_samples = np.column_stack(
+        [
+            2.0
+            * random_number_generator.binomial(
+                summary.accepted_x_shots,
+                (1.0 + summary.expectation_x) / 2.0,
+                size=bootstrap_samples,
+            )
+            / summary.accepted_x_shots
+            - 1.0
+            for summary in summaries
+        ]
+    )
+    expectation_z_samples = np.column_stack(
+        [
+            2.0
+            * random_number_generator.binomial(
+                summary.accepted_z_shots,
+                (1.0 + summary.expectation_z) / 2.0,
+                size=bootstrap_samples,
+            )
+            / summary.accepted_z_shots
+            - 1.0
+            for summary in summaries
+        ]
+    )
+    logical_error_rate_samples = np.asarray(
+        [
+            fit_ty_logical_error_rate(rounds, np.hypot(expectation_x, expectation_z))
+            for expectation_x, expectation_z in zip(
+                expectation_x_samples,
+                expectation_z_samples,
+                strict=True,
+            )
+        ]
+    )
+    lower, upper = np.quantile(logical_error_rate_samples, (0.025, 0.975))
+    return float(lower), float(upper)

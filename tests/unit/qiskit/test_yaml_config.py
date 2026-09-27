@@ -15,11 +15,14 @@ from msc.experiment.ty_tomography_diagnostics import ty_tomography_retainment_br
 from msc.state_transfer import common
 from msc.state_transfer.ler_qiskit import (
     analyze_ty_logical_error_rate_counts,
+    bootstrap_ty_logical_error_rate_confidence_interval,
     build_ty_logical_error_rate_circuits,
+    fit_ty_logical_error_rate,
 )
 from msc.state_transfer.tomography_qiskit import (
     TomographyTargetDistance,
     TyTomographyConfig,
+    TyTomographySummary,
     analyze_ty_tomography_counts,
     build_ty_tomography_circuits,
 )
@@ -291,6 +294,43 @@ def test_complementary_gap_threshold_requires_a_nonnegative_circuit_level_settin
 # =============================================================================
 
 
+def test_ler_fit_recovers_binary_logical_error_rate() -> None:
+    rounds = (1, 3, 5, 7, 9)
+    logical_error_rate = 0.008
+    bloch_radii = tuple(0.91 * (1.0 - 2.0 * logical_error_rate) ** n for n in rounds)
+
+    assert fit_ty_logical_error_rate(rounds, bloch_radii) == pytest.approx(
+        logical_error_rate
+    )
+
+
+def test_ler_bootstrap_interval_contains_binary_logical_error_rate() -> None:
+    rounds = (1, 3, 5, 7, 9)
+    logical_error_rate = 0.008
+    accepted_shots = 50_000
+    summaries = tuple(
+        TyTomographySummary(
+            expectation_x=(0.91 * (1.0 - 2.0 * logical_error_rate) ** round_count) / 2**0.5,
+            expectation_z=(0.91 * (1.0 - 2.0 * logical_error_rate) ** round_count) / 2**0.5,
+            fidelity=0.0,
+            accepted_x_shots=accepted_shots,
+            accepted_z_shots=accepted_shots,
+            total_x_shots=accepted_shots,
+            total_z_shots=accepted_shots,
+        )
+        for round_count in rounds
+    )
+
+    lower, upper = bootstrap_ty_logical_error_rate_confidence_interval(
+        rounds,
+        summaries,
+        bootstrap_samples=1_000,
+        bootstrap_seed=7,
+    )
+
+    assert lower < logical_error_rate < upper
+
+
 def test_ler_yaml_matches_sweep_circuits_and_analysis(tmp_path: Path) -> None:
     rounds = (1, 2, 4)
     config_path = _write_config(
@@ -332,11 +372,17 @@ def test_ler_yaml_matches_sweep_circuits_and_analysis(tmp_path: Path) -> None:
     summary = analyze_ty_logical_error_rate_counts(
         counts_by_round,
         config_path=config_path,
+        bootstrap_samples=100,
     )
     assert summary.post_transfer_stabilizer_rounds == rounds
     assert all(point.accepted_x_shots == 10 for point in summary.tomography)
     assert all(point.accepted_z_shots == 10 for point in summary.tomography)
     assert summary.logical_error_rate_per_round == pytest.approx(0.0, abs=1e-8)
+    assert summary.logical_error_rate_confidence_interval_95 == pytest.approx(
+        (0.0, 0.0), abs=1e-8
+    )
+    assert summary.bootstrap_samples == 100
+    assert summary.bootstrap_seed == 0
 
     # The saved result round-trips the per-point counts and the fitted summary.
     result_path = save_ty_logical_error_rate_result(
