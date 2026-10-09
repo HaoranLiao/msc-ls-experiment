@@ -53,17 +53,16 @@ class TyLogicalErrorRateSummary:
 
     ``tomography[i]`` is the postselected logical tomography at memory duration
     ``post_transfer_stabilizer_rounds[i]``. ``logical_error_rate_per_round`` is
-    fit in the binary logical-flip convention ``R(N) = R(0) (1 - 2 p_L)**N`` over
-    the per-point Bloch radii ``sqrt(<X_L>**2 + <Z_L>**2)``. The 95% interval
-    propagates accepted-shot noise through the radii and nonlinear fit.
+    fit in the Fig. S22 convention ``R(N) = A exp(-2 p_L N)`` over the per-point
+    Bloch radii ``sqrt(<X_L>**2 + <Z_L>**2)``. The 95% interval
+    propagates shot noise, including postselection acceptance, through the radii
+    and nonlinear fit.
     """
 
     post_transfer_stabilizer_rounds: tuple[int, ...]
     tomography: tuple[TyTomographySummary, ...]
     logical_error_rate_per_round: float
     logical_error_rate_confidence_interval_95: tuple[float, float]
-    bootstrap_samples: int
-    bootstrap_seed: int
 
 
 def load_ty_logical_error_rate_config(
@@ -119,7 +118,6 @@ def build_ty_logical_error_rate_circuits(
             patch_sites=tomography.patch_sites,
             merge_schedule=tomography.merge_schedule,
             full_post_selection=tomography.full_post_selection,
-            persistent_surface_x_post_selection=tomography.persistent_surface_x_post_selection,
             measure_encoder_flags=tomography.measure_encoder_flags,
             measure_cultivation_flags=tomography.measure_cultivation_flags,
             post_injection_qed_checks=tomography.post_injection_qed_checks,
@@ -154,17 +152,18 @@ def analyze_ty_logical_error_rate_counts(
         ]
         | None
     ) = None,
+    persistent_surface_x_post_selection: bool,
+    complementary_gap_threshold: float | None,
     bootstrap_samples: int = 10_000,
     bootstrap_seed: int = 0,
 ) -> TyLogicalErrorRateSummary:
     """Analyze an X/Z tomography sweep and fit its per-round logical error rate.
 
     Every memory duration is analyzed as one tomography point with the
-    tomography settings of this config at that point's round count. Hardware
-    sweeps are decoded circuit-level when submitted circuits, calibrations, and
-    measurement schemas are passed by round count; each point then builds its
-    own calibrated model, and the configured complementary-gap threshold
-    applies.
+    tomography settings of this config at that point's round count and the
+    same analysis-only postselection settings. Hardware sweeps are decoded
+    circuit-level when submitted circuits, calibrations, and measurement schemas
+    are passed by round count; each point then builds its own calibrated model.
     """
     config = logical_error_rate_config or load_ty_logical_error_rate_config(config_path)
     expected_rounds = set(config.post_transfer_stabilizer_rounds)
@@ -181,6 +180,8 @@ def analyze_ty_logical_error_rate_counts(
                 config.tomography,
                 post_transfer_stabilizer_rounds=round_count,
             ),
+            persistent_surface_x_post_selection=persistent_surface_x_post_selection,
+            complementary_gap_threshold=complementary_gap_threshold,
             measurement_schemas=(
                 None
                 if measurement_schemas_by_round is None
@@ -202,28 +203,89 @@ def analyze_ty_logical_error_rate_counts(
         )
         for round_count in config.post_transfer_stabilizer_rounds
     )
-    logical_error_rate_per_round = fit_ty_logical_error_rate(
-        config.post_transfer_stabilizer_rounds,
-        [hypot(summary.expectation_x, summary.expectation_z) for summary in tomography_summaries],
-    )
-    logical_error_rate_confidence_interval_95 = (
-        bootstrap_ty_logical_error_rate_confidence_interval(
-            config.post_transfer_stabilizer_rounds,
-            tomography_summaries,
-            bootstrap_samples=bootstrap_samples,
-            bootstrap_seed=bootstrap_seed,
-        )
-    )
     return TyLogicalErrorRateSummary(
         post_transfer_stabilizer_rounds=config.post_transfer_stabilizer_rounds,
         tomography=tomography_summaries,
-        logical_error_rate_per_round=logical_error_rate_per_round,
-        logical_error_rate_confidence_interval_95=(
-            logical_error_rate_confidence_interval_95
+        logical_error_rate_per_round=fit_ty_logical_error_rate(
+            config.post_transfer_stabilizer_rounds,
+            [
+                hypot(summary.expectation_x, summary.expectation_z)
+                for summary in tomography_summaries
+            ],
         ),
-        bootstrap_samples=bootstrap_samples,
-        bootstrap_seed=bootstrap_seed,
+        logical_error_rate_confidence_interval_95=(
+            bootstrap_ty_logical_error_rate_confidence_interval(
+                config.post_transfer_stabilizer_rounds,
+                tomography_summaries,
+                bootstrap_samples=bootstrap_samples,
+                bootstrap_seed=bootstrap_seed,
+            )
+        ),
     )
+
+
+def bootstrap_ty_logical_error_rate_confidence_interval(
+    post_transfer_stabilizer_rounds: Sequence[int],
+    tomography_summaries: Sequence[TyTomographySummary],
+    *,
+    bootstrap_samples: int,
+    bootstrap_seed: int,
+) -> tuple[float, float]:
+    """Estimate a 95% LER interval by resampling every hardware shot.
+
+    Each replicate redraws each point's X and Z shots with replacement at the
+    full submitted shot count, as one multinomial over rejected, accepted
+    logical-0, and accepted logical-1 outcomes at the measured frequencies, so
+    acceptance varies along with the logical outcomes. It then recomputes the
+    XZ Bloch radii and repeats the full decay fit; ``bootstrap_samples`` counts
+    replicates. The interval excludes decoder-model and calibration
+    uncertainty. Replicate fits are bounded to ``p_L >= 0``, so a lower bound
+    at zero means the sweep resolves no decay at 95%.
+    """
+    if bootstrap_samples < 1:
+        raise ValueError("bootstrap_samples must be a positive integer.")
+    # (basis, point) arrays with X first; the last outcome axis is
+    # (rejected, accepted logical 0, accepted logical 1).
+    total_shots = np.array(
+        [(summary.total_x_shots, summary.total_z_shots) for summary in tomography_summaries]
+    ).T
+    accepted_shots = np.array(
+        [(summary.accepted_x_shots, summary.accepted_z_shots) for summary in tomography_summaries]
+    ).T
+    expectations = np.array(
+        [(summary.expectation_x, summary.expectation_z) for summary in tomography_summaries]
+    ).T
+    accepted_logical_zero_shots = np.rint(accepted_shots * (1.0 + expectations) / 2.0)
+    shot_outcome_counts = np.stack(
+        (
+            total_shots - accepted_shots,
+            accepted_logical_zero_shots,
+            accepted_shots - accepted_logical_zero_shots,
+        ),
+        axis=-1,
+    )
+    _, resampled_logical_zero_shots, resampled_logical_one_shots = np.moveaxis(
+        np.random.default_rng(bootstrap_seed).multinomial(
+            total_shots,
+            shot_outcome_counts / total_shots[..., None],
+            size=(bootstrap_samples, *total_shots.shape),
+        ),
+        -1,
+        0,
+    )
+    resampled_accepted_shots = resampled_logical_zero_shots + resampled_logical_one_shots
+    if not resampled_accepted_shots.all():
+        raise ValueError("a bootstrap replicate accepted no shots at some point and basis.")
+    resampled_expectations = (
+        resampled_logical_zero_shots - resampled_logical_one_shots
+    ) / resampled_accepted_shots
+    resampled_bloch_radii_xz = np.hypot(*np.moveaxis(resampled_expectations, 1, 0))
+    logical_error_rate_samples = [
+        fit_ty_logical_error_rate(post_transfer_stabilizer_rounds, bloch_radii_xz)
+        for bloch_radii_xz in resampled_bloch_radii_xz
+    ]
+    lower, upper = np.quantile(logical_error_rate_samples, (0.025, 0.975))
+    return float(lower), float(upper)
 
 
 def fit_ty_logical_error_rate(
@@ -232,12 +294,14 @@ def fit_ty_logical_error_rate(
 ) -> float:
     """Fit the Section XIV memory decay and return the per-round LER ``p_L``.
 
-    Supplementary Section XIV and Fig. S22 specify an exponential fit to
-    ``R(N) = sqrt(<X_L>**2 + <Z_L>**2)`` but do not print its equation. This
-    implementation directly fits the standard binary logical-flip convention
-    ``R(N) = A (1 - 2 p_L)**N`` and returns ``p_L``; the amplitude ``A`` is a
-    nuisance parameter. Inputs must be consistently postselected and decoded
-    logical tomography results across all memory durations.
+    Supplementary Section XIV and Fig. S22(b, e) fit an exponential to
+    ``R(N) = sqrt(<X_L>**2 + <Z_L>**2)`` but do not print its equation. The
+    Fig. S22(b) curve decays by ``q = 0.899`` per cycle and is labeled
+    ``LER = 5.3%``, which is ``-ln(q) / 2``; the binary-flip form
+    ``(1 - q) / 2`` would give 5.0%. This function therefore least-squares fits
+    ``R(N) = A exp(-2 p_L N)`` to the radii and returns ``p_L``; the amplitude
+    ``A`` is a nuisance parameter. Inputs must be consistently postselected and
+    decoded logical tomography results across all memory durations.
     """
     rounds = tuple(post_transfer_stabilizer_rounds)
     radii = tuple(bloch_radii_xz)
@@ -263,7 +327,7 @@ def fit_ty_logical_error_rate(
         np.log(radius_array[positive]),
         deg=1,
     )
-    initial_logical_error_rate = (1.0 - exp(min(0.0, float(slope)))) / 2.0
+    initial_logical_error_rate = max(0.0, -float(slope)) / 2.0
     initial_radius = exp(float(intercept))
 
     def logical_decay(
@@ -271,7 +335,7 @@ def fit_ty_logical_error_rate(
         radius: float,
         logical_error_rate: float,
     ) -> np.ndarray:
-        return radius * (1.0 - 2.0 * logical_error_rate) ** round_count
+        return radius * np.exp(-2.0 * logical_error_rate * round_count)
 
     parameters = np.asarray(
         curve_fit(
@@ -279,72 +343,10 @@ def fit_ty_logical_error_rate(
             round_array,
             radius_array,
             p0=(initial_radius, initial_logical_error_rate),
-            bounds=((0.0, 0.0), (np.inf, 0.5)),
+            bounds=((0.0, 0.0), (np.inf, np.inf)),
             maxfev=100_000,
             full_output=False,
         )[0],
         dtype=float,
     )
     return float(parameters[1])
-
-
-def bootstrap_ty_logical_error_rate_confidence_interval(
-    post_transfer_stabilizer_rounds: Sequence[int],
-    tomography_summaries: Sequence[TyTomographySummary],
-    *,
-    bootstrap_samples: int = 10_000,
-    bootstrap_seed: int = 0,
-) -> tuple[float, float]:
-    """Estimate a 95% LER interval from accepted logical X/Z shot noise.
-
-    Each bootstrap replicate draws accepted logical outcomes from the measured
-    binomial distributions, recomputes the XZ Bloch radii, and repeats the full
-    nonlinear decay fit. The interval is conditional on the accepted ensemble
-    and does not include decoder-model or calibration uncertainty.
-    """
-    rounds = tuple(post_transfer_stabilizer_rounds)
-    summaries = tuple(tomography_summaries)
-    if len(rounds) != len(summaries):
-        raise ValueError("post-transfer round and tomography-summary sequences must match.")
-    if type(bootstrap_samples) is not int or bootstrap_samples < 1:
-        raise ValueError("bootstrap_samples must be a positive integer.")
-
-    random_number_generator = np.random.default_rng(bootstrap_seed)
-    expectation_x_samples = np.column_stack(
-        [
-            2.0
-            * random_number_generator.binomial(
-                summary.accepted_x_shots,
-                (1.0 + summary.expectation_x) / 2.0,
-                size=bootstrap_samples,
-            )
-            / summary.accepted_x_shots
-            - 1.0
-            for summary in summaries
-        ]
-    )
-    expectation_z_samples = np.column_stack(
-        [
-            2.0
-            * random_number_generator.binomial(
-                summary.accepted_z_shots,
-                (1.0 + summary.expectation_z) / 2.0,
-                size=bootstrap_samples,
-            )
-            / summary.accepted_z_shots
-            - 1.0
-            for summary in summaries
-        ]
-    )
-    logical_error_rate_samples = np.asarray(
-        [
-            fit_ty_logical_error_rate(rounds, np.hypot(expectation_x, expectation_z))
-            for expectation_x, expectation_z in zip(
-                expectation_x_samples,
-                expectation_z_samples,
-                strict=True,
-            )
-        ]
-    )
-    lower, upper = np.quantile(logical_error_rate_samples, (0.025, 0.975))
-    return float(lower), float(upper)

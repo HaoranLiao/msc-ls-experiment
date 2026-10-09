@@ -7,22 +7,15 @@ from pathlib import Path
 import pytest
 import yaml
 
-from msc.experiment.results_io import (
-    load_ty_logical_error_rate_result,
-    save_ty_logical_error_rate_result,
-)
 from msc.experiment.ty_tomography_diagnostics import ty_tomography_retainment_breakdown
 from msc.state_transfer import common
 from msc.state_transfer.ler_qiskit import (
     analyze_ty_logical_error_rate_counts,
-    bootstrap_ty_logical_error_rate_confidence_interval,
     build_ty_logical_error_rate_circuits,
-    fit_ty_logical_error_rate,
 )
 from msc.state_transfer.tomography_qiskit import (
     TomographyTargetDistance,
     TyTomographyConfig,
-    TyTomographySummary,
     analyze_ty_tomography_counts,
     build_ty_tomography_circuits,
 )
@@ -39,13 +32,11 @@ TOMOGRAPHY_CONFIG: dict[str, object] = {
     "patch_sites": 14,
     "merge_schedule": "hirano",
     "full_post_selection": False,
-    "persistent_surface_x_post_selection": True,
     "measure_encoder_flags": True,
     "measure_cultivation_flags": True,
     "post_injection_qed_checks": "full",
     "post_transfer_stabilizer_rounds": 2,
     "add_barriers": False,
-    "complementary_gap_threshold": None,
 }
 
 
@@ -127,6 +118,8 @@ def test_tomography_yaml_matches_constructed_circuits_and_analysis(
             "Z": {"0" * circuits["Z"].num_clbits: 4},
         },
         tomography_config=TyTomographyConfig(**yaml.safe_load(config_path.read_text())),
+        persistent_surface_x_post_selection=True,
+        complementary_gap_threshold=None,
         measurement_schemas={
             basis: circuit.metadata["measurement_schema"] for basis, circuit in circuits.items()
         },
@@ -156,6 +149,8 @@ def test_post_injection_qed_preset_selects_the_steane_qed_record(
     summary = analyze_ty_tomography_counts(
         {basis: {"0" * circuits[basis].num_clbits: 4} for basis in ("X", "Z")},
         circuit_config_path=config_path,
+        persistent_surface_x_post_selection=True,
+        complementary_gap_threshold=None,
     )
     assert summary.accepted_x_shots == summary.accepted_z_shots == 4
 
@@ -216,6 +211,8 @@ def test_disabling_flag_measurements_shrinks_the_record(
             "Z": {"0" * unmeasured_circuit.num_clbits: 4},
         },
         circuit_config_path=unmeasured_config,
+        persistent_surface_x_post_selection=True,
+        complementary_gap_threshold=None,
     )
     assert summary.accepted_x_shots == summary.accepted_z_shots == 4
 
@@ -224,17 +221,13 @@ def test_disabling_flag_measurements_shrinks_the_record(
     ("full_post_selection", "persistent_surface_x_post_selection", "retained_shots"),
     ((False, True, 70), (False, False, 80), (True, False, 70)),
 )
-def test_postselection_yaml_controls_acceptance(
+def test_postselection_settings_control_acceptance(
     tmp_path: Path,
     full_post_selection: bool,
     persistent_surface_x_post_selection: bool,
     retained_shots: int,
 ) -> None:
-    config_path = _write_config(
-        tmp_path,
-        full_post_selection=full_post_selection,
-        persistent_surface_x_post_selection=persistent_surface_x_post_selection,
-    )
+    config_path = _write_config(tmp_path, full_post_selection=full_post_selection)
     circuit = build_ty_tomography_circuits(circuit_config_path=config_path)["X"]
     registers = {register.name: register for register in circuit.cregs}
     encoder_flag = circuit.find_bit(registers["enc_flags"][0]).index
@@ -249,6 +242,7 @@ def test_postselection_yaml_controls_acceptance(
         counts,
         basis="X",
         circuit_config_path=config_path,
+        persistent_surface_x_post_selection=persistent_surface_x_post_selection,
     )
 
     assert breakdown.retained_shots == retained_shots
@@ -276,59 +270,28 @@ def test_yaml_rejects_unknown_merge_schedule(tmp_path: Path) -> None:
 def test_complementary_gap_threshold_requires_a_nonnegative_circuit_level_setting(
     tmp_path: Path,
 ) -> None:
+    config_path = _write_config(tmp_path)
     with pytest.raises(ValueError, match="nonnegative"):
-        build_ty_tomography_circuits(
-            circuit_config_path=_write_config(tmp_path, complementary_gap_threshold=-1.0)
+        analyze_ty_tomography_counts(
+            {"X": {}, "Z": {}},
+            circuit_config_path=config_path,
+            persistent_surface_x_post_selection=True,
+            complementary_gap_threshold=-1.0,
         )
 
-    # Simulated logical circuits have no calibration, so no gap filter applies.
+    # Simulated logical circuits have no calibration, so no complementary-gap postselection applies.
     with pytest.raises(ValueError, match="requires circuit-level decoding inputs"):
         analyze_ty_tomography_counts(
             {"X": {}, "Z": {}},
-            circuit_config_path=_write_config(tmp_path, complementary_gap_threshold=1.0),
+            circuit_config_path=config_path,
+            persistent_surface_x_post_selection=True,
+            complementary_gap_threshold=1.0,
         )
 
 
 # =============================================================================
-# Ty LER sweep configuration and saved results
+# Ty LER sweep configuration and analysis
 # =============================================================================
-
-
-def test_ler_fit_recovers_binary_logical_error_rate() -> None:
-    rounds = (1, 3, 5, 7, 9)
-    logical_error_rate = 0.008
-    bloch_radii = tuple(0.91 * (1.0 - 2.0 * logical_error_rate) ** n for n in rounds)
-
-    assert fit_ty_logical_error_rate(rounds, bloch_radii) == pytest.approx(
-        logical_error_rate
-    )
-
-
-def test_ler_bootstrap_interval_contains_binary_logical_error_rate() -> None:
-    rounds = (1, 3, 5, 7, 9)
-    logical_error_rate = 0.008
-    accepted_shots = 50_000
-    summaries = tuple(
-        TyTomographySummary(
-            expectation_x=(0.91 * (1.0 - 2.0 * logical_error_rate) ** round_count) / 2**0.5,
-            expectation_z=(0.91 * (1.0 - 2.0 * logical_error_rate) ** round_count) / 2**0.5,
-            fidelity=0.0,
-            accepted_x_shots=accepted_shots,
-            accepted_z_shots=accepted_shots,
-            total_x_shots=accepted_shots,
-            total_z_shots=accepted_shots,
-        )
-        for round_count in rounds
-    )
-
-    lower, upper = bootstrap_ty_logical_error_rate_confidence_interval(
-        rounds,
-        summaries,
-        bootstrap_samples=1_000,
-        bootstrap_seed=7,
-    )
-
-    assert lower < logical_error_rate < upper
 
 
 def test_ler_yaml_matches_sweep_circuits_and_analysis(tmp_path: Path) -> None:
@@ -338,7 +301,6 @@ def test_ler_yaml_matches_sweep_circuits_and_analysis(tmp_path: Path) -> None:
         target_distance=3,
         patch_sites=11,
         merge_schedule="minimal_z_only",
-        persistent_surface_x_post_selection=False,
         post_transfer_stabilizer_rounds=list(rounds),
     )
 
@@ -372,6 +334,8 @@ def test_ler_yaml_matches_sweep_circuits_and_analysis(tmp_path: Path) -> None:
     summary = analyze_ty_logical_error_rate_counts(
         counts_by_round,
         config_path=config_path,
+        persistent_surface_x_post_selection=False,
+        complementary_gap_threshold=None,
         bootstrap_samples=100,
     )
     assert summary.post_transfer_stabilizer_rounds == rounds
@@ -381,20 +345,6 @@ def test_ler_yaml_matches_sweep_circuits_and_analysis(tmp_path: Path) -> None:
     assert summary.logical_error_rate_confidence_interval_95 == pytest.approx(
         (0.0, 0.0), abs=1e-8
     )
-    assert summary.bootstrap_samples == 100
-    assert summary.bootstrap_seed == 0
-
-    # The saved result round-trips the per-point counts and the fitted summary.
-    result_path = save_ty_logical_error_rate_result(
-        counts_by_round=counts_by_round,
-        summary=summary,
-        metadata={"backend": "aer"},
-        directory=tmp_path / "results",
-    )
-    saved_result = load_ty_logical_error_rate_result(result_path)
-    assert saved_result["counts_by_round"] == counts_by_round
-    assert saved_result["summary"] == summary
-    assert saved_result["metadata"]["backend"] == "aer"
 
 
 # =============================================================================

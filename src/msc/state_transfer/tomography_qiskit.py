@@ -33,22 +33,20 @@ TY_TOMOGRAPHY_CONFIG_PATH = Path(__file__).with_name("tomography_config.yaml")
 class TyTomographyConfig:
     """Validated settings loaded from a full-circuit tomography YAML file.
 
-    Circuit fields fix construction and the record layout.
-    ``complementary_gap_threshold`` affects only circuit-level analysis of
-    submitted circuits; saved submissions predating it load with no gap filter.
+    They fix construction and the record layout. Analysis-only settings, such
+    as persistent surface-X postselection and the complementary-gap threshold,
+    are arguments of :func:`analyze_ty_tomography_counts` instead.
     """
 
     target_distance: TomographyTargetDistance
     patch_sites: common.SteanePatchSites
     merge_schedule: common.MergeSchedule
     full_post_selection: bool
-    persistent_surface_x_post_selection: bool
     measure_encoder_flags: bool
     measure_cultivation_flags: bool
     post_injection_qed_checks: PostInjectionQedChecks
     post_transfer_stabilizer_rounds: int | None
     add_barriers: bool
-    complementary_gap_threshold: float | None = None
 
     def __post_init__(self) -> None:
         if type(self.target_distance) is not int or self.target_distance not in (3, 5):
@@ -61,7 +59,6 @@ class TyTomographyConfig:
             raise ValueError("post_injection_qed_checks must be 'minimal' or 'full'.")
         for name in (
             "full_post_selection",
-            "persistent_surface_x_post_selection",
             "measure_encoder_flags",
             "measure_cultivation_flags",
             "add_barriers",
@@ -73,11 +70,6 @@ class TyTomographyConfig:
             or self.post_transfer_stabilizer_rounds < 1
         ):
             raise ValueError("post_transfer_stabilizer_rounds must be null or a positive integer.")
-        threshold = self.complementary_gap_threshold
-        if threshold is not None and (
-            type(threshold) not in (int, float) or not math.isfinite(threshold) or threshold < 0
-        ):
-            raise ValueError("complementary_gap_threshold must be null or a nonnegative number.")
 
     @property
     def resolved_post_transfer_stabilizer_rounds(self) -> int:
@@ -142,13 +134,11 @@ def resolve_ty_tomography_config(
     patch_sites: common.SteanePatchSites | None = None,
     merge_schedule: common.MergeSchedule | None = None,
     full_post_selection: bool | None = None,
-    persistent_surface_x_post_selection: bool | None = None,
     measure_encoder_flags: bool | None = None,
     measure_cultivation_flags: bool | None = None,
     post_injection_qed_checks: PostInjectionQedChecks | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
     add_barriers: bool | None = None,
-    complementary_gap_threshold: float | None = None,
 ) -> TyTomographyConfig:
     """Load the tomography YAML and apply per-call overrides."""
     config = load_ty_tomography_config(circuit_config_path)
@@ -159,13 +149,11 @@ def resolve_ty_tomography_config(
             ("patch_sites", patch_sites),
             ("merge_schedule", merge_schedule),
             ("full_post_selection", full_post_selection),
-            ("persistent_surface_x_post_selection", persistent_surface_x_post_selection),
             ("measure_encoder_flags", measure_encoder_flags),
             ("measure_cultivation_flags", measure_cultivation_flags),
             ("post_injection_qed_checks", post_injection_qed_checks),
             ("post_transfer_stabilizer_rounds", post_transfer_stabilizer_rounds),
             ("add_barriers", add_barriers),
-            ("complementary_gap_threshold", complementary_gap_threshold),
         )
         if value is not None
     }
@@ -179,7 +167,6 @@ def build_ty_tomography_circuits(
     patch_sites: common.SteanePatchSites | None = None,
     merge_schedule: common.MergeSchedule | None = None,
     full_post_selection: bool | None = None,
-    persistent_surface_x_post_selection: bool | None = None,
     measure_encoder_flags: bool | None = None,
     measure_cultivation_flags: bool | None = None,
     post_injection_qed_checks: PostInjectionQedChecks | None = None,
@@ -200,7 +187,6 @@ def build_ty_tomography_circuits(
         patch_sites=patch_sites,
         merge_schedule=merge_schedule,
         full_post_selection=full_post_selection,
-        persistent_surface_x_post_selection=persistent_surface_x_post_selection,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
         post_injection_qed_checks=post_injection_qed_checks,
@@ -277,12 +263,12 @@ def analyze_ty_tomography_counts(
     patch_sites: common.SteanePatchSites | None = None,
     merge_schedule: common.MergeSchedule | None = None,
     full_post_selection: bool | None = None,
-    persistent_surface_x_post_selection: bool | None = None,
     measure_encoder_flags: bool | None = None,
     measure_cultivation_flags: bool | None = None,
     post_injection_qed_checks: PostInjectionQedChecks | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
-    complementary_gap_threshold: float | None = None,
+    persistent_surface_x_post_selection: bool,
+    complementary_gap_threshold: float | None,
     measurement_schemas: (
         Mapping[common.SurfaceReadoutBasis, Mapping[str, Sequence[str]]] | None
     ) = None,
@@ -294,11 +280,17 @@ def analyze_ty_tomography_counts(
 ) -> TyTomographySummary:
     """Analyze paired counts using the same YAML config as construction.
 
+    Analysis-only postselection is chosen here, so one saved job can be
+    re-analyzed under different settings. ``persistent_surface_x_post_selection``
+    rejects shots that fire persistent surface-X detectors, and
+    ``complementary_gap_threshold`` (``None`` disables it) rejects circuit-level
+    shots whose complementary gap falls below it.
+
     Hardware counts are decoded circuit-level: pass, by basis, the submitted
-    circuit, its calibration, and its saved measurement schema, and the
-    configured complementary-gap threshold applies. Without submitted circuits
-    and calibrations, such as for simulated logical circuits, each count key is
-    parsed and decoded phase by phase instead; no gap filter is available there.
+    circuit, its calibration, and its saved measurement schema. Without
+    submitted circuits and calibrations, such as for simulated logical
+    circuits, each count key is parsed and decoded phase by phase instead, without
+    complementary-gap postselection.
     """
     config = tomography_config or resolve_ty_tomography_config(
         circuit_config_path=circuit_config_path,
@@ -306,14 +298,18 @@ def analyze_ty_tomography_counts(
         patch_sites=patch_sites,
         merge_schedule=merge_schedule,
         full_post_selection=full_post_selection,
-        persistent_surface_x_post_selection=persistent_surface_x_post_selection,
         measure_encoder_flags=measure_encoder_flags,
         measure_cultivation_flags=measure_cultivation_flags,
         post_injection_qed_checks=post_injection_qed_checks,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         add_barriers=None,
-        complementary_gap_threshold=complementary_gap_threshold,
     )
+    if complementary_gap_threshold is not None and (
+        type(complementary_gap_threshold) not in (int, float)
+        or not math.isfinite(complementary_gap_threshold)
+        or complementary_gap_threshold < 0
+    ):
+        raise ValueError("complementary_gap_threshold must be None or a nonnegative number.")
     circuit_level = (
         submitted_circuits_by_basis is not None
         or calibrations_by_basis is not None
@@ -331,7 +327,7 @@ def analyze_ty_tomography_counts(
             "circuit-level decoding requires submitted circuits, calibrations, and "
             "measurement schemas by basis."
         )
-    if not circuit_level and config.complementary_gap_threshold is not None:
+    if not circuit_level and complementary_gap_threshold is not None:
         raise ValueError("complementary_gap_threshold requires circuit-level decoding inputs.")
 
     expectations: dict[common.SurfaceReadoutBasis, float] = {}
@@ -353,7 +349,8 @@ def analyze_ty_tomography_counts(
                     tomography_config=config,
                     measurement_schema=variant.measurement_schema,
                     readout_basis=basis,
-                    complementary_gap_threshold=config.complementary_gap_threshold,
+                    persistent_surface_x_post_selection=persistent_surface_x_post_selection,
+                    complementary_gap_threshold=complementary_gap_threshold,
                 ).decode_counts(variant.counts)
                 logical_zero_shots += variant_zero_shots
                 logical_one_shots += variant_one_shots
@@ -366,13 +363,15 @@ def analyze_ty_tomography_counts(
                 tomography_config=config,
                 measurement_schema=measurement_schemas[basis],
                 readout_basis=basis,
-                complementary_gap_threshold=config.complementary_gap_threshold,
+                persistent_surface_x_post_selection=persistent_surface_x_post_selection,
+                complementary_gap_threshold=complementary_gap_threshold,
             ).decode_counts(counts)
         else:
             logical_zero_shots, logical_one_shots = _decode_phenomenological_counts(
                 counts,
                 config=config,
                 basis=basis,
+                persistent_surface_x_post_selection=persistent_surface_x_post_selection,
                 measurement_schema=(
                     None if measurement_schemas is None else measurement_schemas[basis]
                 ),
@@ -402,6 +401,7 @@ def _decode_phenomenological_counts(
     *,
     config: TyTomographyConfig,
     basis: common.SurfaceReadoutBasis,
+    persistent_surface_x_post_selection: bool,
     measurement_schema: Mapping[str, Sequence[str]] | None,
 ) -> tuple[int, int]:
     """Return accepted logical-zero and logical-one shots from per-phase decoding.
@@ -467,7 +467,7 @@ def _decode_phenomenological_counts(
             post_injection_qed_checks=config.resolved_post_injection_qed_checks,
             surface_readout_basis=basis,
             full_post_selection=config.full_post_selection,
-            persistent_surface_x_post_selection=config.persistent_surface_x_post_selection,
+            persistent_surface_x_post_selection=persistent_surface_x_post_selection,
             post_transfer_stabilizer_rounds=config.resolved_post_transfer_stabilizer_rounds,
             measurement_labels=labels,
         )

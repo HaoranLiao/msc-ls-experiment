@@ -35,6 +35,8 @@ def decoders(saved_job: SavedHardwareJob) -> dict[str, CircuitLevelDecoder]:
             tomography_config=saved_job.config,
             measurement_schema=saved_job.measurement_schemas_by_basis[basis],
             readout_basis=basis,
+            persistent_surface_x_post_selection=True,
+            complementary_gap_threshold=None,
         )
         for basis in TOMOGRAPHY_BASES
     }
@@ -107,6 +109,8 @@ def test_twirled_counts_are_decoded_with_each_submitted_circuit(
     summary = analyze_ty_tomography_counts(
         {basis: {"0": 5} for basis in TOMOGRAPHY_BASES},
         tomography_config=saved_job.config,
+        persistent_surface_x_post_selection=True,
+        complementary_gap_threshold=None,
         circuit_level_variants_by_basis=variants,
     )
 
@@ -184,6 +188,7 @@ def test_complementary_gap_detector_changes_only_the_logical_sector(
         tomography_config=saved_job.config,
         measurement_schema=saved_job.measurement_schemas_by_basis["X"],
         readout_basis="X",
+        persistent_surface_x_post_selection=True,
         complementary_gap_threshold=0.0,
     )
     circuit = gap_decoder.circuit
@@ -345,6 +350,8 @@ def test_saved_policy_matches_phenomenological_acceptance_shot_by_shot(
     phenomenological = analyze_ty_tomography_counts(
         sampled_counts,
         tomography_config=saved_job.config,
+        persistent_surface_x_post_selection=True,
+        complementary_gap_threshold=None,
         measurement_schemas=saved_job.measurement_schemas_by_basis,
     )
     assert (phenomenological.accepted_x_shots, phenomenological.accepted_z_shots) == (

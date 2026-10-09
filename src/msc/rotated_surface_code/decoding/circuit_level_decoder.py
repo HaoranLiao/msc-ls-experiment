@@ -24,6 +24,7 @@ Call structure::
 
     CircuitLevelDecoder(submitted_circuit, calibration=..., tomography_config=...,
                         measurement_schema=..., readout_basis=...,
+                        persistent_surface_x_post_selection=...,
                         complementary_gap_threshold=...)
     ├── _build_calibrated_stim_model(...) -> _CalibratedStimModel
     │   ├── rebuild the logical circuit and require the saved schema
@@ -111,7 +112,8 @@ class CircuitLevelDecoder:
         tomography_config: TyTomographyConfig,
         measurement_schema: Mapping[str, Sequence[str]],
         readout_basis: common.SurfaceReadoutBasis,
-        complementary_gap_threshold: float | None = None,
+        persistent_surface_x_post_selection: bool,
+        complementary_gap_threshold: float | None,
     ) -> None:
         model = _build_calibrated_stim_model(
             submitted_circuit,
@@ -129,9 +131,7 @@ class CircuitLevelDecoder:
             postselection_detector_indices=common.transfer_postselection_detector_indices(
                 model.detector_roles,
                 full_post_selection=tomography_config.full_post_selection,
-                persistent_surface_x_post_selection=(
-                    tomography_config.persistent_surface_x_post_selection
-                ),
+                persistent_surface_x_post_selection=persistent_surface_x_post_selection,
             ),
             complementary_gap_postselection_threshold=complementary_gap_threshold,
         )

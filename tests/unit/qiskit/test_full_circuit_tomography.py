@@ -327,7 +327,6 @@ def test_noiseless_transferred_ty_tomography_has_unit_fidelity() -> None:
         patch_sites=14,
         merge_schedule="minimal_z_only",
         full_post_selection=False,
-        persistent_surface_x_post_selection=True,
         measure_encoder_flags=False,
         measure_cultivation_flags=False,
         post_injection_qed_checks="minimal",
@@ -346,6 +345,8 @@ def test_noiseless_transferred_ty_tomography_has_unit_fidelity() -> None:
     summary = analyze_ty_tomography_counts(
         {basis: result.get_counts(index) for index, basis in enumerate(TOMOGRAPHY_BASES)},
         **build_and_analysis_params,
+        persistent_surface_x_post_selection=True,
+        complementary_gap_threshold=None,
     )
 
     assert summary.accepted_x_shots == 128
