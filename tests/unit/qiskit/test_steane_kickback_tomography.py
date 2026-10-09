@@ -128,6 +128,7 @@ class TestKickbackTomographyCircuitConstruction:
         kwargs = {} if requested_indices is None else {"qed_cycle_indices": requested_indices}
         circuit, bit_layout = build_kickback_tomography_experiment(
             patch_sites=patch_sites,
+            final_stabilizer_basis="X",
             add_barriers=False,
             **kwargs,
         )

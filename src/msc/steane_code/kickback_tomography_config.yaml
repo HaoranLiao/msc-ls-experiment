@@ -1,9 +1,10 @@
 # Fig. 3-style Qiskit kickback-tomography (KT) circuit settings.
 patch_sites: 14  # 11 or 14.
 cultivated_state: Ty  # Ty or T.
-injected_state: Ty  # null or one of: 0 1 + - i -i Y+ Y- S Sdg T Tdg Ty.
+injected_state: null  # null for a sweep; else one of: 0 1 + - i -i Y+ Y- S Sdg T Tdg Ty.
+injection_angle_sweep: true  # true: 32-angle Fig. 3 sweep on the cultivated axis; false: one point.
 include_prep_cultivation: true  # true or false.
 measure_encoder_flags: false  # true or false.
 qed_cycle_indices: [1, 3]  # any subset of [1, 2, 3, 4].
-final_stabilizer_basis: X  # X, Z, BOTH, or NONE.
+final_stabilizer_basis: BOTH  # X, Z, BOTH, or NONE; BOTH keeps fault distance 3 with QED [1, 3].
 add_barriers: true  # true or false.

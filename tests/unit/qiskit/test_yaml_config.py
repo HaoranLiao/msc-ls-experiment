@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 
@@ -20,8 +21,10 @@ from msc.state_transfer.tomography_qiskit import (
     build_ty_tomography_circuits,
 )
 from msc.steane_code.kickback_tomography_qiskit import (
+    KICKBACK_TOMOGRAPHY_CONFIG_PATH,
     KickbackTomographyConfig,
     build_kickback_tomography_experiment,
+    build_kickback_tomography_experiments,
     load_kickback_tomography_config,
     resolve_kickback_tomography_config,
 )
@@ -357,10 +360,11 @@ def test_kickback_tomography_yaml_matches_build_defaults() -> None:
         patch_sites=14,
         cultivated_state="Ty",
         injected_state=None,
+        injection_angle_sweep=True,
         include_prep_cultivation=True,
         measure_encoder_flags=False,
         qed_cycle_indices=(1, 3),
-        final_stabilizer_basis="X",
+        final_stabilizer_basis="BOTH",
         add_barriers=True,
     )
 
@@ -374,13 +378,32 @@ def test_kickback_tomography_config_drives_build_and_overrides_win() -> None:
         include_prep_cultivation=True,
         measure_encoder_flags=False,
         qed_cycle_indices=(1, 3),
-        final_stabilizer_basis="X",
+        final_stabilizer_basis="BOTH",
         add_barriers=False,
     )
     assert config_built == override_built
 
     eleven_circuit, _ = build_kickback_tomography_experiment(patch_sites=11, add_barriers=False)
     assert eleven_circuit.num_qubits == 11
+
+
+def test_kickback_tomography_experiments_follow_the_yaml_injection(tmp_path: Path) -> None:
+    # The default YAML sweeps 32 polar angles on the Ty axis, 11 within pi/8 of pi/4.
+    angles, experiments = build_kickback_tomography_experiments()
+    assert len(angles) == 32
+    assert np.sum(np.abs(angles - np.pi / 4) <= np.pi / 8 + 1e-12) == 11
+    assert experiments == [
+        build_kickback_tomography_experiment(injection_polar_angle=angle) for angle in angles
+    ]
+
+    raw_config = yaml.safe_load(KICKBACK_TOMOGRAPHY_CONFIG_PATH.read_text())
+    single_path = tmp_path / "single.yaml"
+    single_path.write_text(
+        yaml.safe_dump({**raw_config, "injected_state": "Ty", "injection_angle_sweep": False})
+    )
+    angles, experiments = build_kickback_tomography_experiments(circuit_config_path=single_path)
+    assert angles is None
+    assert experiments == [build_kickback_tomography_experiment(circuit_config_path=single_path)]
 
 
 def test_kickback_tomography_resolve_applies_only_supplied_overrides() -> None:
@@ -396,6 +419,9 @@ def test_kickback_tomography_resolve_applies_only_supplied_overrides() -> None:
     [
         ("patch_sites", 7, "patch_sites must be 11 or 14"),
         ("cultivated_state", "S", "cultivated_state must be 'T' or 'Ty'"),
+        ("injected_state", "Ty", "injected_state must be null for a sweep and set otherwise"),
+        ("injection_angle_sweep", False, "injected_state must be null for a sweep"),
+        ("injection_angle_sweep", "yes", "injection_angle_sweep must be true or false"),
         ("qed_cycle_indices", (1, 5), "qed_cycle_indices may only contain"),
         ("final_stabilizer_basis", "Y", "final_stabilizer_basis must be"),
         ("add_barriers", "yes", "add_barriers must be true or false"),
@@ -410,6 +436,7 @@ def test_kickback_tomography_config_rejects_invalid_fields(
         "patch_sites": 14,
         "cultivated_state": "Ty",
         "injected_state": None,
+        "injection_angle_sweep": True,
         "include_prep_cultivation": True,
         "measure_encoder_flags": False,
         "qed_cycle_indices": (1, 3),
