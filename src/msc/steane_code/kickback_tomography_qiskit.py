@@ -153,6 +153,8 @@ def build_kickback_tomography_experiment(
     (:data:`KICKBACK_TOMOGRAPHY_CONFIG_PATH` by default). Every non-``None``
     keyword overrides the corresponding YAML field; ``injection_azimuth_angle``
     and ``injection_polar_angle`` are per-call sweep angles with no config field.
+    A sweep angle replaces the YAML injection state, but cannot accompany an
+    explicit ``injected_state`` argument.
 
     The shared protocol order is
 
@@ -199,7 +201,8 @@ def build_kickback_tomography_experiment(
         add_barriers=add_barriers,
     )
     cultivated_state = config.cultivated_state
-    injected_state = config.injected_state
+    if injection_azimuth_angle is None and injection_polar_angle is None:
+        injected_state = config.injected_state
     include_prep_cultivation = config.include_prep_cultivation
     final_stabilizer_basis = config.final_stabilizer_basis
     add_barriers = config.add_barriers
