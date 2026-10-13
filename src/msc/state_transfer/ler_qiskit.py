@@ -16,7 +16,7 @@ from scipy.optimize import curve_fit
 
 from msc.state_transfer import common
 from msc.state_transfer.tomography_qiskit import (
-    CircuitLevelTomographyVariant,
+    SubmittedTomographyCircuit,
     TY_TOMOGRAPHY_CONFIG_PATH,
     TyTomographyConfig,
     TyTomographySummary,
@@ -136,22 +136,14 @@ def analyze_ty_logical_error_rate_counts(
     *,
     config_path: str | Path = TY_LOGICAL_ERROR_RATE_CONFIG_PATH,
     logical_error_rate_config: TyLogicalErrorRateConfig | None = None,
-    measurement_schemas_by_round: (
-        Mapping[int, Mapping[common.SurfaceReadoutBasis, Mapping[str, Sequence[str]]]] | None
-    ) = None,
     submitted_circuits_by_round: (
-        Mapping[int, Mapping[common.SurfaceReadoutBasis, QuantumCircuit]] | None
-    ) = None,
-    calibrations_by_round: (
-        Mapping[int, Mapping[common.SurfaceReadoutBasis, DeviceCalibration]] | None
-    ) = None,
-    circuit_level_variants_by_round: (
         Mapping[
             int,
-            Mapping[common.SurfaceReadoutBasis, Sequence[CircuitLevelTomographyVariant]],
+            Mapping[common.SurfaceReadoutBasis, Sequence[SubmittedTomographyCircuit]],
         ]
         | None
     ) = None,
+    calibration: DeviceCalibration | None = None,
     persistent_surface_x_post_selection: bool,
     complementary_gap_threshold: float | None,
     bootstrap_samples: int = 10_000,
@@ -162,8 +154,8 @@ def analyze_ty_logical_error_rate_counts(
     Every memory duration is analyzed as one tomography point with the
     tomography settings of this config at that point's round count and the
     same analysis-only postselection settings. Hardware sweeps are decoded
-    circuit-level when submitted circuits, calibrations, and measurement schemas
-    are passed by round count; each point then builds its own calibrated model.
+    circuit-level when submitted circuits are passed by round count with the
+    job calibration; each submitted circuit builds its own calibrated model.
     """
     config = logical_error_rate_config or load_ty_logical_error_rate_config(config_path)
     expected_rounds = set(config.post_transfer_stabilizer_rounds)
@@ -182,24 +174,12 @@ def analyze_ty_logical_error_rate_counts(
             ),
             persistent_surface_x_post_selection=persistent_surface_x_post_selection,
             complementary_gap_threshold=complementary_gap_threshold,
-            measurement_schemas=(
-                None
-                if measurement_schemas_by_round is None
-                else measurement_schemas_by_round[round_count]
-            ),
             submitted_circuits_by_basis=(
                 None
                 if submitted_circuits_by_round is None
                 else submitted_circuits_by_round[round_count]
             ),
-            calibrations_by_basis=(
-                None if calibrations_by_round is None else calibrations_by_round[round_count]
-            ),
-            circuit_level_variants_by_basis=(
-                None
-                if circuit_level_variants_by_round is None
-                else circuit_level_variants_by_round[round_count]
-            ),
+            calibration=calibration,
         )
         for round_count in config.post_transfer_stabilizer_rounds
     )

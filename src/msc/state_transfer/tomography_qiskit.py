@@ -98,13 +98,15 @@ class TyTomographySummary:
 
 
 @dataclass(frozen=True)
-class CircuitLevelTomographyVariant:
-    """Inputs needed to decode one submitted circuit variant."""
+class SubmittedTomographyCircuit:
+    """One submitted circuit (one twirl variant when twirled) with its bit layout and counts.
+
+    Circuit-level decoding needs the job's calibration besides these inputs.
+    """
 
     counts: Mapping[str, int]
-    submitted_circuit: QuantumCircuit
-    calibration: DeviceCalibration
-    measurement_schema: Mapping[str, Sequence[str]]
+    circuit: QuantumCircuit
+    measurement_bit_layout: Mapping[str, Sequence[str]]
 
 
 def load_ty_tomography_config(
@@ -218,19 +220,20 @@ def build_ty_tomography_circuits(
         )
         circuit.metadata = {
             **(circuit.metadata or {}),
-            "measurement_schema": ty_tomography_measurement_schema(config, basis),
+            # Saved jobs record the bit layout under this original key.
+            "measurement_schema": ty_tomography_measurement_bit_layout(config, basis),
         }
         circuits[basis] = circuit
     return circuits
 
 
-def ty_tomography_measurement_schema(
+def ty_tomography_measurement_bit_layout(
     config: TyTomographyConfig,
     basis: common.SurfaceReadoutBasis,
 ) -> dict[str, tuple[str, ...]]:
     """Return one tomography circuit's ordered classical-bit labels.
 
-    Builders attach this schema to circuit metadata, saved-job loaders identify
+    Builders attach this bit layout to circuit metadata, saved-job loaders identify
     submitted circuits by it, and phenomenological analysis parses count keys
     with it.
     """
@@ -269,14 +272,13 @@ def analyze_ty_tomography_counts(
     post_transfer_stabilizer_rounds: int | None = None,
     persistent_surface_x_post_selection: bool,
     complementary_gap_threshold: float | None,
-    measurement_schemas: (
+    measurement_bit_layouts: (
         Mapping[common.SurfaceReadoutBasis, Mapping[str, Sequence[str]]] | None
     ) = None,
-    submitted_circuits_by_basis: Mapping[common.SurfaceReadoutBasis, QuantumCircuit] | None = None,
-    calibrations_by_basis: Mapping[common.SurfaceReadoutBasis, DeviceCalibration] | None = None,
-    circuit_level_variants_by_basis: (
-        Mapping[common.SurfaceReadoutBasis, Sequence[CircuitLevelTomographyVariant]] | None
+    submitted_circuits_by_basis: (
+        Mapping[common.SurfaceReadoutBasis, Sequence[SubmittedTomographyCircuit]] | None
     ) = None,
+    calibration: DeviceCalibration | None = None,
 ) -> TyTomographySummary:
     """Analyze paired counts using the same YAML config as construction.
 
@@ -286,11 +288,12 @@ def analyze_ty_tomography_counts(
     ``complementary_gap_threshold`` (``None`` disables it) rejects circuit-level
     shots whose complementary gap falls below it.
 
-    Hardware counts are decoded circuit-level: pass, by basis, the submitted
-    circuit, its calibration, and its saved measurement schema. Without
-    submitted circuits and calibrations, such as for simulated logical
-    circuits, each count key is parsed and decoded phase by phase instead, without
-    complementary-gap postselection.
+    Hardware counts are decoded circuit-level: pass, by basis, every submitted
+    circuit (one per twirl variant, or the single untwirled circuit) with its
+    measurement bit layout and counts, and the device calibration the job was
+    compiled against. Without submitted circuits, such as for simulated logical
+    circuits, each count key is parsed with ``measurement_bit_layouts`` and
+    decoded phase by phase instead, without complementary-gap postselection.
     """
     config = tomography_config or resolve_ty_tomography_config(
         circuit_config_path=circuit_config_path,
@@ -310,24 +313,9 @@ def analyze_ty_tomography_counts(
         or complementary_gap_threshold < 0
     ):
         raise ValueError("complementary_gap_threshold must be None or a nonnegative number.")
-    circuit_level = (
-        submitted_circuits_by_basis is not None
-        or calibrations_by_basis is not None
-        or circuit_level_variants_by_basis is not None
-    )
-    if circuit_level and (
-        circuit_level_variants_by_basis is None
-        and (
-            submitted_circuits_by_basis is None
-            or calibrations_by_basis is None
-            or measurement_schemas is None
-        )
-    ):
-        raise ValueError(
-            "circuit-level decoding requires submitted circuits, calibrations, and "
-            "measurement schemas by basis."
-        )
-    if not circuit_level and complementary_gap_threshold is not None:
+    if (submitted_circuits_by_basis is None) != (calibration is None):
+        raise ValueError("submitted circuits and their calibration must be passed together.")
+    if submitted_circuits_by_basis is None and complementary_gap_threshold is not None:
         raise ValueError("complementary_gap_threshold requires circuit-level decoding inputs.")
 
     expectations: dict[common.SurfaceReadoutBasis, float] = {}
@@ -338,42 +326,32 @@ def analyze_ty_tomography_counts(
             raise ValueError(f"counts_by_basis is missing the {basis} experiment.")
         counts = counts_by_basis[basis]
         total_shots[basis] = sum(counts.values())
-        if circuit_level_variants_by_basis is not None:
-            logical_zero_shots = 0
-            logical_one_shots = 0
-            variants = circuit_level_variants_by_basis[basis]
-            for variant in variants:
-                variant_zero_shots, variant_one_shots = CircuitLevelDecoder(
-                    variant.submitted_circuit,
-                    calibration=variant.calibration,
+        if submitted_circuits_by_basis is not None:
+            logical_zero_shots = logical_one_shots = 0
+            basis_circuits = submitted_circuits_by_basis[basis]
+            circuit_shots = sum(sum(submitted.counts.values()) for submitted in basis_circuits)
+            if circuit_shots != total_shots[basis]:
+                raise ValueError(f"{basis}-basis circuit counts do not match aggregated counts.")
+            for submitted in basis_circuits:
+                submitted_zero_shots, submitted_one_shots = CircuitLevelDecoder(
+                    submitted.circuit,
+                    calibration=calibration,
                     tomography_config=config,
-                    measurement_schema=variant.measurement_schema,
+                    measurement_bit_layout=submitted.measurement_bit_layout,
                     readout_basis=basis,
                     persistent_surface_x_post_selection=persistent_surface_x_post_selection,
                     complementary_gap_threshold=complementary_gap_threshold,
-                ).decode_counts(variant.counts)
-                logical_zero_shots += variant_zero_shots
-                logical_one_shots += variant_one_shots
-            if sum(sum(variant.counts.values()) for variant in variants) != total_shots[basis]:
-                raise ValueError(f"{basis}-basis variant counts do not match pooled counts.")
-        elif circuit_level:
-            logical_zero_shots, logical_one_shots = CircuitLevelDecoder(
-                submitted_circuits_by_basis[basis],
-                calibration=calibrations_by_basis[basis],
-                tomography_config=config,
-                measurement_schema=measurement_schemas[basis],
-                readout_basis=basis,
-                persistent_surface_x_post_selection=persistent_surface_x_post_selection,
-                complementary_gap_threshold=complementary_gap_threshold,
-            ).decode_counts(counts)
+                ).decode_counts(submitted.counts)
+                logical_zero_shots += submitted_zero_shots
+                logical_one_shots += submitted_one_shots
         else:
             logical_zero_shots, logical_one_shots = _decode_phenomenological_counts(
                 counts,
                 config=config,
                 basis=basis,
                 persistent_surface_x_post_selection=persistent_surface_x_post_selection,
-                measurement_schema=(
-                    None if measurement_schemas is None else measurement_schemas[basis]
+                measurement_bit_layout=(
+                    None if measurement_bit_layouts is None else measurement_bit_layouts[basis]
                 ),
             )
         accepted_shots[basis] = logical_zero_shots + logical_one_shots
@@ -402,7 +380,7 @@ def _decode_phenomenological_counts(
     config: TyTomographyConfig,
     basis: common.SurfaceReadoutBasis,
     persistent_surface_x_post_selection: bool,
-    measurement_schema: Mapping[str, Sequence[str]] | None,
+    measurement_bit_layout: Mapping[str, Sequence[str]] | None,
 ) -> tuple[int, int]:
     """Return accepted logical-zero and logical-one shots from per-phase decoding.
 
@@ -418,9 +396,9 @@ def _decode_phenomenological_counts(
     else:  # pragma: no cover - validated by TyTomographyConfig.
         raise ValueError("target_distance must be 3 or 5.")
     labels = (
-        ty_tomography_measurement_schema(config, basis)
-        if measurement_schema is None
-        else measurement_schema
+        ty_tomography_measurement_bit_layout(config, basis)
+        if measurement_bit_layout is None
+        else measurement_bit_layout
     )
     positions_by_family: dict[str, dict[str, int]] = {}
     offset = 0

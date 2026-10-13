@@ -280,7 +280,7 @@ class SurfaceCodeTransferSpec:
 
 
 # =============================================================================
-# Measurement schema and shot interpretation
+# Measurement labels and shot interpretation
 # =============================================================================
 
 
@@ -667,7 +667,7 @@ STEANE_POSTSELECTION_FAMILIES: tuple[str, ...] = (
 )
 MeasurementRecord = tuple[str, str]
 TransferDetectorRole = Literal["protocol", "persistent_surface_x", "surface"]
-# One detector: the parity of shared-schema ``(family, label)`` records and its
+# One detector: the parity of shared ``(family, label)`` measurement records and its
 # postselection role. Protocol detectors always reject, persistent-surface-X
 # detectors reject when that policy is enabled, and surface detectors are
 # decoded unless every detector is postselected.

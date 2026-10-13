@@ -123,7 +123,7 @@ def test_tomography_yaml_matches_constructed_circuits_and_analysis(
         tomography_config=TyTomographyConfig(**yaml.safe_load(config_path.read_text())),
         persistent_surface_x_post_selection=True,
         complementary_gap_threshold=None,
-        measurement_schemas={
+        measurement_bit_layouts={
             basis: circuit.metadata["measurement_schema"] for basis, circuit in circuits.items()
         },
     )

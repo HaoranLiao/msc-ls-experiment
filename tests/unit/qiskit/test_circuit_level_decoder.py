@@ -1,4 +1,4 @@
-"""Circuit-level decoding of the saved ibm_phoenix Ty tomography job."""
+"""Circuit-level decoding of the saved ibm_phoenix Ty tomography job and of twirl variants."""
 
 from __future__ import annotations
 
@@ -8,14 +8,25 @@ from collections import Counter
 import numpy as np
 import pytest
 import stim
+from qiskit import QuantumCircuit, transpile
+from qiskit.circuit import Delay
+from qiskit.circuit.library import XGate
+from qiskit.providers.fake_provider import GenericBackendV2
+from qiskit.transpiler import InstructionProperties, PassManager, Target
+from qiskit.transpiler.passes import RemoveResetInZeroState
 
-from msc.experiment.results_io import SavedHardwareJob, load_saved_hardware_job
+from msc.experiment.results_io import DeviceCalibration, SavedHardwareJob, load_saved_hardware_job
 from msc.paths import HARDWARE_RUNS_DIR
 from msc.rotated_surface_code.decoding.circuit_level_decoder import CircuitLevelDecoder
 from msc.state_transfer import common
 from msc.state_transfer import to_d5_rotated_qiskit as d5
-from msc.state_transfer.tomography_qiskit import TOMOGRAPHY_BASES, analyze_ty_tomography_counts
-from msc.state_transfer.tomography_qiskit import CircuitLevelTomographyVariant
+from msc.state_transfer.tomography_qiskit import (
+    TOMOGRAPHY_BASES,
+    SubmittedTomographyCircuit,
+    analyze_ty_tomography_counts,
+    build_ty_tomography_circuits,
+    resolve_ty_tomography_config,
+)
 from msc.utils.normalize import qiskit_bit_values
 
 SAVED_JOB_DIRECTORY = HARDWARE_RUNS_DIR / "tomography_20260923T202524"
@@ -27,13 +38,26 @@ def saved_job() -> SavedHardwareJob:
 
 
 @pytest.fixture(scope="module")
-def decoders(saved_job: SavedHardwareJob) -> dict[str, CircuitLevelDecoder]:
+def submitted_circuit_by_basis(
+    saved_job: SavedHardwareJob,
+) -> dict[str, SubmittedTomographyCircuit]:
+    """The untwirled job's single submitted circuit per basis."""
+    return {
+        basis: submitted for basis, (submitted,) in saved_job.submitted_circuits_by_basis.items()
+    }
+
+
+@pytest.fixture(scope="module")
+def decoders(
+    saved_job: SavedHardwareJob,
+    submitted_circuit_by_basis: dict[str, SubmittedTomographyCircuit],
+) -> dict[str, CircuitLevelDecoder]:
     return {
         basis: CircuitLevelDecoder(
-            saved_job.circuits_by_basis[basis],
-            calibration=saved_job.calibrations_by_basis[basis],
+            submitted_circuit_by_basis[basis].circuit,
+            calibration=saved_job.calibration,
             tomography_config=saved_job.config,
-            measurement_schema=saved_job.measurement_schemas_by_basis[basis],
+            measurement_bit_layout=submitted_circuit_by_basis[basis].measurement_bit_layout,
             readout_basis=basis,
             persistent_surface_x_post_selection=True,
             complementary_gap_threshold=None,
@@ -55,14 +79,14 @@ def _counts_from_records(
 
 def _flip_records(
     counts: dict[str, int],
-    schema: dict[str, tuple[str, ...]],
+    bit_layout: dict[str, tuple[str, ...]],
     records: tuple[tuple[str, str], ...],
 ) -> dict[str, int]:
     """Flip the classical bits of labeled records in every Qiskit count key."""
     clbit_by_record = {
         record: clbit
         for clbit, record in enumerate(
-            (family, label) for family, labels in schema.items() for label in labels
+            (family, label) for family, labels in bit_layout.items() for label in labels
         )
     }
     width = len(next(iter(counts)))
@@ -76,48 +100,6 @@ def _flip_records(
     return flipped_counts
 
 
-def test_twirled_counts_are_decoded_with_each_submitted_circuit(
-    monkeypatch: pytest.MonkeyPatch,
-    saved_job: SavedHardwareJob,
-) -> None:
-    decoded_circuits = []
-
-    class FakeDecoder:
-        def __init__(self, submitted_circuit, **kwargs):
-            decoded_circuits.append(submitted_circuit)
-
-        def decode_counts(self, counts):
-            return sum(counts.values()), 0
-
-    monkeypatch.setattr(
-        "msc.state_transfer.tomography_qiskit.CircuitLevelDecoder",
-        FakeDecoder,
-    )
-    variants = {
-        basis: tuple(
-            CircuitLevelTomographyVariant(
-                counts={"0": shots},
-                submitted_circuit=f"{basis}-{index}",
-                calibration=saved_job.calibrations_by_basis[basis],
-                measurement_schema=saved_job.measurement_schemas_by_basis[basis],
-            )
-            for index, shots in enumerate((2, 3))
-        )
-        for basis in TOMOGRAPHY_BASES
-    }
-
-    summary = analyze_ty_tomography_counts(
-        {basis: {"0": 5} for basis in TOMOGRAPHY_BASES},
-        tomography_config=saved_job.config,
-        persistent_surface_x_post_selection=True,
-        complementary_gap_threshold=None,
-        circuit_level_variants_by_basis=variants,
-    )
-
-    assert decoded_circuits == ["X-0", "X-1", "Z-0", "Z-1"]
-    assert summary.accepted_x_shots == summary.accepted_z_shots == 5
-
-
 # =============================================================================
 # Calibrated Stim model
 # =============================================================================
@@ -127,7 +109,7 @@ def test_noise_channels_follow_the_calibrated_submitted_operations(
     saved_job: SavedHardwareJob,
     decoders: dict[str, CircuitLevelDecoder],
 ) -> None:
-    calibration = saved_job.calibrations_by_basis["X"]
+    calibration = saved_job.calibration
     instructions = list(decoders["X"].circuit)
     checked = Counter()
     for instruction, next_instruction, third_instruction in zip(
@@ -180,13 +162,14 @@ def test_noise_channels_follow_the_calibrated_submitted_operations(
 
 def test_complementary_gap_detector_changes_only_the_logical_sector(
     saved_job: SavedHardwareJob,
+    submitted_circuit_by_basis: dict[str, SubmittedTomographyCircuit],
     decoders: dict[str, CircuitLevelDecoder],
 ) -> None:
     gap_decoder = CircuitLevelDecoder(
-        saved_job.circuits_by_basis["X"],
-        calibration=saved_job.calibrations_by_basis["X"],
+        submitted_circuit_by_basis["X"].circuit,
+        calibration=saved_job.calibration,
         tomography_config=saved_job.config,
-        measurement_schema=saved_job.measurement_schemas_by_basis["X"],
+        measurement_bit_layout=submitted_circuit_by_basis["X"].measurement_bit_layout,
         readout_basis="X",
         persistent_surface_x_post_selection=True,
         complementary_gap_threshold=0.0,
@@ -258,7 +241,7 @@ def test_accepted_single_faults_never_cause_logical_errors(
 
 @pytest.mark.parametrize("basis", TOMOGRAPHY_BASES)
 def test_hardware_style_counts_round_trip_through_the_record_mapping(
-    saved_job: SavedHardwareJob,
+    submitted_circuit_by_basis: dict[str, SubmittedTomographyCircuit],
     decoders: dict[str, CircuitLevelDecoder],
     basis: common.SurfaceReadoutBasis,
 ) -> None:
@@ -287,7 +270,7 @@ def test_hardware_style_counts_round_trip_through_the_record_mapping(
 
     # Flipping readout bits on the conjugate logical's support changes only the
     # logical outcome, and each transfer byproduct record enters it exactly once.
-    schema = dict(saved_job.measurement_schemas_by_basis[basis])
+    bit_layout = dict(submitted_circuit_by_basis[basis].measurement_bit_layout)
     conjugate_support = (
         d5.TRANSFER_SPEC.logical_z if basis == "X" else d5.TRANSFER_SPEC.logical_x
     )
@@ -302,16 +285,17 @@ def test_hardware_style_counts_round_trip_through_the_record_mapping(
     else:  # pragma: no cover - TOMOGRAPHY_BASES contains only X and Z.
         raise ValueError(basis)
     for flipped_records in (readout_flip, byproduct_flip):
-        flipped_counts = _flip_records(counts, schema, flipped_records)
+        flipped_counts = _flip_records(counts, bit_layout, flipped_records)
         assert decoder.decode_counts(flipped_counts) == expected[::-1]
 
     # A Steane input flag rejects every shot.
-    rejected_counts = _flip_records(counts, schema, (("cult", "root_x"),))
+    rejected_counts = _flip_records(counts, bit_layout, (("cult", "root_x"),))
     assert decoder.decode_counts(rejected_counts) == (0, 0)
 
 
 def test_saved_policy_matches_phenomenological_acceptance_shot_by_shot(
     saved_job: SavedHardwareJob,
+    submitted_circuit_by_basis: dict[str, SubmittedTomographyCircuit],
     decoders: dict[str, CircuitLevelDecoder],
 ) -> None:
     """Both decoders accept the same hardware shots: 5,015 X and 5,126 Z in total.
@@ -352,9 +336,153 @@ def test_saved_policy_matches_phenomenological_acceptance_shot_by_shot(
         tomography_config=saved_job.config,
         persistent_surface_x_post_selection=True,
         complementary_gap_threshold=None,
-        measurement_schemas=saved_job.measurement_schemas_by_basis,
+        measurement_bit_layouts={
+            basis: submitted.measurement_bit_layout
+            for basis, submitted in submitted_circuit_by_basis.items()
+        },
     )
     assert (phenomenological.accepted_x_shots, phenomenological.accepted_z_shots) == (
         circuit_level_accepted_shots["X"],
         circuit_level_accepted_shots["Z"],
     )
+
+
+# =============================================================================
+# Twirl variants
+# =============================================================================
+
+
+def test_each_twirl_variant_is_decoded_with_its_own_circuit() -> None:
+    """Analysis decodes every variant's counts with that variant's calibrated circuit.
+
+    Twirl variants add pulses that cancel logically, so they share their
+    noiseless record but not their noise model. The second variant of each
+    basis replaces late idles with noisy X-X pairs, which changes the decoding
+    of its counts relative to the first variant's model.
+    """
+    config = resolve_ty_tomography_config(target_distance=5, patch_sites=14, add_barriers=False)
+    logical_circuits = build_ty_tomography_circuits(
+        target_distance=5,
+        patch_sites=14,
+        add_barriers=False,
+    )
+
+    # An all-to-all device needs no routing; its X pulses are deliberately noisy.
+    num_qubits = logical_circuits["X"].num_qubits
+    backend = GenericBackendV2(
+        num_qubits,
+        basis_gates=["cz", "sx", "x", "rz"],
+        coupling_map=[[a, b] for a in range(num_qubits) for b in range(num_qubits) if a != b],
+        seed=1,
+    )
+    target = backend.target
+    for qubit in range(num_qubits):
+        target.update_instruction_properties(
+            "reset",
+            (qubit,),
+            InstructionProperties(duration=target["measure"][(qubit,)].duration),
+        )
+    calibration = DeviceCalibration(
+        dt=target.dt,
+        relaxation_times=tuple((qubit.t1, qubit.t2) for qubit in target.qubit_properties),
+        errors={
+            (name, qubits): 0.02 if name == "x" else properties.error
+            for name in target.operation_names
+            for qubits, properties in target[name].items()
+        },
+        durations={
+            (name, qubits): properties.duration
+            for name in target.operation_names
+            for qubits, properties in target[name].items()
+        },
+    )
+
+    variants_by_basis = {}
+    expected_shots_by_basis = {}
+    for basis, logical_circuit in logical_circuits.items():
+        bit_layout = logical_circuit.metadata["measurement_schema"]
+        # Hardware preprocessing drops resets on fresh wires, as the decoder expects.
+        first_circuit = transpile(
+            PassManager([RemoveResetInZeroState()]).run(logical_circuit),
+            backend,
+            initial_layout=list(range(num_qubits)),
+            optimization_level=0,
+            scheduling_method="asap",
+        )
+        circuits = (first_circuit, _with_late_x_pairs(first_circuit, target))
+        decoders = [
+            CircuitLevelDecoder(
+                circuit,
+                calibration=calibration,
+                tomography_config=config,
+                measurement_bit_layout=bit_layout,
+                readout_basis=basis,
+                persistent_surface_x_post_selection=True,
+                complementary_gap_threshold=None,
+            )
+            for circuit in circuits
+        ]
+        variants = tuple(
+            SubmittedTomographyCircuit(
+                circuit=circuit,
+                measurement_bit_layout=bit_layout,
+                counts=_counts_from_records(
+                    decoder, decoder.circuit.compile_sampler(seed=seed).sample(20_000)
+                ),
+            )
+            for seed, (circuit, decoder) in enumerate(zip(circuits, decoders, strict=True), start=1)
+        )
+        # The variants' models disagree, so decoding with one circuit would be caught.
+        first_decoder, second_decoder = decoders
+        second_counts = variants[1].counts
+        assert first_decoder.decode_counts(second_counts) != second_decoder.decode_counts(
+            second_counts
+        )
+        variants_by_basis[basis] = variants
+        expected_shots_by_basis[basis] = np.sum(
+            [
+                decoder.decode_counts(variant.counts)
+                for decoder, variant in zip(decoders, variants, strict=True)
+            ],
+            axis=0,
+        )
+
+    summary = analyze_ty_tomography_counts(
+        {
+            basis: dict(sum((Counter(variant.counts) for variant in variants), Counter()))
+            for basis, variants in variants_by_basis.items()
+        },
+        tomography_config=config,
+        persistent_surface_x_post_selection=True,
+        complementary_gap_threshold=None,
+        submitted_circuits_by_basis=variants_by_basis,
+        calibration=calibration,
+    )
+    for basis, accepted_shots, expectation in (
+        ("X", summary.accepted_x_shots, summary.expectation_x),
+        ("Z", summary.accepted_z_shots, summary.expectation_z),
+    ):
+        logical_zero_shots, logical_one_shots = expected_shots_by_basis[basis]
+        assert accepted_shots == logical_zero_shots + logical_one_shots
+        assert expectation == pytest.approx(
+            (logical_zero_shots - logical_one_shots) / accepted_shots
+        )
+
+
+def _with_late_x_pairs(circuit: QuantumCircuit, target: Target) -> QuantumCircuit:
+    """Return a twirl-like variant: idles in the last 40% become X-X pairs plus a shorter idle."""
+    variant = circuit.copy_empty_like()
+    first_replaced_index = int(0.6 * len(circuit.data))
+    for index, instruction in enumerate(circuit.data):
+        if index >= first_replaced_index and instruction.operation.name == "delay":
+            (qubit,) = instruction.qubits
+            x_duration = round(target["x"][(circuit.find_bit(qubit).index,)].duration / target.dt)
+            idle_duration = instruction.operation.duration - 2 * x_duration
+            if idle_duration >= 0:
+                variant.append(XGate(), [qubit])
+                variant.append(XGate(), [qubit])
+                if idle_duration > 0:
+                    variant.append(Delay(idle_duration, unit=instruction.operation.unit), [qubit])
+                continue
+        variant.append(instruction)
+    return variant

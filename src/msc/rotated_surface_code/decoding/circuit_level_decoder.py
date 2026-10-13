@@ -10,10 +10,9 @@ include hook-error signatures and device nonuniformity.
 
 Scope: 14-site abstract-routed Steane cultivation transferred to the rotated
 d=5 surface code with either merge schedule, destructive X or Z full-data
-readout, and any number of post-transfer rounds. Assumes one fixed physical
-circuit per basis: untwirled submissions (the runner disables twirling, whose
-per-randomization gates and measurement flips the model cannot follow) and an
-identity routing permutation.
+readout, and any number of post-transfer rounds. Each decoder models one
+fixed physical circuit, so a twirled job is decoded one twirl variant at a
+time; the circuit must have an identity routing permutation.
 
 Terminology: the Steane input (injection, QED, and cultivation) is replaced by
 a noiseless Stim stand-in; each Steane wire's Steane cut is where the input ends
@@ -23,11 +22,11 @@ is converted with calibrated noise.
 Call structure::
 
     CircuitLevelDecoder(submitted_circuit, calibration=..., tomography_config=...,
-                        measurement_schema=..., readout_basis=...,
+                        measurement_bit_layout=..., readout_basis=...,
                         persistent_surface_x_post_selection=...,
                         complementary_gap_threshold=...)
     ├── _build_calibrated_stim_model(...) -> _CalibratedStimModel
-    │   ├── rebuild the logical circuit and require the saved schema
+    │   ├── rebuild the logical circuit and require the saved bit layout
     │   ├── _align_wire_operations(...)       # match anchors and group gate blocks
     │   ├── _verify_frames_and_locate_steane_cuts(...)  # verify local frames
     │   ├── noiseless Stim stand-in for the Steane input
@@ -110,7 +109,7 @@ class CircuitLevelDecoder:
         *,
         calibration: DeviceCalibration,
         tomography_config: TyTomographyConfig,
-        measurement_schema: Mapping[str, Sequence[str]],
+        measurement_bit_layout: Mapping[str, Sequence[str]],
         readout_basis: common.SurfaceReadoutBasis,
         persistent_surface_x_post_selection: bool,
         complementary_gap_threshold: float | None,
@@ -119,7 +118,7 @@ class CircuitLevelDecoder:
             submitted_circuit,
             calibration=calibration,
             tomography_config=tomography_config,
-            measurement_schema=measurement_schema,
+            measurement_bit_layout=measurement_bit_layout,
             readout_basis=readout_basis,
             add_complementary_gap_detector=complementary_gap_threshold is not None,
         )
@@ -200,7 +199,7 @@ def _build_calibrated_stim_model(
     *,
     calibration: DeviceCalibration,
     tomography_config: TyTomographyConfig,
-    measurement_schema: Mapping[str, Sequence[str]],
+    measurement_bit_layout: Mapping[str, Sequence[str]],
     readout_basis: common.SurfaceReadoutBasis,
     add_complementary_gap_detector: bool,
 ) -> _CalibratedStimModel:
@@ -227,12 +226,12 @@ def _build_calibrated_stim_model(
     ):
         raise ValueError("the submitted circuit needs a layout without routing permutation.")
 
-    # The saved schema is what gives hardware bits a protocol meaning. Rebuild
+    # The saved bit layout is what gives hardware bits a protocol meaning. Rebuild
     # the logical circuit from the config and require the same labeled
     # records, so every later step addresses measurements by label, not bit.
     spec = d5.TRANSFER_SPEC
     post_transfer_stabilizer_rounds = config.resolved_post_transfer_stabilizer_rounds
-    schema_options = dict(
+    bit_layout_options = dict(
         patch_sites=config.patch_sites,
         merge_schedule=config.merge_schedule,
         measure_encoder_flags=config.measure_encoder_flags,
@@ -240,25 +239,25 @@ def _build_calibrated_stim_model(
         post_injection_qed_checks=config.resolved_post_injection_qed_checks,
     )
     logical_circuit = d5.build_steane_to_rotated_d5_lattice_surgery_circuit(
-        **schema_options,
+        **bit_layout_options,
         surface_readout_basis=readout_basis,
         full_post_selection=config.full_post_selection,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         add_barriers=False,
     )
-    schema = common.transfer_measurement_labels(
+    bit_layout = common.transfer_measurement_labels(
         spec,
-        **schema_options,
+        **bit_layout_options,
         include_cultivation=True,
         surface_readout_basis=readout_basis,
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         full_data_readout=True,
     )
-    if [(family, tuple(labels)) for family, labels in measurement_schema.items()] != list(
-        schema.items()
+    if [(family, tuple(labels)) for family, labels in measurement_bit_layout.items()] != list(
+        bit_layout.items()
     ) or submitted_circuit.num_clbits != logical_circuit.num_clbits:
-        raise ValueError("the saved measurement schema does not match the rebuilt protocol.")
-    clbit_records = [(family, label) for family, labels in schema.items() for label in labels]
+        raise ValueError("the saved measurement bit layout does not match the rebuilt protocol.")
+    clbit_records = [(family, label) for family, labels in bit_layout.items() for label in labels]
     clbit_by_record = {record: clbit for clbit, record in enumerate(clbit_records)}
 
     # Decide what the noiseless stand-in replaces: the logical Steane input
@@ -320,7 +319,7 @@ def _build_calibrated_stim_model(
     standin_layout = transfer_stim_helper.transfer_measurement_layout(
         spec,
         include_cultivation=True,
-        **schema_options,
+        **bit_layout_options,
     )
     standin_records = [
         record
@@ -372,7 +371,7 @@ def _build_calibrated_stim_model(
             (((family, label),), "protocol")
             for family in common.STEANE_POSTSELECTION_FAMILIES
             if family not in _STEANE_INPUT_FAMILIES
-            for label in schema.get(family, ())
+            for label in bit_layout.get(family, ())
         ),
         *common.transfer_detectors(spec),
         *common.post_transfer_detectors(

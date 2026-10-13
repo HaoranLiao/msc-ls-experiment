@@ -91,7 +91,7 @@ def transfer_measurement_layout(
 ) -> TransferMeasurementLayout:
     """Map shared measurement labels into Stim's physical append order.
 
-    The shared schema groups measurements by meaning, whereas Stim stores one
+    The shared measurement labels group measurements by meaning, whereas Stim stores one
     global record in circuit order. This layout explicitly interleaves each
     round as interface checks -> compatible surface checks -> color-code
     checks, then places demolition and the ``X_ab`` recovery in their actual
@@ -180,7 +180,7 @@ def transfer_measurement_layout(
     for name in ("steane_x", "surface_x_recovery"):
         record_measurements(name, len(labels[name]))
     if any(tuple(family_labels[name]) != expected for name, expected in labels.items()):
-        raise RuntimeError("Stim measurement order does not cover the shared schema.")
+        raise RuntimeError("Stim measurement order does not cover the shared measurement labels.")
     return TransferMeasurementLayout(
         patch_sites=patch_sites,
         labels=labels,
