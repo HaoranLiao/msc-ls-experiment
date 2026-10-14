@@ -202,6 +202,7 @@ class CircuitLevelDecoder:
         shots = tuple((int(zero), int(one)) for zero, one in shots_by_threshold)
         return shots[0] if complementary_gap_thresholds is None else shots
 
+
 # =============================================================================
 # Calibrated Stim model
 # =============================================================================
@@ -251,9 +252,7 @@ def _build_calibrated_stim_model(
     if (config.target_distance, config.patch_sites) != (5, NUM_QUBITS_PATCH_14_SITES):
         raise ValueError("circuit-level decoding supports only 14-site transfer to d=5.")
     layout = submitted_circuit.layout
-    if layout is None or layout.routing_permutation() != list(
-        range(submitted_circuit.num_qubits)
-    ):
+    if layout is None or layout.routing_permutation() != list(range(submitted_circuit.num_qubits)):
         raise ValueError("the submitted circuit needs a layout without routing permutation.")
 
     # The saved bit layout is what gives hardware bits a protocol meaning. Rebuild
@@ -524,10 +523,14 @@ def _align_wire_operations(
         if [op.anchor for op in logical_anchors] != [op.anchor for op in physical_anchors]:
             raise ValueError(f"wire {wire} anchors differ between logical and submitted circuits.")
         for logical_anchor, physical_anchor in zip(logical_anchors, physical_anchors, strict=True):
-            if logical_anchor.anchor[0] == "cz" and physical_cz_by_logical_cx.setdefault(
-                logical_anchor.instruction_index,
-                physical_anchor.instruction_index,
-            ) != physical_anchor.instruction_index:
+            if (
+                logical_anchor.anchor[0] == "cz"
+                and physical_cz_by_logical_cx.setdefault(
+                    logical_anchor.instruction_index,
+                    physical_anchor.instruction_index,
+                )
+                != physical_anchor.instruction_index
+            ):
                 raise ValueError("a logical CX matches different physical CZs on its wires.")
     return logical_operations, {wire: physical_operations[wire] for wire in physical_by_virtual}
 

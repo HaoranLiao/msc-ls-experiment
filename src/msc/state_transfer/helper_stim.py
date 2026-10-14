@@ -12,7 +12,6 @@ from msc.steane_code import state_injection_stim as steane
 from msc.utils import circuit_stim
 from msc.utils.normalize import normalize_pauli_char
 
-
 # =============================================================================
 # Semantic qubits and measurement record
 # =============================================================================

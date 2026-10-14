@@ -272,9 +272,7 @@ def test_hardware_style_counts_round_trip_through_the_record_mapping(
     # Flipping readout bits on the conjugate logical's support changes only the
     # logical outcome, and each transfer byproduct record enters it exactly once.
     bit_layout = dict(submitted_circuit_by_basis[basis].measurement_bit_layout)
-    conjugate_support = (
-        d5.TRANSFER_SPEC.logical_z if basis == "X" else d5.TRANSFER_SPEC.logical_x
-    )
+    conjugate_support = d5.TRANSFER_SPEC.logical_z if basis == "X" else d5.TRANSFER_SPEC.logical_x
     readout_flip = tuple((f"surface_data_{basis.lower()}", label) for label in conjugate_support)
     if basis == "X":
         byproduct_flip = common.transfer_logical_frame_records(d5.TRANSFER_SPEC, "X")

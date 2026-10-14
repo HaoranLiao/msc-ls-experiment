@@ -375,9 +375,9 @@ def analyze_ty_tomography_counts(
         expectations: dict[common.SurfaceReadoutBasis, float] = {}
         accepted_shots: dict[common.SurfaceReadoutBasis, int] = {}
         for basis in TOMOGRAPHY_BASES:
-            logical_zero_shots, logical_one_shots = (
-                logical_shots_by_basis[basis][threshold].tolist()
-            )
+            logical_zero_shots, logical_one_shots = logical_shots_by_basis[basis][
+                threshold
+            ].tolist()
             accepted_shots[basis] = logical_zero_shots + logical_one_shots
             if accepted_shots[basis] == 0:
                 raise ValueError(f"no accepted {basis}-basis tomography shots.")

@@ -345,9 +345,7 @@ def test_ler_yaml_matches_sweep_circuits_and_analysis(tmp_path: Path) -> None:
     assert all(point.accepted_x_shots == 10 for point in summary.tomography)
     assert all(point.accepted_z_shots == 10 for point in summary.tomography)
     assert summary.logical_error_rate_per_round == pytest.approx(0.0, abs=1e-8)
-    assert summary.logical_error_rate_confidence_interval_95 == pytest.approx(
-        (0.0, 0.0), abs=1e-8
-    )
+    assert summary.logical_error_rate_confidence_interval_95 == pytest.approx((0.0, 0.0), abs=1e-8)
 
 
 # =============================================================================

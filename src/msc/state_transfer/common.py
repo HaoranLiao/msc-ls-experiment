@@ -707,8 +707,7 @@ def transfer_detectors(spec: SurfaceCodeTransferSpec) -> tuple[TransferDetector,
         for support in FINAL_X_VERIFICATION_CHECKS.values()
     )
     detectors.extend(
-        ((("surface_init_x", label),), _surface_detector_role(label))
-        for label in spec.x_labels
+        ((("surface_init_x", label),), _surface_detector_role(label)) for label in spec.x_labels
     )
     detectors.extend(
         _stabilizer_change_detectors(
