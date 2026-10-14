@@ -60,7 +60,7 @@ def decoders(
             measurement_bit_layout=submitted_circuit_by_basis[basis].measurement_bit_layout,
             readout_basis=basis,
             persistent_surface_x_post_selection=True,
-            complementary_gap_threshold=None,
+            complementary_gap=False,
         )
         for basis in TOMOGRAPHY_BASES
     }
@@ -172,7 +172,7 @@ def test_complementary_gap_detector_changes_only_the_logical_sector(
         measurement_bit_layout=submitted_circuit_by_basis["X"].measurement_bit_layout,
         readout_basis="X",
         persistent_surface_x_post_selection=True,
-        complementary_gap_threshold=0.0,
+        complementary_gap=True,
     )
     circuit = gap_decoder.circuit
     gap_detector = circuit.num_detectors - 1
@@ -193,7 +193,8 @@ def test_complementary_gap_detector_changes_only_the_logical_sector(
 
     # Threshold zero adds no rejection to the saved hardware counts.
     counts = saved_job.counts_by_basis["X"]
-    assert sum(gap_decoder.decode_counts(counts)) == sum(decoders["X"].decode_counts(counts))
+    (gap_shots,) = gap_decoder.decode_counts(counts, (0.0,))
+    assert sum(gap_shots) == sum(decoders["X"].decode_counts(counts))
 
 
 # =============================================================================
@@ -331,11 +332,11 @@ def test_saved_policy_matches_phenomenological_acceptance_shot_by_shot(
         assert circuit_level_accepted_shots[basis] == expected_accepted_shots
 
     # The phenomenological decoder accepts exactly the circuit-level-accepted keys.
-    phenomenological = analyze_ty_tomography_counts(
+    (phenomenological,) = analyze_ty_tomography_counts(
         sampled_counts,
         tomography_config=saved_job.config,
         persistent_surface_x_post_selection=True,
-        complementary_gap_threshold=None,
+        complementary_gap_thresholds=(None,),
         measurement_bit_layouts={
             basis: submitted.measurement_bit_layout
             for basis, submitted in submitted_circuit_by_basis.items()
@@ -418,7 +419,7 @@ def test_each_twirl_variant_is_decoded_with_its_own_circuit() -> None:
                 measurement_bit_layout=bit_layout,
                 readout_basis=basis,
                 persistent_surface_x_post_selection=True,
-                complementary_gap_threshold=None,
+                complementary_gap=False,
             )
             for circuit in circuits
         ]
@@ -447,14 +448,14 @@ def test_each_twirl_variant_is_decoded_with_its_own_circuit() -> None:
             axis=0,
         )
 
-    summary = analyze_ty_tomography_counts(
+    (summary,) = analyze_ty_tomography_counts(
         {
             basis: dict(sum((Counter(variant.counts) for variant in variants), Counter()))
             for basis, variants in variants_by_basis.items()
         },
         tomography_config=config,
         persistent_surface_x_post_selection=True,
-        complementary_gap_threshold=None,
+        complementary_gap_thresholds=(None,),
         submitted_circuits_by_basis=variants_by_basis,
         calibration=calibration,
     )

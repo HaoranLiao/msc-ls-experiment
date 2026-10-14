@@ -173,14 +173,14 @@ def analyze_ty_logical_error_rate_counts(
                 post_transfer_stabilizer_rounds=round_count,
             ),
             persistent_surface_x_post_selection=persistent_surface_x_post_selection,
-            complementary_gap_threshold=complementary_gap_threshold,
+            complementary_gap_thresholds=(complementary_gap_threshold,),
             submitted_circuits_by_basis=(
                 None
                 if submitted_circuits_by_round is None
                 else submitted_circuits_by_round[round_count]
             ),
             calibration=calibration,
-        )
+        )[0]
         for round_count in config.post_transfer_stabilizer_rounds
     )
     return TyLogicalErrorRateSummary(

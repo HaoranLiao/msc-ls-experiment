@@ -342,11 +342,11 @@ def test_noiseless_transferred_ty_tomography_has_unit_fidelity() -> None:
         )
         .result()
     )
-    summary = analyze_ty_tomography_counts(
+    (summary,) = analyze_ty_tomography_counts(
         {basis: result.get_counts(index) for index, basis in enumerate(TOMOGRAPHY_BASES)},
         **build_and_analysis_params,
         persistent_surface_x_post_selection=True,
-        complementary_gap_threshold=None,
+        complementary_gap_thresholds=(None,),
     )
 
     assert summary.accepted_x_shots == 128

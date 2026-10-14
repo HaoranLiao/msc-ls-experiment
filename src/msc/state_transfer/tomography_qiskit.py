@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+import numpy as np
 import yaml
 from qiskit import QuantumCircuit
 
@@ -271,7 +272,7 @@ def analyze_ty_tomography_counts(
     post_injection_qed_checks: PostInjectionQedChecks | None = None,
     post_transfer_stabilizer_rounds: int | None = None,
     persistent_surface_x_post_selection: bool,
-    complementary_gap_threshold: float | None,
+    complementary_gap_thresholds: Sequence[float | None],
     measurement_bit_layouts: (
         Mapping[common.SurfaceReadoutBasis, Mapping[str, Sequence[str]]] | None
     ) = None,
@@ -279,21 +280,24 @@ def analyze_ty_tomography_counts(
         Mapping[common.SurfaceReadoutBasis, Sequence[SubmittedTomographyCircuit]] | None
     ) = None,
     calibration: DeviceCalibration | None = None,
-) -> TyTomographySummary:
-    """Analyze paired counts using the same YAML config as construction.
+) -> tuple[TyTomographySummary, ...]:
+    """Analyze paired counts at each gap threshold, using the same YAML config as construction.
 
     Analysis-only postselection is chosen here, so one saved job can be
     re-analyzed under different settings. ``persistent_surface_x_post_selection``
-    rejects shots that fire persistent surface-X detectors, and
-    ``complementary_gap_threshold`` (``None`` disables it) rejects circuit-level
-    shots whose complementary gap falls below it.
+    rejects shots that fire persistent surface-X detectors. Each entry of
+    ``complementary_gap_thresholds`` yields one summary, in order: ``None``
+    disables gap postselection, and a number rejects circuit-level shots whose
+    complementary gap falls below it.
 
     Hardware counts are decoded circuit-level: pass, by basis, every submitted
     circuit (one per twirl variant, or the single untwirled circuit) with its
     measurement bit layout and counts, and the device calibration the job was
-    compiled against. Without submitted circuits, such as for simulated logical
-    circuits, each count key is parsed with ``measurement_bit_layouts`` and
-    decoded phase by phase instead, without complementary-gap postselection.
+    compiled against. Each submitted circuit gets at most two decoders, one
+    without the gap detector for ``None`` and one with it for every numeric
+    threshold. Without submitted circuits, such as for simulated
+    logical circuits, each count key is parsed with ``measurement_bit_layouts``
+    and decoded phase by phase instead, without complementary-gap postselection.
     """
     config = tomography_config or resolve_ty_tomography_config(
         circuit_config_path=circuit_config_path,
@@ -307,45 +311,55 @@ def analyze_ty_tomography_counts(
         post_transfer_stabilizer_rounds=post_transfer_stabilizer_rounds,
         add_barriers=None,
     )
-    if complementary_gap_threshold is not None and (
-        type(complementary_gap_threshold) not in (int, float)
-        or not math.isfinite(complementary_gap_threshold)
-        or complementary_gap_threshold < 0
+    gap_thresholds = tuple(
+        threshold for threshold in complementary_gap_thresholds if threshold is not None
+    )
+    if any(
+        type(threshold) not in (int, float) or not math.isfinite(threshold) or threshold < 0
+        for threshold in gap_thresholds
     ):
-        raise ValueError("complementary_gap_threshold must be None or a nonnegative number.")
+        raise ValueError("complementary_gap_thresholds must be None or nonnegative numbers.")
     if (submitted_circuits_by_basis is None) != (calibration is None):
         raise ValueError("submitted circuits and their calibration must be passed together.")
-    if submitted_circuits_by_basis is None and complementary_gap_threshold is not None:
-        raise ValueError("complementary_gap_threshold requires circuit-level decoding inputs.")
+    if submitted_circuits_by_basis is None and gap_thresholds:
+        raise ValueError("complementary_gap_thresholds require circuit-level decoding inputs.")
 
-    expectations: dict[common.SurfaceReadoutBasis, float] = {}
-    accepted_shots: dict[common.SurfaceReadoutBasis, int] = {}
+    # Accepted logical-zero and logical-one shots by basis, then by requested threshold.
+    logical_shots_by_basis: dict[common.SurfaceReadoutBasis, dict[float | None, np.ndarray]] = {}
     total_shots: dict[common.SurfaceReadoutBasis, int] = {}
     for basis in TOMOGRAPHY_BASES:
         if basis not in counts_by_basis:
             raise ValueError(f"counts_by_basis is missing the {basis} experiment.")
         counts = counts_by_basis[basis]
         total_shots[basis] = sum(counts.values())
+        logical_shots = {
+            threshold: np.zeros(2, dtype=np.int64) for threshold in complementary_gap_thresholds
+        }
         if submitted_circuits_by_basis is not None:
-            logical_zero_shots = logical_one_shots = 0
             basis_circuits = submitted_circuits_by_basis[basis]
             circuit_shots = sum(sum(submitted.counts.values()) for submitted in basis_circuits)
             if circuit_shots != total_shots[basis]:
                 raise ValueError(f"{basis}-basis circuit counts do not match aggregated counts.")
             for submitted in basis_circuits:
-                submitted_zero_shots, submitted_one_shots = CircuitLevelDecoder(
-                    submitted.circuit,
+                decoder_inputs = dict(
                     calibration=calibration,
                     tomography_config=config,
                     measurement_bit_layout=submitted.measurement_bit_layout,
                     readout_basis=basis,
                     persistent_surface_x_post_selection=persistent_surface_x_post_selection,
-                    complementary_gap_threshold=complementary_gap_threshold,
-                ).decode_counts(submitted.counts)
-                logical_zero_shots += submitted_zero_shots
-                logical_one_shots += submitted_one_shots
+                )
+                if None in logical_shots:
+                    logical_shots[None] += CircuitLevelDecoder(
+                        submitted.circuit, **decoder_inputs, complementary_gap=False
+                    ).decode_counts(submitted.counts)
+                if gap_thresholds:
+                    gap_shots = CircuitLevelDecoder(
+                        submitted.circuit, **decoder_inputs, complementary_gap=True
+                    ).decode_counts(submitted.counts, gap_thresholds)
+                    for threshold, threshold_shots in zip(gap_thresholds, gap_shots, strict=True):
+                        logical_shots[threshold] += threshold_shots
         else:
-            logical_zero_shots, logical_one_shots = _decode_phenomenological_counts(
+            logical_shots[None] += _decode_phenomenological_counts(
                 counts,
                 config=config,
                 basis=basis,
@@ -354,24 +368,36 @@ def analyze_ty_tomography_counts(
                     None if measurement_bit_layouts is None else measurement_bit_layouts[basis]
                 ),
             )
-        accepted_shots[basis] = logical_zero_shots + logical_one_shots
-        if accepted_shots[basis] == 0:
-            raise ValueError(f"no accepted {basis}-basis tomography shots.")
-        expectations[basis] = (logical_zero_shots - logical_one_shots) / accepted_shots[basis]
+        logical_shots_by_basis[basis] = logical_shots
 
-    expectation_x = expectations["X"]
-    expectation_z = expectations["Z"]
-    linear_fidelity = (1.0 + (expectation_x + expectation_z) / 2**0.5) / 2.0
-    return TyTomographySummary(
-        expectation_x=expectation_x,
-        expectation_z=expectation_z,
-        # Independent finite-shot estimates can fall outside the Bloch ball.
-        fidelity=min(1.0, max(0.0, linear_fidelity)),
-        accepted_x_shots=accepted_shots["X"],
-        accepted_z_shots=accepted_shots["Z"],
-        total_x_shots=total_shots["X"],
-        total_z_shots=total_shots["Z"],
-    )
+    summaries = []
+    for threshold in complementary_gap_thresholds:
+        expectations: dict[common.SurfaceReadoutBasis, float] = {}
+        accepted_shots: dict[common.SurfaceReadoutBasis, int] = {}
+        for basis in TOMOGRAPHY_BASES:
+            logical_zero_shots, logical_one_shots = (
+                logical_shots_by_basis[basis][threshold].tolist()
+            )
+            accepted_shots[basis] = logical_zero_shots + logical_one_shots
+            if accepted_shots[basis] == 0:
+                raise ValueError(f"no accepted {basis}-basis tomography shots.")
+            expectations[basis] = (logical_zero_shots - logical_one_shots) / accepted_shots[basis]
+        expectation_x = expectations["X"]
+        expectation_z = expectations["Z"]
+        linear_fidelity = (1.0 + (expectation_x + expectation_z) / 2**0.5) / 2.0
+        summaries.append(
+            TyTomographySummary(
+                expectation_x=expectation_x,
+                expectation_z=expectation_z,
+                # Independent finite-shot estimates can fall outside the Bloch ball.
+                fidelity=min(1.0, max(0.0, linear_fidelity)),
+                accepted_x_shots=accepted_shots["X"],
+                accepted_z_shots=accepted_shots["Z"],
+                total_x_shots=total_shots["X"],
+                total_z_shots=total_shots["Z"],
+            )
+        )
+    return tuple(summaries)
 
 
 def _decode_phenomenological_counts(

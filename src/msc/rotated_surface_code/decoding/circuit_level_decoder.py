@@ -24,7 +24,7 @@ Call structure::
     CircuitLevelDecoder(submitted_circuit, calibration=..., tomography_config=...,
                         measurement_bit_layout=..., readout_basis=...,
                         persistent_surface_x_post_selection=...,
-                        complementary_gap_threshold=...)
+                        complementary_gap=...)
     ├── _build_calibrated_stim_model(...) -> _CalibratedStimModel
     │   ├── rebuild the logical circuit and require the saved bit layout
     │   ├── _align_wire_operations(...)       # match anchors and group gate blocks
@@ -34,8 +34,9 @@ Call structure::
     │   └── shared labeled detectors, logical observable, optional gap detector
     └── DetectorErrorModelShotAnalyzer
 
-    decoder.decode_counts(counts)
-    └── (accepted logical-zero shots, accepted logical-one shots)
+    decoder.decode_counts(counts)              # without the gap detector
+    decoder.decode_counts(counts, thresholds)  # with it: one decode, every cutoff
+    └── (accepted logical-zero shots, accepted logical-one shots), per threshold
 
 Not modeled: noise before the Steane cut, correlated readout/reset errors,
 leakage, crosstalk, coherent errors, readout asymmetry, calibration drift, and
@@ -93,14 +94,16 @@ class CircuitLevelDecoder:
     observable-disagreement bit is the corrected logical readout, not a
     hardware Ty-state failure label.
 
-    With ``complementary_gap_threshold``, the model's final gap detector is
-    never hard-postselected; the shared two-sector analyzer rejects shots whose
-    sector-weight gap is below the threshold.
+    With ``complementary_gap``, the model's final gap detector is never
+    hard-postselected; each shot is decoded once in both logical sectors, and
+    every requested threshold rejects the shots whose sector-weight gap is
+    below it.
 
     Attributes: ``circuit`` is the annotated calibrated Stim model,
     ``record_clbits`` maps each Stim record to its Qiskit classical bit,
-    ``analyzer`` owns postselection and matching, and ``reference_logical_bit``
-    is the observable parity of the noiseless reference sample.
+    ``analyzer`` owns postselection and matching, ``reference_logical_bit``
+    is the observable parity of the noiseless reference sample, and
+    ``complementary_gap`` records whether the model has the gap detector.
     """
 
     def __init__(
@@ -112,7 +115,7 @@ class CircuitLevelDecoder:
         measurement_bit_layout: Mapping[str, Sequence[str]],
         readout_basis: common.SurfaceReadoutBasis,
         persistent_surface_x_post_selection: bool,
-        complementary_gap_threshold: float | None,
+        complementary_gap: bool,
     ) -> None:
         model = _build_calibrated_stim_model(
             submitted_circuit,
@@ -120,8 +123,9 @@ class CircuitLevelDecoder:
             tomography_config=tomography_config,
             measurement_bit_layout=measurement_bit_layout,
             readout_basis=readout_basis,
-            add_complementary_gap_detector=complementary_gap_threshold is not None,
+            add_complementary_gap_detector=complementary_gap,
         )
+        self.complementary_gap = complementary_gap
         self.circuit = model.circuit
         self.record_clbits = model.record_clbits
         self.reference_logical_bit = model.reference_logical_bit
@@ -132,20 +136,33 @@ class CircuitLevelDecoder:
                 full_post_selection=tomography_config.full_post_selection,
                 persistent_surface_x_post_selection=persistent_surface_x_post_selection,
             ),
-            complementary_gap_postselection_threshold=complementary_gap_threshold,
+            # Any threshold enables two-sector decoding; cutoffs apply per call.
+            complementary_gap_postselection_threshold=0.0 if complementary_gap else None,
         )
         self._converter = model.circuit.compile_m2d_converter()
 
-    def decode_counts(self, counts: Mapping[str, int]) -> tuple[int, int]:
+    def decode_counts(
+        self,
+        counts: Mapping[str, int],
+        complementary_gap_thresholds: Sequence[float] | None = None,
+    ) -> tuple[int, int] | tuple[tuple[int, int], ...]:
         """Return accepted logical-zero and logical-one shot counts.
 
-        Unique count keys are decoded in batches and weighted by multiplicity.
-        Qiskit keys list classical bit 0 last.
+        Without the gap detector, the decoder takes no thresholds and returns
+        one pair. With it, ``complementary_gap_thresholds`` is required and one
+        pair is returned per threshold from a single two-sector decoding of
+        every shot. Unique count keys are decoded in batches and weighted by
+        multiplicity; Qiskit keys list classical bit 0 last.
         """
+        if (complementary_gap_thresholds is not None) != self.complementary_gap:
+            raise ValueError(
+                "complementary_gap_thresholds must be given exactly when the decoder "
+                "has the complementary-gap detector."
+            )
         keys = list(counts)
         multiplicities = np.fromiter(counts.values(), dtype=np.int64, count=len(keys))
         record_clbits = list(self.record_clbits)
-        logical_zero_shots = logical_one_shots = 0
+        shots_by_threshold = 0
         for start in range(0, len(keys), _BATCH_SIZE):
             # Hardware keys follow Qiskit bit order; Stim needs its record order.
             clbits = qiskit_bit_values(keys[start : start + _BATCH_SIZE])
@@ -155,22 +172,35 @@ class CircuitLevelDecoder:
                 measurements=clbits[:, record_clbits],
                 separate_observables=True,
             )
-            is_accepted_shot, is_logical_error_shot = self.analyzer.postselect_and_decode_samples(
-                detection_events,
-                observable_flips,
-            )
+            # One accepted-shot row per threshold.
+            if complementary_gap_thresholds is None:
+                is_accepted_shot, is_logical_error_shot = (
+                    self.analyzer.postselect_and_decode_samples(detection_events, observable_flips)
+                )
+                is_accepted_shot = is_accepted_shot[np.newaxis]
+            else:
+                is_accepted_shot, is_logical_error_shot, complementary_gaps = (
+                    self.analyzer.decode_complementary_gap_samples(
+                        detection_events, observable_flips
+                    )
+                )
+                # Gaps are nan for hard-rejected shots, so every cutoff rejects them.
+                is_accepted_shot = is_accepted_shot & (
+                    complementary_gaps >= np.asarray(complementary_gap_thresholds)[:, np.newaxis]
+                )
             # The analyzer reports disagreement with the noiseless reference, so
             # undo that offset to recover the logical outcome.
             is_logical_one_shot = is_logical_error_shot ^ bool(self.reference_logical_bit)
             batch_multiplicities = multiplicities[start : start + _BATCH_SIZE]
-            logical_zero_shots += int(
-                batch_multiplicities[is_accepted_shot & ~is_logical_one_shot].sum()
+            shots_by_threshold = shots_by_threshold + np.stack(
+                (
+                    (is_accepted_shot & ~is_logical_one_shot) @ batch_multiplicities,
+                    (is_accepted_shot & is_logical_one_shot) @ batch_multiplicities,
+                ),
+                axis=1,
             )
-            logical_one_shots += int(
-                batch_multiplicities[is_accepted_shot & is_logical_one_shot].sum()
-            )
-        return logical_zero_shots, logical_one_shots
-
+        shots = tuple((int(zero), int(one)) for zero, one in shots_by_threshold)
+        return shots[0] if complementary_gap_thresholds is None else shots
 
 # =============================================================================
 # Calibrated Stim model

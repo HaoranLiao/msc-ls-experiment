@@ -115,14 +115,14 @@ def test_tomography_yaml_matches_constructed_circuits_and_analysis(
         assert len(registers[f"surface_data_{basis.lower()}"]) == expected_data_qubits
         assert bool(circuit.count_ops().get("barrier")) is add_barriers
 
-    summary = analyze_ty_tomography_counts(
+    (summary,) = analyze_ty_tomography_counts(
         {
             "X": {"0" * circuits["X"].num_clbits: 4},
             "Z": {"0" * circuits["Z"].num_clbits: 4},
         },
         tomography_config=TyTomographyConfig(**yaml.safe_load(config_path.read_text())),
         persistent_surface_x_post_selection=True,
-        complementary_gap_threshold=None,
+        complementary_gap_thresholds=(None,),
         measurement_bit_layouts={
             basis: circuit.metadata["measurement_schema"] for basis, circuit in circuits.items()
         },
@@ -149,11 +149,11 @@ def test_post_injection_qed_preset_selects_the_steane_qed_record(
     steane_qed = next(r for r in circuits["X"].cregs if r.name == "steane_qed")
     assert len(steane_qed) == steane_qed_width
 
-    summary = analyze_ty_tomography_counts(
+    (summary,) = analyze_ty_tomography_counts(
         {basis: {"0" * circuits[basis].num_clbits: 4} for basis in ("X", "Z")},
         circuit_config_path=config_path,
         persistent_surface_x_post_selection=True,
-        complementary_gap_threshold=None,
+        complementary_gap_thresholds=(None,),
     )
     assert summary.accepted_x_shots == summary.accepted_z_shots == 4
 
@@ -208,14 +208,14 @@ def test_disabling_flag_measurements_shrinks_the_record(
         measured_circuit.num_clbits - (measured_width - unmeasured_width)
     )
 
-    summary = analyze_ty_tomography_counts(
+    (summary,) = analyze_ty_tomography_counts(
         {
             "X": {"0" * unmeasured_circuit.num_clbits: 4},
             "Z": {"0" * unmeasured_circuit.num_clbits: 4},
         },
         circuit_config_path=unmeasured_config,
         persistent_surface_x_post_selection=True,
-        complementary_gap_threshold=None,
+        complementary_gap_thresholds=(None,),
     )
     assert summary.accepted_x_shots == summary.accepted_z_shots == 4
 
@@ -279,16 +279,16 @@ def test_complementary_gap_threshold_requires_a_nonnegative_circuit_level_settin
             {"X": {}, "Z": {}},
             circuit_config_path=config_path,
             persistent_surface_x_post_selection=True,
-            complementary_gap_threshold=-1.0,
+            complementary_gap_thresholds=(-1.0,),
         )
 
     # Simulated logical circuits have no calibration, so no complementary-gap postselection applies.
-    with pytest.raises(ValueError, match="requires circuit-level decoding inputs"):
+    with pytest.raises(ValueError, match="require circuit-level decoding inputs"):
         analyze_ty_tomography_counts(
             {"X": {}, "Z": {}},
             circuit_config_path=config_path,
             persistent_surface_x_post_selection=True,
-            complementary_gap_threshold=1.0,
+            complementary_gap_thresholds=(1.0,),
         )
 
 
