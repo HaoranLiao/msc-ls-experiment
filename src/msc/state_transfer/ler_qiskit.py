@@ -53,7 +53,7 @@ class TyLogicalErrorRateSummary:
 
     ``tomography[i]`` is the postselected logical tomography at memory duration
     ``post_transfer_stabilizer_rounds[i]``. ``logical_error_rate_per_round`` is
-    fit in the Fig. S22 convention ``R(N) = A exp(-2 p_L N)`` over the per-point
+    fit in the Fig. S20 convention ``R(N) = A exp(-2 p_L N)`` over the per-point
     Bloch radii ``sqrt(<X_L>**2 + <Z_L>**2)``. The 95% interval
     propagates shot noise, including postselection acceptance, through the radii
     and nonlinear fit.
@@ -272,11 +272,12 @@ def fit_ty_logical_error_rate(
     post_transfer_stabilizer_rounds: Sequence[int],
     bloch_radii_xz: Sequence[float],
 ) -> float:
-    """Fit the Section XIV memory decay and return the per-round LER ``p_L``.
+    """Fit the Section VIII memory decay and return the per-round LER ``p_L``.
 
-    Supplementary Section XIV and Fig. S22(b, e) fit an exponential to
+    Supplementary Section VIII and Fig. S20(b, e) of Rosenfeld et al. (Science
+    2026; Section XIV and Fig. S22 in arXiv:2512.13908v1) fit an exponential to
     ``R(N) = sqrt(<X_L>**2 + <Z_L>**2)`` but do not print its equation. The
-    Fig. S22(b) curve decays by ``q = 0.899`` per cycle and is labeled
+    Fig. S20(b) curve decays by ``q = 0.899`` per cycle and is labeled
     ``LER = 5.3%``, which is ``-ln(q) / 2``; the binary-flip form
     ``(1 - q) / 2`` would give 5.0%. This function therefore least-squares fits
     ``R(N) = A exp(-2 p_L N)`` to the radii and returns ``p_L``; the amplitude

@@ -291,8 +291,7 @@ class TestKickbackTomographyCountsAnalysis:
         - Rejects shots where a folded root disagrees with its repeated
           helper-root check.
         - Of the survivors: if the two roots disagree, it's a measure/check
-          disagreement (retained-but-diagnostic by default, or rejected if
-          ``retain_measure_check_disagreement=False``); if they agree at 0 →
+          disagreement, rejected and counted separately; if they agree at 0 →
           logical success; agree at 1 → logical error.
         """
         circuit, bit_layout = build_kickback_tomography_experiment(
@@ -360,28 +359,14 @@ class TestKickbackTomographyCountsAnalysis:
 
         assert summary == KickbackTomographySummary(
             total_shots=32,
-            retained_shots=19,
-            rejected_shots=13,
-            logical_success_shots=7,
-            logical_error_shots=3,
-            measure_check_disagreement_shots=9,
-        )
-        assert summary.logical_error_probability == pytest.approx(3 / 19)
-        assert summary.fidelity_lower_bound == pytest.approx(16 / 19)
-
-        agreement_only_summary = analyze_kickback_tomography_counts(
-            counts,
-            bit_layout,
-            retain_measure_check_disagreement=False,
-        )
-        assert agreement_only_summary == KickbackTomographySummary(
-            total_shots=32,
             retained_shots=10,
             rejected_shots=22,
             logical_success_shots=7,
             logical_error_shots=3,
-            measure_check_disagreement_shots=0,
+            measure_check_disagreement_shots=9,
         )
+        assert summary.logical_error_probability == pytest.approx(3 / 10)
+        assert summary.fidelity_lower_bound == pytest.approx(7 / 10)
 
 
 # =============================================================================

@@ -297,17 +297,16 @@ def _append_patch_projection_round(
 def analyze_kickback_tomography_shots(
     shots: np.ndarray,
     bit_layout: KickbackTomographyBitLayout,
-    *,
-    retain_measure_check_disagreement: bool = True,
 ) -> KickbackTomographySummary:
     """Analyze Stim samples by postselecting and classifying the two KT logical readouts.
 
     ``shots`` is a boolean array of shape ``(num_shots, num_measurements)`` from
     ``circuit.compile_sampler().sample(...)``. Fixed-zero detector columns
     reject first. Each folded root must agree with its repeated-root check (the
-    root re-measured after unfolding). Inter-round root disagreements are
-    retained by default and reported separately; agreeing roots classify logical
-    success (zero) or logical error (one).
+    root re-measured after unfolding). As in Rosenfeld et al. (Science 2026,
+    Fig. 3), inter-round root disagreements are discarded and counted
+    separately; agreeing roots classify logical success (zero) or logical error
+    (one).
     """
     shots = np.asarray(shots, dtype=bool)
     if shots.ndim != 2:
@@ -338,15 +337,14 @@ def analyze_kickback_tomography_shots(
     if check_round.folded_root_check is not None:
         retained &= shots[:, check_round.folded_root_check] == check_root
 
-    # Inter-round disagreement is diagnostic unless explicitly postselected.
+    # The check round re-measures the measure round, so disagreement is a
+    # detection event: discard it, but count it for diagnostics.
     agree = measurement_root == check_root
-    if not retain_measure_check_disagreement:
-        retained &= agree
-
-    # Only agreeing retained roots enter logical success/error numerators.
     disagreement = retained & ~agree
-    logical_error = retained & agree & measurement_root
-    logical_success = retained & agree & ~measurement_root
+    retained &= agree
+
+    logical_error = retained & measurement_root
+    logical_success = retained & ~measurement_root
 
     retained_shots = int(retained.sum())
     return KickbackTomographySummary(

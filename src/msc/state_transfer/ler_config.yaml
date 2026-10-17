@@ -1,4 +1,4 @@
-# Qiskit Ty-state grafted-code memory experiment (Supplementary Fig. S22).
+# Qiskit Ty-state grafted-code memory experiment (Supplementary Fig. S20).
 target_distance: 5  # 3 or 5.
 patch_sites: 14  # 11 or 14.
 merge_schedule: minimal_z_only  # hirano or minimal_z_only.

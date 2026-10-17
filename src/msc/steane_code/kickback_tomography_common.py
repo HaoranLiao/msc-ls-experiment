@@ -122,7 +122,11 @@ class KickbackTomographyBitLayout:
 
 @dataclass(frozen=True)
 class KickbackTomographySummary:
-    """Shot counts after KT postselection and logical classification."""
+    """Shot counts after KT postselection and logical classification.
+
+    ``measure_check_disagreement_shots`` counts the shots that pass every other
+    check but are discarded because the measure and check roots disagree.
+    """
 
     total_shots: int
     retained_shots: int

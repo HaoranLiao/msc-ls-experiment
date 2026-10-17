@@ -598,16 +598,15 @@ def _interpret_cultivation_round(
 def analyze_kickback_tomography_counts(
     counts: dict[str, int],
     bit_layout: KickbackTomographyBitLayout,
-    *,
-    retain_measure_check_disagreement: bool = True,
 ) -> KickbackTomographySummary:
     """Analyze Qiskit counts by postselecting and classifying the two KT logical readouts.
 
     Fixed-zero detector bits reject first. Each folded root must also agree
     with its repeated-root check (the root re-measured after unfolding),
-    otherwise the shot is discarded. Shots whose two inter-round roots disagree
-    are retained by default and reported separately. Agreement at zero is a
-    logical success; agreement at one is a logical error.
+    otherwise the shot is discarded. As in Rosenfeld et al. (Science 2026,
+    Fig. 3), the check round postselects self-consistent results: shots whose
+    measure and check roots disagree are discarded and counted separately.
+    Agreement at zero is a logical success; agreement at one is a logical error.
     """
 
     total_shots = sum(counts.values())
@@ -636,12 +635,10 @@ def analyze_kickback_tomography_counts(
         ):
             continue
 
-        # Root disagreement is diagnostic, not a logical error. The caller may
-        # retain it in the denominator or turn it into another rejection rule.
+        # The check round re-measures the measure round, so disagreement is a
+        # detection event: discard it, but count it for diagnostics.
         if measurement_root != check_root:
-            if retain_measure_check_disagreement:
-                retained_shots += count
-                measure_check_disagreement_shots += count
+            measure_check_disagreement_shots += count
             continue
 
         # Equal roots are the repeated KT logical outcome.
