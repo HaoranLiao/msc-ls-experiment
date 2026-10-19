@@ -57,30 +57,33 @@ KICKBACK_TOMOGRAPHY_CONFIG_PATH = Path(__file__).with_name("kickback_tomography_
 # measurement without the preparation round.
 KickbackTomographyPreparation = Literal["cultivation", "injection_only"]
 
-# Fig. 3 injection-angle sweep in [0, 2 pi): pi/12 spacing, refined to pi/24 within
-# [pi/12, 5 pi/12] and to pi/48 within [pi/6, pi/3], so 32 points resolve the curve's
-# shape while concentrating around the cultivated state at pi/4.
-KT_SWEEP_INJECTION_ANGLES: tuple[float, ...] = tuple(
-    np.pi * multiple / 48
-    for multiple in sorted({*range(0, 96, 4), *range(6, 19, 4), *range(9, 16, 2)})
-)
+# Fig. 3 injection angles of Rosenfeld et al. (Science 2026), keyed by sweep size, for
+# point-by-point comparison: their 11 dense angles from 0.1 pi to 0.4 pi in steps of 0.03 pi
+# around the cultivated state at pi/4, and all 42, adding their 31 angles 2 pi k / 31 in
+# [0, 2 pi) (their 2 pi, which repeats 0, is dropped).
+KickbackTomographySweepSize = Literal[11, 42]
+_KT_DENSE_INJECTION_ANGLES = tuple(np.pi * (10 + 3 * step) / 100 for step in range(11))
+KT_SWEEP_INJECTION_ANGLES: dict[KickbackTomographySweepSize, tuple[float, ...]] = {
+    11: _KT_DENSE_INJECTION_ANGLES,
+    42: tuple(sorted([2 * np.pi * k / 31 for k in range(31)] + list(_KT_DENSE_INJECTION_ANGLES))),
+}
 
 
 @dataclass(frozen=True)
 class KickbackTomographyConfig:
     """Validated structural settings loaded from a KT circuit YAML file.
 
-    ``injection_angle_sweep`` selects the Fig. 3 sweep over
+    ``injection_angle_sweep`` selects the 11- or 42-point sweep of
     :data:`KT_SWEEP_INJECTION_ANGLES` on the cultivated state's axis, with
-    ``injected_state`` null; otherwise ``injected_state`` names the single KT
-    point's injected state. ``preparations`` lists the circuit sets submitted at
+    ``injected_state`` null; a null sweep has ``injected_state`` name the single
+    KT point's injected state. ``preparations`` lists the circuit sets submitted at
     every point, in submission order (see :data:`KickbackTomographyPreparation`).
     """
 
     patch_sites: KickbackTomographyPatchSites
     cultivated_state: CultivatedStateName
     injected_state: InjectedStateName | None
-    injection_angle_sweep: bool
+    injection_angle_sweep: KickbackTomographySweepSize | None
     preparations: tuple[KickbackTomographyPreparation, ...]
     measure_encoder_flags: bool
     qed_cycle_indices: tuple[int, ...]
@@ -94,14 +97,15 @@ class KickbackTomographyConfig:
         injectable_states = get_args(InjectedStateName)
         if self.injected_state is not None and self.injected_state not in injectable_states:
             raise ValueError(f"injected_state must be null or one of {injectable_states}.")
-        for name in (
-            "injection_angle_sweep",
-            "measure_encoder_flags",
-            "add_barriers",
-        ):
+        for name in ("measure_encoder_flags", "add_barriers"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"{name} must be true or false.")
-        if self.injection_angle_sweep == (self.injected_state is not None):
+        if self.injection_angle_sweep is not None and (
+            type(self.injection_angle_sweep) is not int
+            or self.injection_angle_sweep not in KT_SWEEP_INJECTION_ANGLES
+        ):
+            raise ValueError("injection_angle_sweep must be null, 11, or 42.")
+        if (self.injection_angle_sweep is None) == (self.injected_state is None):
             raise ValueError("injected_state must be null for a sweep and set otherwise.")
         known_preparations = get_args(KickbackTomographyPreparation)
         if (
@@ -174,7 +178,7 @@ def resolve_kickback_tomography_config(
         if value is not None
     }
     if injected_state is not None:
-        overrides["injection_angle_sweep"] = False
+        overrides["injection_angle_sweep"] = None
     return replace(config, **overrides)
 
 
@@ -185,14 +189,14 @@ def build_kickback_tomography_experiments(
 ) -> tuple[np.ndarray | None, list[tuple[QuantumCircuit, KickbackTomographyBitLayout]]]:
     """Build every KT point the YAML requests: one injected state or an angle sweep.
 
-    A sweep injects :data:`KT_SWEEP_INJECTION_ANGLES` on the cultivated state's
-    axis (polar for ``"Ty"``, azimuth for ``"T"``) and returns them with the
+    A sweep injects the 11 or 42 :data:`KT_SWEEP_INJECTION_ANGLES` on the cultivated
+    state's axis (polar for ``"Ty"``, azimuth for ``"T"``) and returns them with the
     experiments, in submission order; a single point returns ``None`` for the
     angles. ``include_prep_cultivation=False`` builds the ``injection_only``
     circuit set instead of ``cultivation``.
     """
     config = load_kickback_tomography_config(circuit_config_path)
-    if not config.injection_angle_sweep:
+    if config.injection_angle_sweep is None:
         return None, [
             build_kickback_tomography_experiment(
                 circuit_config_path=circuit_config_path,
@@ -205,13 +209,14 @@ def build_kickback_tomography_experiments(
         angle_keyword = "injection_azimuth_angle"
     else:  # pragma: no cover - validated by KickbackTomographyConfig.
         raise ValueError("cultivated_state must be 'T' or 'Ty'.")
-    return np.array(KT_SWEEP_INJECTION_ANGLES), [
+    angles = KT_SWEEP_INJECTION_ANGLES[config.injection_angle_sweep]
+    return np.array(angles), [
         build_kickback_tomography_experiment(
             circuit_config_path=circuit_config_path,
             include_prep_cultivation=include_prep_cultivation,
             **{angle_keyword: angle},
         )
-        for angle in KT_SWEEP_INJECTION_ANGLES
+        for angle in angles
     ]
 
 
