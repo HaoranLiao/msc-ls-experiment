@@ -359,8 +359,7 @@ def test_kickback_tomography_yaml_matches_build_defaults() -> None:
         cultivated_state="Ty",
         injected_state=None,
         injection_angle_sweep=True,
-        include_prep_cultivation=True,
-        include_injection_only=True,
+        preparations=("cultivation", "injection_only"),
         measure_encoder_flags=False,
         qed_cycle_indices=(1, 3, 4),
         final_readout_basis="X",
@@ -421,11 +420,7 @@ def test_kickback_tomography_resolve_applies_only_supplied_overrides() -> None:
     assert resolved.final_readout_basis == "Z"
     assert resolved.cultivated_state == "Ty"
     assert resolved.qed_cycle_indices == (1, 3, 4)
-    assert resolved.include_injection_only
-    # Injection-only circuits cannot request a further injection-only reference.
-    assert not resolve_kickback_tomography_config(
-        include_prep_cultivation=False
-    ).include_injection_only
+    assert resolved.preparations == ("cultivation", "injection_only")
 
 
 @pytest.mark.parametrize(
@@ -439,8 +434,9 @@ def test_kickback_tomography_resolve_applies_only_supplied_overrides() -> None:
         ("qed_cycle_indices", (1, 5), "qed_cycle_indices may only contain"),
         ("final_readout_basis", "W", "unsupported Pauli"),
         ("add_barriers", "yes", "add_barriers must be true or false"),
-        ("include_injection_only", "yes", "include_injection_only must be true or false"),
-        ("include_prep_cultivation", False, "include_injection_only requires"),
+        ("preparations", (), "preparations must list"),
+        ("preparations", ("cultivation", "cultivation"), "preparations must list"),
+        ("preparations", ("cultivation", "teleportation"), "preparations must list"),
     ],
 )
 def test_kickback_tomography_config_rejects_invalid_fields(
@@ -453,8 +449,7 @@ def test_kickback_tomography_config_rejects_invalid_fields(
         "cultivated_state": "Ty",
         "injected_state": None,
         "injection_angle_sweep": True,
-        "include_prep_cultivation": True,
-        "include_injection_only": True,
+        "preparations": ("cultivation", "injection_only"),
         "measure_encoder_flags": False,
         "qed_cycle_indices": (1, 3, 4),
         "final_readout_basis": "X",
