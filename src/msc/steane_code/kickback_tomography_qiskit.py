@@ -68,7 +68,9 @@ class KickbackTomographyConfig:
     ``injection_angle_sweep`` selects the Fig. 3 sweep over
     :data:`KT_SWEEP_INJECTION_ANGLES` on the cultivated state's axis, with
     ``injected_state`` null; otherwise ``injected_state`` names the single KT
-    point's injected state.
+    point's injected state. ``include_injection_only`` also submits, at every
+    point, the injection-only reference of Rosenfeld et al. (Science 2026,
+    Fig. 3 red crosses): the same KT measurement without the preparation round.
     """
 
     patch_sites: KickbackTomographyPatchSites
@@ -76,6 +78,7 @@ class KickbackTomographyConfig:
     injected_state: InjectedStateName | None
     injection_angle_sweep: bool
     include_prep_cultivation: bool
+    include_injection_only: bool
     measure_encoder_flags: bool
     qed_cycle_indices: tuple[int, ...]
     final_stabilizer_basis: FinalStabilizerMode
@@ -91,6 +94,7 @@ class KickbackTomographyConfig:
         for name in (
             "injection_angle_sweep",
             "include_prep_cultivation",
+            "include_injection_only",
             "measure_encoder_flags",
             "add_barriers",
         ):
@@ -98,6 +102,11 @@ class KickbackTomographyConfig:
                 raise ValueError(f"{name} must be true or false.")
         if self.injection_angle_sweep == (self.injected_state is not None):
             raise ValueError("injected_state must be null for a sweep and set otherwise.")
+        if self.include_injection_only and not self.include_prep_cultivation:
+            raise ValueError(
+                "include_injection_only requires include_prep_cultivation; without it the "
+                "KT circuits are already injection-only."
+            )
         normalize_qed_cycle_indices(self.qed_cycle_indices)
         final_stabilizer_bit_count(self.final_stabilizer_basis)
 
@@ -140,7 +149,9 @@ def resolve_kickback_tomography_config(
     """Load the KT circuit YAML and apply per-call overrides.
 
     An ``injected_state`` override selects a single KT point, so it also turns
-    off the YAML's ``injection_angle_sweep``.
+    off the YAML's ``injection_angle_sweep``. An ``include_prep_cultivation=False``
+    override builds the injection-only circuits, so it also turns off
+    ``include_injection_only``.
     """
     config = load_kickback_tomography_config(circuit_config_path)
     overrides = {
@@ -159,23 +170,32 @@ def resolve_kickback_tomography_config(
     }
     if injected_state is not None:
         overrides["injection_angle_sweep"] = False
+    if include_prep_cultivation is False:
+        overrides["include_injection_only"] = False
     return replace(config, **overrides)
 
 
 def build_kickback_tomography_experiments(
     *,
     circuit_config_path: str | Path = KICKBACK_TOMOGRAPHY_CONFIG_PATH,
+    include_prep_cultivation: bool | None = None,
 ) -> tuple[np.ndarray | None, list[tuple[QuantumCircuit, KickbackTomographyBitLayout]]]:
     """Build every KT point the YAML requests: one injected state or an angle sweep.
 
     A sweep injects :data:`KT_SWEEP_INJECTION_ANGLES` on the cultivated state's
     axis (polar for ``"Ty"``, azimuth for ``"T"``) and returns them with the
     experiments, in submission order; a single point returns ``None`` for the
-    angles.
+    angles. ``include_prep_cultivation=False`` builds the injection-only
+    reference requested by ``include_injection_only``.
     """
     config = load_kickback_tomography_config(circuit_config_path)
     if not config.injection_angle_sweep:
-        return None, [build_kickback_tomography_experiment(circuit_config_path=circuit_config_path)]
+        return None, [
+            build_kickback_tomography_experiment(
+                circuit_config_path=circuit_config_path,
+                include_prep_cultivation=include_prep_cultivation,
+            )
+        ]
     if config.cultivated_state == "Ty":
         angle_keyword = "injection_polar_angle"
     elif config.cultivated_state == "T":
@@ -185,6 +205,7 @@ def build_kickback_tomography_experiments(
     return np.array(KT_SWEEP_INJECTION_ANGLES), [
         build_kickback_tomography_experiment(
             circuit_config_path=circuit_config_path,
+            include_prep_cultivation=include_prep_cultivation,
             **{angle_keyword: angle},
         )
         for angle in KT_SWEEP_INJECTION_ANGLES

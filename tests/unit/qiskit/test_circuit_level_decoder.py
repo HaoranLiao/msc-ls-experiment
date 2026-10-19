@@ -352,12 +352,12 @@ def test_saved_policy_matches_phenomenological_acceptance_shot_by_shot(
 
 
 def test_each_twirl_variant_is_decoded_with_its_own_circuit() -> None:
-    """Analysis decodes every variant's counts with that variant's calibrated circuit.
+    """Analysis decodes every twirl variant's counts with that twirl variant's calibrated circuit.
 
     Twirl variants add pulses that cancel logically, so they share their
-    noiseless record but not their noise model. The second variant of each
+    noiseless record but not their noise model. The second twirl variant of each
     basis replaces late idles with noisy X-X pairs, which changes the decoding
-    of its counts relative to the first variant's model.
+    of its counts relative to the first twirl variant's model.
     """
     config = resolve_ty_tomography_config(target_distance=5, patch_sites=14, add_barriers=False)
     logical_circuits = build_ty_tomography_circuits(
@@ -396,7 +396,7 @@ def test_each_twirl_variant_is_decoded_with_its_own_circuit() -> None:
         },
     )
 
-    variants_by_basis = {}
+    twirl_variants_by_basis = {}
     expected_shots_by_basis = {}
     for basis, logical_circuit in logical_circuits.items():
         bit_layout = logical_circuit.metadata["measurement_schema"]
@@ -421,7 +421,7 @@ def test_each_twirl_variant_is_decoded_with_its_own_circuit() -> None:
             )
             for circuit in circuits
         ]
-        variants = tuple(
+        twirl_variants = tuple(
             SubmittedTomographyCircuit(
                 circuit=circuit,
                 measurement_bit_layout=bit_layout,
@@ -431,30 +431,32 @@ def test_each_twirl_variant_is_decoded_with_its_own_circuit() -> None:
             )
             for seed, (circuit, decoder) in enumerate(zip(circuits, decoders, strict=True), start=1)
         )
-        # The variants' models disagree, so decoding with one circuit would be caught.
+        # The twirl variants' models disagree, so decoding with one circuit would be caught.
         first_decoder, second_decoder = decoders
-        second_counts = variants[1].counts
+        second_counts = twirl_variants[1].counts
         assert first_decoder.decode_counts(second_counts) != second_decoder.decode_counts(
             second_counts
         )
-        variants_by_basis[basis] = variants
+        twirl_variants_by_basis[basis] = twirl_variants
         expected_shots_by_basis[basis] = np.sum(
             [
-                decoder.decode_counts(variant.counts)
-                for decoder, variant in zip(decoders, variants, strict=True)
+                decoder.decode_counts(twirl_variant.counts)
+                for decoder, twirl_variant in zip(decoders, twirl_variants, strict=True)
             ],
             axis=0,
         )
 
     (summary,) = analyze_ty_tomography_counts(
         {
-            basis: dict(sum((Counter(variant.counts) for variant in variants), Counter()))
-            for basis, variants in variants_by_basis.items()
+            basis: dict(
+                sum((Counter(twirl_variant.counts) for twirl_variant in twirl_variants), Counter())
+            )
+            for basis, twirl_variants in twirl_variants_by_basis.items()
         },
         tomography_config=config,
         persistent_surface_x_post_selection=True,
         complementary_gap_thresholds=(None,),
-        submitted_circuits_by_basis=variants_by_basis,
+        submitted_circuits_by_basis=twirl_variants_by_basis,
         calibration=calibration,
     )
     for basis, accepted_shots, expectation in (
@@ -470,7 +472,7 @@ def test_each_twirl_variant_is_decoded_with_its_own_circuit() -> None:
 
 def _with_late_x_pairs(circuit: QuantumCircuit, target: Target) -> QuantumCircuit:
     """Return a twirl-like variant: idles in the last 40% become X-X pairs plus a shorter idle."""
-    variant = circuit.copy_empty_like()
+    twirl_variant = circuit.copy_empty_like()
     first_replaced_index = int(0.6 * len(circuit.data))
     for index, instruction in enumerate(circuit.data):
         if index >= first_replaced_index and instruction.operation.name == "delay":
@@ -478,10 +480,12 @@ def _with_late_x_pairs(circuit: QuantumCircuit, target: Target) -> QuantumCircui
             x_duration = round(target["x"][(circuit.find_bit(qubit).index,)].duration / target.dt)
             idle_duration = instruction.operation.duration - 2 * x_duration
             if idle_duration >= 0:
-                variant.append(XGate(), [qubit])
-                variant.append(XGate(), [qubit])
+                twirl_variant.append(XGate(), [qubit])
+                twirl_variant.append(XGate(), [qubit])
                 if idle_duration > 0:
-                    variant.append(Delay(idle_duration, unit=instruction.operation.unit), [qubit])
+                    twirl_variant.append(
+                        Delay(idle_duration, unit=instruction.operation.unit), [qubit]
+                    )
                 continue
-        variant.append(instruction)
-    return variant
+        twirl_variant.append(instruction)
+    return twirl_variant

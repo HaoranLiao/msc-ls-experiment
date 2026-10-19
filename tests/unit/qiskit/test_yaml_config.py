@@ -360,6 +360,7 @@ def test_kickback_tomography_yaml_matches_build_defaults() -> None:
         injected_state=None,
         injection_angle_sweep=True,
         include_prep_cultivation=True,
+        include_injection_only=True,
         measure_encoder_flags=False,
         qed_cycle_indices=(1, 3),
         final_stabilizer_basis="BOTH",
@@ -393,6 +394,16 @@ def test_kickback_tomography_experiments_follow_the_yaml_injection(tmp_path: Pat
     assert experiments == [
         build_kickback_tomography_experiment(injection_polar_angle=angle) for angle in angles
     ]
+    # The injection-only reference sweeps the same angles without the preparation round.
+    _, injection_only_experiments = build_kickback_tomography_experiments(
+        include_prep_cultivation=False
+    )
+    assert injection_only_experiments == [
+        build_kickback_tomography_experiment(
+            injection_polar_angle=angle, include_prep_cultivation=False
+        )
+        for angle in angles
+    ]
 
     raw_config = yaml.safe_load(KICKBACK_TOMOGRAPHY_CONFIG_PATH.read_text())
     single_path = tmp_path / "single.yaml"
@@ -410,6 +421,11 @@ def test_kickback_tomography_resolve_applies_only_supplied_overrides() -> None:
     assert resolved.final_stabilizer_basis == "NONE"
     assert resolved.cultivated_state == "Ty"
     assert resolved.qed_cycle_indices == (1, 3)
+    assert resolved.include_injection_only
+    # Injection-only circuits cannot request a further injection-only reference.
+    assert not resolve_kickback_tomography_config(
+        include_prep_cultivation=False
+    ).include_injection_only
 
 
 @pytest.mark.parametrize(
@@ -423,6 +439,8 @@ def test_kickback_tomography_resolve_applies_only_supplied_overrides() -> None:
         ("qed_cycle_indices", (1, 5), "qed_cycle_indices may only contain"),
         ("final_stabilizer_basis", "Y", "final_stabilizer_basis must be"),
         ("add_barriers", "yes", "add_barriers must be true or false"),
+        ("include_injection_only", "yes", "include_injection_only must be true or false"),
+        ("include_prep_cultivation", False, "include_injection_only requires"),
     ],
 )
 def test_kickback_tomography_config_rejects_invalid_fields(
@@ -436,6 +454,7 @@ def test_kickback_tomography_config_rejects_invalid_fields(
         "injected_state": None,
         "injection_angle_sweep": True,
         "include_prep_cultivation": True,
+        "include_injection_only": True,
         "measure_encoder_flags": False,
         "qed_cycle_indices": (1, 3),
         "final_stabilizer_basis": "X",

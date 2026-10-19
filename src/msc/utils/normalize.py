@@ -45,10 +45,10 @@ def normalize_pauli_char(pauli: str | None) -> str | None:
 def merge_counts(counts: Iterable[Mapping[str, int]]) -> dict[str, int]:
     """Sum any number of Qiskit-format counts dicts into one joint counts dict.
 
-    Twirling splits a submitted circuit into several randomized variants, each
+    Twirling splits a submitted circuit into several randomized twirl variants, each
     run for a fraction of the requested shots; the platform returns one counts
-    dict per variant instead of merging them, so downstream analysis only sees
-    a fraction of the shot budget unless the variants are combined first. This
+    dict per twirl variant instead of merging them, so downstream analysis only sees
+    a fraction of the shot budget unless the twirl variants are combined first. This
     sums matching bitstrings key-wise across all dicts; a single-entry input
     is returned unchanged.
     """
