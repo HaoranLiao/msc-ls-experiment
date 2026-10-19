@@ -362,8 +362,8 @@ def test_kickback_tomography_yaml_matches_build_defaults() -> None:
         include_prep_cultivation=True,
         include_injection_only=True,
         measure_encoder_flags=False,
-        qed_cycle_indices=(1, 3),
-        final_stabilizer_basis="BOTH",
+        qed_cycle_indices=(1, 3, 4),
+        final_readout_basis="X",
         add_barriers=True,
     )
 
@@ -376,8 +376,8 @@ def test_kickback_tomography_config_drives_build_and_overrides_win() -> None:
         cultivated_state="Ty",
         include_prep_cultivation=True,
         measure_encoder_flags=False,
-        qed_cycle_indices=(1, 3),
-        final_stabilizer_basis="BOTH",
+        qed_cycle_indices=(1, 3, 4),
+        final_readout_basis="X",
         add_barriers=False,
     )
     assert config_built == override_built
@@ -416,11 +416,11 @@ def test_kickback_tomography_experiments_follow_the_yaml_injection(tmp_path: Pat
 
 
 def test_kickback_tomography_resolve_applies_only_supplied_overrides() -> None:
-    resolved = resolve_kickback_tomography_config(patch_sites=11, final_stabilizer_basis="NONE")
+    resolved = resolve_kickback_tomography_config(patch_sites=11, final_readout_basis="Z")
     assert resolved.patch_sites == 11
-    assert resolved.final_stabilizer_basis == "NONE"
+    assert resolved.final_readout_basis == "Z"
     assert resolved.cultivated_state == "Ty"
-    assert resolved.qed_cycle_indices == (1, 3)
+    assert resolved.qed_cycle_indices == (1, 3, 4)
     assert resolved.include_injection_only
     # Injection-only circuits cannot request a further injection-only reference.
     assert not resolve_kickback_tomography_config(
@@ -437,7 +437,7 @@ def test_kickback_tomography_resolve_applies_only_supplied_overrides() -> None:
         ("injection_angle_sweep", False, "injected_state must be null for a sweep"),
         ("injection_angle_sweep", "yes", "injection_angle_sweep must be true or false"),
         ("qed_cycle_indices", (1, 5), "qed_cycle_indices may only contain"),
-        ("final_stabilizer_basis", "Y", "final_stabilizer_basis must be"),
+        ("final_readout_basis", "W", "unsupported Pauli"),
         ("add_barriers", "yes", "add_barriers must be true or false"),
         ("include_injection_only", "yes", "include_injection_only must be true or false"),
         ("include_prep_cultivation", False, "include_injection_only requires"),
@@ -456,8 +456,8 @@ def test_kickback_tomography_config_rejects_invalid_fields(
         "include_prep_cultivation": True,
         "include_injection_only": True,
         "measure_encoder_flags": False,
-        "qed_cycle_indices": (1, 3),
-        "final_stabilizer_basis": "X",
+        "qed_cycle_indices": (1, 3, 4),
+        "final_readout_basis": "X",
         "add_barriers": True,
     }
     values[field] = value

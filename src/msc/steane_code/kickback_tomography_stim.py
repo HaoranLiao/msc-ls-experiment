@@ -20,24 +20,20 @@ import stim
 
 from msc.steane_code.kickback_tomography_common import (
     KT_DEFAULT_QED_CYCLE_INDICES,
-    FinalStabilizerMode,
+    FinalReadoutBasis,
     KickbackCultivationRoundBits,
     KickbackTomographyBitLayout,
     KickbackTomographyPatchSites,
     KickbackTomographyPatchSpec,
     KickbackTomographySummary,
     cultivation_round_bits_from_positions,
-    final_stabilizer_bit_count,
+    final_readout_face_positions,
     normalize_qed_cycle_indices,
     resolve_kickback_tomography_patch_spec,
 )
 from msc.steane_code.magic_state_cultivation_stim import (
     append_11_site_patch_y_projection_round,
     append_14_site_patch_projection_round,
-)
-from msc.steane_code.state_injection_common import (
-    PatchStabilizerBasis,
-    select_14_site_patch_superdense_measurement_layers,
 )
 from msc.steane_code.state_injection_stim import (
     DEFAULT_STIM_14_SITE_PATCH_QUBITS,
@@ -58,7 +54,7 @@ def build_kickback_tomography_experiment(
     include_preparation_cultivation: bool = True,
     measure_encoder_flags: bool = False,
     qed_cycle_indices: Iterable[int] = KT_DEFAULT_QED_CYCLE_INDICES,
-    final_stabilizer_basis: FinalStabilizerMode = "X",
+    final_readout_basis: FinalReadoutBasis = "X",
     add_ticks: bool = True,
 ) -> tuple[stim.Circuit, KickbackTomographyBitLayout]:
     """Build a logical-Y KT experiment using the Clifford ``|S>`` proxy.
@@ -66,7 +62,7 @@ def build_kickback_tomography_experiment(
     The shared protocol order is
 
     ``encode -> QED1 -> [prep cultivation] -> QED2 -> KT measure -> QED3
-    -> KT check -> QED4 -> final stabilizer check``.
+    -> KT check -> QED4 -> final readout``.
 
     This parallels the Qiskit protocol schedule, but Stim uses logical Y and
     accepts only ``cultivated_state="S"``. This is an explicit Clifford proxy,
@@ -80,10 +76,9 @@ def build_kickback_tomography_experiment(
     repeated-root check accepts either logical branch when the two reads agree.
 
     ``qed_cycle_indices`` uses the paper's one-based numbering and defaults to
-    ``(1, 3)``. An empty tuple omits the QED cycles. The final stabilizer basis
-    may be ``"X"``, ``"Z"``, ``"BOTH"``, or ``"NONE"``. A 14-site X- or
-    Z-only final block also records and postselects the three default
-    Bell-partner flags.
+    ``(1, 3, 4)``. An empty tuple omits the QED cycles. The final readout
+    destructively measures the data qubits in ``final_readout_basis``
+    (``"X"`` or ``"Z"``), with one detector per stabilizer face parity.
     """
     if cultivated_state != "S":
         raise ValueError("cultivated_state must be 'S' in Stim.")
@@ -104,12 +99,7 @@ def build_kickback_tomography_experiment(
 
     def add_qed_cycle(index: int) -> None:
         nonlocal record_count
-        _append_patch_stabilizer_measurement(
-            circuit,
-            spec,
-            basis="BOTH",
-            add_ticks=add_ticks,
-        )
+        _append_patch_qed_cycle(circuit, spec, add_ticks=add_ticks)
         qed_positions[index] = tuple(range(record_count, record_count + spec.qed_measurement_count))
         record_count += spec.qed_measurement_count
 
@@ -149,47 +139,20 @@ def build_kickback_tomography_experiment(
     if 4 in qed_indices:
         add_qed_cycle(4)
 
-    final_bit_count = final_stabilizer_bit_count(final_stabilizer_basis)
-    final_positions: tuple[int, ...] = ()
-    final_bell_partner_positions: tuple[int, ...] = ()
-    final_d2_copy_flag: int | None = None
-    if final_stabilizer_basis in ("X", "Z", "BOTH"):
-        _append_patch_stabilizer_measurement(
-            circuit,
-            spec,
-            basis=final_stabilizer_basis,
-            add_ticks=add_ticks,
-        )
-        if spec.patch_sites == 14:
-            _, readouts = select_14_site_patch_superdense_measurement_layers(
-                final_stabilizer_basis,
-                None,
-            )
-            final_positions = tuple(
-                record_count + offset
-                for offset, (_, _, readout_role) in enumerate(readouts)
-                if readout_role == "STABILIZER"
-            )
-            final_bell_partner_positions = tuple(
-                record_count + offset
-                for offset, (_, _, readout_role) in enumerate(readouts)
-                if readout_role == "BELL_PARTNER_FLAG"
-            )
-            final_d2_copy_flag = next(
-                (
-                    record_count + offset
-                    for offset, (_, _, readout_role) in enumerate(readouts)
-                    if readout_role == "D2_COPY_FLAG"
-                ),
-                None,
-            )
-            final_record_width = len(readouts)
-        elif spec.patch_sites == 11:
-            final_record_width = final_bit_count
-            final_positions = tuple(range(record_count, record_count + final_record_width))
-        else:  # pragma: no cover - resolved patch specs support only 11/14 sites.
-            raise ValueError(f"Unsupported patch size: {spec.patch_sites}.")
-        record_count += final_record_width
+    if final_readout_basis == "X":
+        readout = "MX"
+    elif final_readout_basis == "Z":
+        readout = "M"
+    else:
+        raise ValueError(f"unsupported final_readout_basis {final_readout_basis!r}.")
+    # Patch sites are their own Stim qubits.
+    circuit.append(readout, spec.data_sites)
+    final_readout_faces = final_readout_face_positions(
+        spec, range(record_count, record_count + len(spec.data_sites))
+    )
+    for face in final_readout_faces:
+        circuit_stim.append_detector(circuit, measurement_positions=face)
+    record_count += len(spec.data_sites)
 
     bit_layout = KickbackTomographyBitLayout(
         preparation_round=preparation_bits,
@@ -197,9 +160,7 @@ def build_kickback_tomography_experiment(
         tomography_check_round=check_bits,
         qed_cycles=tuple(qed_positions[index] for index in qed_indices),
         qed_cycle_indices=qed_indices,
-        final_stabilizers=final_positions,
-        final_bell_partner_flags=final_bell_partner_positions,
-        final_d2_copy_flag=final_d2_copy_flag,
+        final_readout_faces=final_readout_faces,
         encoder_flags=encoder_flag_positions,
     )
     if circuit.num_measurements != record_count:
@@ -238,25 +199,24 @@ def _append_patch_encoder(
         raise ValueError(f"Unsupported KT patch_sites: {spec.patch_sites}.")
 
 
-def _append_patch_stabilizer_measurement(
+def _append_patch_qed_cycle(
     circuit: stim.Circuit,
     spec: KickbackTomographyPatchSpec,
     *,
-    basis: PatchStabilizerBasis,
     add_ticks: bool,
 ) -> None:
-    """Append one full-QED or final stabilizer measurement on the patch."""
+    """Append one QED cycle measuring every patch stabilizer."""
     if spec.patch_sites == 11:
         append_11_site_patch_stabilizer_measurement(
             circuit,
-            basis=basis,
+            basis="BOTH",
             add_ticks=add_ticks,
         )
     elif spec.patch_sites == 14:
         append_14_site_patch_superdense_stabilizer_measurement(
             circuit,
             patch_qubits=DEFAULT_STIM_14_SITE_PATCH_QUBITS,
-            basis=basis,
+            basis="BOTH",
             add_ticks=add_ticks,
         )
     else:
@@ -301,12 +261,12 @@ def analyze_kickback_tomography_shots(
     """Analyze Stim samples by postselecting and classifying the two KT logical readouts.
 
     ``shots`` is a boolean array of shape ``(num_shots, num_measurements)`` from
-    ``circuit.compile_sampler().sample(...)``. Fixed-zero detector columns
-    reject first. Each folded root must agree with its repeated-root check (the
-    root re-measured after unfolding). As in Rosenfeld et al. (Science 2026,
-    Fig. 3), inter-round root disagreements are discarded and counted
-    separately; agreeing roots classify logical success (zero) or logical error
-    (one).
+    ``circuit.compile_sampler().sample(...)``. Fixed-zero detector columns and
+    odd final readout face parities reject first. Each folded root must agree with its
+    repeated-root check (the root re-measured after unfolding). As in Rosenfeld
+    et al. (Science 2026, Fig. 3), inter-round root disagreements are discarded
+    and counted separately; agreeing roots classify logical success (zero) or
+    logical error (one).
     """
     shots = np.asarray(shots, dtype=bool)
     if shots.ndim != 2:
@@ -316,6 +276,7 @@ def analyze_kickback_tomography_shots(
     check_round = bit_layout.tomography_check_round
     required_positions = (
         *bit_layout.detector_positions,
+        *(position for face in bit_layout.final_readout_faces for position in face),
         *measurement_round.all_positions,
         *check_round.all_positions,
     )
@@ -324,10 +285,12 @@ def analyze_kickback_tomography_shots(
 
     total_shots = int(shots.shape[0])
 
-    # Fixed-zero encoder, preparation, QED, KT-flag, and final-check columns.
+    # Fixed-zero encoder, preparation, QED, and KT-flag columns, then even final readout faces.
     retained = np.ones(total_shots, dtype=bool)
     if bit_layout.detector_positions:
         retained &= ~shots[:, bit_layout.detector_positions].any(axis=1)
+    for face in bit_layout.final_readout_faces:
+        retained &= ~np.logical_xor.reduce(shots[:, face], axis=1)
 
     # Each repeated-root check must match its round's root.
     measurement_root = shots[:, measurement_round.folded_root]

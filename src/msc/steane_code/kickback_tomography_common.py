@@ -16,15 +16,21 @@ from msc.steane_code.magic_state_cultivation_common import (
     CultivatedStateName,
 )
 from msc.steane_code.state_injection_common import (
+    PATCH_11_SITE_DATA_SITES,
     PATCH_11_SITE_HELPER_SITES,
+    PATCH_11_SITE_X_STABILIZERS,
     PATCH_14_SITE_ABSTRACT_ROUTED_ENCODER_FLAG_SITES,
+    PATCH_14_SITE_DATA_SITES,
+    PATCH_14_SITE_X_STABILIZERS,
 )
 
-FinalStabilizerMode = Literal["X", "Z", "BOTH", "NONE"]
+# Basis of the final destructive data readout, whose face parities check the
+# stabilizers of that type.
+FinalReadoutBasis = Literal["X", "Z"]
 KickbackTomographyPatchSites = Literal[11, 14]
 
 KT_STABILIZER_BITS_PER_CYCLE = STEANE_QED_MEASUREMENTS_PER_ROUND
-KT_DEFAULT_QED_CYCLE_INDICES: tuple[int, ...] = (1, 3)
+KT_DEFAULT_QED_CYCLE_INDICES: tuple[int, ...] = (1, 3, 4)
 KT_FULL_QED_CYCLE_INDICES: tuple[int, ...] = (1, 2, 3, 4)
 
 
@@ -39,13 +45,19 @@ def normalize_kickback_tomography_state(state: str) -> CultivatedStateName:
 
 @dataclass(frozen=True)
 class KickbackTomographyPatchSpec:
-    """Framework-neutral record sizes for one supported KT patch."""
+    """Framework-neutral record sizes and data geometry for one supported KT patch.
+
+    ``stabilizer_faces`` are the face supports shared by the X and Z
+    stabilizers, as patch sites.
+    """
 
     patch_sites: KickbackTomographyPatchSites
     encoder_flag_count: int
     cultivation_measurement_count: int
     cultivation_root_check_index: int | None
     qed_measurement_count: int
+    data_sites: tuple[int, ...]
+    stabilizer_faces: tuple[tuple[int, ...], ...]
 
 
 def resolve_kickback_tomography_patch_spec(
@@ -59,6 +71,8 @@ def resolve_kickback_tomography_patch_spec(
             cultivation_measurement_count=PATCH_11_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
             cultivation_root_check_index=PATCH_11_SITE_CULTIVATION_ROOT_CHECK_INDEX,
             qed_measurement_count=STEANE_QED_MEASUREMENTS_PER_ROUND,
+            data_sites=PATCH_11_SITE_DATA_SITES,
+            stabilizer_faces=PATCH_11_SITE_X_STABILIZERS,
         )
     elif patch_sites == 14:
         return KickbackTomographyPatchSpec(
@@ -67,6 +81,8 @@ def resolve_kickback_tomography_patch_spec(
             cultivation_measurement_count=PATCH_14_SITE_CULTIVATION_MEASUREMENTS_PER_ROUND,
             cultivation_root_check_index=PATCH_14_SITE_CULTIVATION_ROOT_CHECK_INDEX,
             qed_measurement_count=PATCH_14_SITE_QED_MEASUREMENTS_PER_ROUND,
+            data_sites=PATCH_14_SITE_DATA_SITES,
+            stabilizer_faces=PATCH_14_SITE_X_STABILIZERS,
         )
     else:
         raise ValueError("patch_sites must be 11 or 14.")
@@ -91,21 +107,23 @@ class KickbackCultivationRoundBits:
 
 @dataclass(frozen=True)
 class KickbackTomographyBitLayout:
-    """Framework-neutral measurement positions used by a KT experiment."""
+    """Framework-neutral measurement positions used by a KT experiment.
+
+    ``final_readout_faces`` lists, for each stabilizer face, the destructive
+    data-readout positions whose parity KT postselection requires to be even.
+    """
 
     preparation_round: KickbackCultivationRoundBits | None
     tomography_measure_round: KickbackCultivationRoundBits
     tomography_check_round: KickbackCultivationRoundBits
     qed_cycles: tuple[tuple[int, ...], ...]
     qed_cycle_indices: tuple[int, ...]
-    final_stabilizers: tuple[int, ...]
-    final_bell_partner_flags: tuple[int, ...] = ()
-    final_d2_copy_flag: int | None = None
+    final_readout_faces: tuple[tuple[int, ...], ...]
     encoder_flags: tuple[int, ...] = ()
 
     @property
     def detector_positions(self) -> tuple[int, ...]:
-        """Return positions required to be zero by KT postselection."""
+        """Return single positions required to be zero by KT postselection."""
         positions: list[int] = [*self.encoder_flags]
         if self.preparation_round is not None:
             positions.extend(self.preparation_round.all_positions)
@@ -113,10 +131,6 @@ class KickbackTomographyBitLayout:
         positions.extend(self.tomography_check_round.flag_positions)
         for cycle in self.qed_cycles:
             positions.extend(cycle)
-        positions.extend(self.final_stabilizers)
-        positions.extend(self.final_bell_partner_flags)
-        if self.final_d2_copy_flag is not None:
-            positions.append(self.final_d2_copy_flag)
         return tuple(positions)
 
 
@@ -192,12 +206,12 @@ def normalize_qed_cycle_indices(qed_cycle_indices: Iterable[int]) -> tuple[int, 
     return tuple(sorted(indices))
 
 
-def final_stabilizer_bit_count(mode: FinalStabilizerMode) -> int:
-    """Return the number of outcomes produced by the final stabilizer mode."""
-    if mode == "BOTH":
-        return KT_STABILIZER_BITS_PER_CYCLE
-    if mode in {"X", "Z"}:
-        return KT_STABILIZER_BITS_PER_CYCLE // 2
-    if mode == "NONE":
-        return 0
-    raise ValueError("final_stabilizer_basis must be 'X', 'Z', 'BOTH', or 'NONE'.")
+def final_readout_face_positions(
+    spec: KickbackTomographyPatchSpec,
+    data_readout_positions: Sequence[int],
+) -> tuple[tuple[int, ...], ...]:
+    """Map each stabilizer face to its positions in a data readout ordered like ``data_sites``."""
+    position_by_site = dict(zip(spec.data_sites, data_readout_positions, strict=True))
+    return tuple(
+        tuple(position_by_site[site] for site in face) for face in spec.stabilizer_faces
+    )

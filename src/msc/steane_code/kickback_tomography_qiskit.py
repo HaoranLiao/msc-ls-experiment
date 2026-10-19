@@ -20,14 +20,14 @@ from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
 from msc.steane_code.kickback_tomography_common import (
     KT_STABILIZER_BITS_PER_CYCLE,
-    FinalStabilizerMode,
+    FinalReadoutBasis,
     KickbackCultivationRoundBits,
     KickbackTomographyBitLayout,
     KickbackTomographyPatchSites,
     KickbackTomographyPatchSpec,
     KickbackTomographySummary,
     cultivation_round_bits_from_positions,
-    final_stabilizer_bit_count,
+    final_readout_face_positions,
     normalize_kickback_tomography_state,
     normalize_qed_cycle_indices,
     resolve_kickback_tomography_patch_spec,
@@ -44,7 +44,7 @@ from msc.steane_code.state_injection_qiskit import (
     append_14_site_patch_abstract_routed_encoder,
     append_14_site_patch_superdense_stabilizer_measurement,
 )
-from msc.utils.normalize import qiskit_bit_value
+from msc.utils.normalize import normalize_pauli_char, qiskit_bit_value
 
 # =============================================================================
 # Circuit configuration
@@ -81,7 +81,7 @@ class KickbackTomographyConfig:
     include_injection_only: bool
     measure_encoder_flags: bool
     qed_cycle_indices: tuple[int, ...]
-    final_stabilizer_basis: FinalStabilizerMode
+    final_readout_basis: FinalReadoutBasis
     add_barriers: bool
 
     def __post_init__(self) -> None:
@@ -108,7 +108,7 @@ class KickbackTomographyConfig:
                 "KT circuits are already injection-only."
             )
         normalize_qed_cycle_indices(self.qed_cycle_indices)
-        final_stabilizer_bit_count(self.final_stabilizer_basis)
+        normalize_pauli_char(self.final_readout_basis)
 
 
 def load_kickback_tomography_config(
@@ -143,7 +143,7 @@ def resolve_kickback_tomography_config(
     include_prep_cultivation: bool | None = None,
     measure_encoder_flags: bool | None = None,
     qed_cycle_indices: Iterable[int] | None = None,
-    final_stabilizer_basis: FinalStabilizerMode | None = None,
+    final_readout_basis: FinalReadoutBasis | None = None,
     add_barriers: bool | None = None,
 ) -> KickbackTomographyConfig:
     """Load the KT circuit YAML and apply per-call overrides.
@@ -163,7 +163,7 @@ def resolve_kickback_tomography_config(
             ("include_prep_cultivation", include_prep_cultivation),
             ("measure_encoder_flags", measure_encoder_flags),
             ("qed_cycle_indices", None if qed_cycle_indices is None else tuple(qed_cycle_indices)),
-            ("final_stabilizer_basis", final_stabilizer_basis),
+            ("final_readout_basis", final_readout_basis),
             ("add_barriers", add_barriers),
         )
         if value is not None
@@ -223,7 +223,7 @@ def build_kickback_tomography_experiment(
     include_prep_cultivation: bool | None = None,
     measure_encoder_flags: bool | None = None,
     qed_cycle_indices: Iterable[int] | None = None,
-    final_stabilizer_basis: FinalStabilizerMode | None = None,
+    final_readout_basis: FinalReadoutBasis | None = None,
     add_barriers: bool | None = None,
 ) -> tuple[QuantumCircuit, KickbackTomographyBitLayout]:
     """Build a T/Ty kickback-tomography experiment, defaulting to Ty on 14 sites.
@@ -239,7 +239,7 @@ def build_kickback_tomography_experiment(
     The shared protocol order is
 
     ``encode -> QED1 -> [prepare cultivation] -> QED2 -> KT measure
-    -> QED3 -> KT check -> QED4 -> final stabilizer check``.
+    -> QED3 -> KT check -> QED4 -> final readout``.
 
     ``cultivated_state="T"`` measures ``H_XY = (X + Y) / sqrt(2)``;
     ``"Ty"`` measures ``H_XZ = (X + Z) / sqrt(2)``.
@@ -256,18 +256,17 @@ def build_kickback_tomography_experiment(
     available flag qubits are measured after encoding and postselected to zero.
 
     ``qed_cycle_indices`` uses the paper's one-based numbering. The default
-    schedule is ``KT_DEFAULT_QED_CYCLE_INDICES = (1, 3)``; pass
+    schedule is ``KT_DEFAULT_QED_CYCLE_INDICES = (1, 3, 4)``; pass
     ``KT_FULL_QED_CYCLE_INDICES = (1, 2, 3, 4)`` for every Fig. 3 QED cycle.
     QED1 is the protocol's post-injection error-detection round. An empty tuple
     selects the "without QED cycles" variant. These rounds only
     measure error-detection syndromes. KT postselects on them and does not apply
     corrections or Pauli-frame updates.
 
-    ``final_stabilizer_basis="X"`` matches the final detector block drawn in
-    Fig. 3. ``"Z"`` selects the equivalent CSS basis, ``"BOTH"`` measures all
-    six stabilizers, and ``"NONE"`` omits the final check. A 14-site X- or
-    Z-only final block also records and postselects the three default
-    Bell-partner flags.
+    The final readout destructively measures the data qubits in
+    ``final_readout_basis``, as Rosenfeld et al. read out the X basis after the
+    last Fig. 3 QEC cycle; the parity of each face checks one stabilizer of that
+    type.
     """
     config = resolve_kickback_tomography_config(
         circuit_config_path=circuit_config_path,
@@ -277,7 +276,7 @@ def build_kickback_tomography_experiment(
         include_prep_cultivation=include_prep_cultivation,
         measure_encoder_flags=measure_encoder_flags,
         qed_cycle_indices=qed_cycle_indices,
-        final_stabilizer_basis=final_stabilizer_basis,
+        final_readout_basis=final_readout_basis,
         add_barriers=add_barriers,
     )
     cultivated_state = config.cultivated_state
@@ -285,7 +284,7 @@ def build_kickback_tomography_experiment(
         # A sweep YAML has no injected state; without an angle, inject the cultivated state.
         injected_state = config.injected_state or cultivated_state
     include_prep_cultivation = config.include_prep_cultivation
-    final_stabilizer_basis = config.final_stabilizer_basis
+    final_readout_basis = config.final_readout_basis
     add_barriers = config.add_barriers
     spec = resolve_kickback_tomography_patch_spec(config.patch_sites)
     qed_indices = normalize_qed_cycle_indices(config.qed_cycle_indices)
@@ -318,18 +317,7 @@ def build_kickback_tomography_experiment(
         spec.cultivation_measurement_count,
         "kt_check",
     )
-    final_bit_count = final_stabilizer_bit_count(final_stabilizer_basis)
-    final_creg = ClassicalRegister(final_bit_count, "final_stab") if final_bit_count else None
-    final_bell_partner_creg = (
-        ClassicalRegister(KT_STABILIZER_BITS_PER_CYCLE // 2, "final_bell_partner_flags")
-        if spec.patch_sites == 14 and final_stabilizer_basis in ("X", "Z")
-        else None
-    )
-    final_d2_copy_creg = (
-        ClassicalRegister(1, "final_d2_copy_flag")
-        if spec.patch_sites == 14 and final_stabilizer_basis != "NONE"
-        else None
-    )
+    final_readout_creg = ClassicalRegister(len(spec.data_sites), "final_readout")
 
     classical_registers: list[ClassicalRegister] = []
     if encoder_flags_creg is not None:
@@ -337,13 +325,7 @@ def build_kickback_tomography_experiment(
     if prep_creg is not None:
         classical_registers.append(prep_creg)
     classical_registers.extend(qed_cregs[index] for index in qed_indices)
-    classical_registers.extend((kt_measure_creg, kt_check_creg))
-    if final_creg is not None:
-        classical_registers.append(final_creg)
-    if final_bell_partner_creg is not None:
-        classical_registers.append(final_bell_partner_creg)
-    if final_d2_copy_creg is not None:
-        classical_registers.append(final_d2_copy_creg)
+    classical_registers.extend((kt_measure_creg, kt_check_creg, final_readout_creg))
 
     circuit = QuantumCircuit(patch, *classical_registers)
     patch_qubits = list(patch)
@@ -360,13 +342,12 @@ def build_kickback_tomography_experiment(
     )
 
     def append_qed_cycle(index: int) -> None:
-        _append_patch_stabilizer_measurement(
+        _append_patch_qed_cycle(
             circuit,
             spec,
             patch_qubits=patch_qubits,
             stabilizer_bits=list(qed_cregs[index])[:KT_STABILIZER_BITS_PER_CYCLE],
             d2_copy_flag_bit=(qed_cregs[index][-1] if spec.patch_sites == 14 else None),
-            basis="BOTH",
             add_barriers=add_barriers,
         )
 
@@ -411,19 +392,16 @@ def build_kickback_tomography_experiment(
     if 4 in qed_cregs:
         append_qed_cycle(4)
 
-    if final_creg is not None:
-        _append_patch_stabilizer_measurement(
-            circuit,
-            spec,
-            patch_qubits=patch_qubits,
-            stabilizer_bits=list(final_creg),
-            bell_partner_flag_bits=(
-                list(final_bell_partner_creg) if final_bell_partner_creg is not None else None
-            ),
-            d2_copy_flag_bit=(final_d2_copy_creg[0] if final_d2_copy_creg is not None else None),
-            basis=final_stabilizer_basis,
-            add_barriers=add_barriers,
-        )
+    data_qubits = [patch_qubits[site] for site in spec.data_sites]
+    if add_barriers:
+        circuit.barrier(label="final data readout")
+    if final_readout_basis == "X":
+        circuit.h(data_qubits)
+    elif final_readout_basis == "Z":
+        pass  # The readout is already in the Z basis.
+    else:
+        raise ValueError(f"unsupported final_readout_basis {final_readout_basis!r}.")
+    circuit.measure(data_qubits, final_readout_creg)
 
     qed_positions = tuple(
         tuple(circuit.find_bit(bit).index for bit in qed_cregs[index]) for index in qed_indices
@@ -453,20 +431,8 @@ def build_kickback_tomography_experiment(
         ),
         qed_cycles=qed_positions,
         qed_cycle_indices=qed_indices,
-        final_stabilizers=(
-            tuple(circuit.find_bit(bit).index for bit in final_creg)
-            if final_creg is not None
-            else ()
-        ),
-        final_bell_partner_flags=(
-            tuple(circuit.find_bit(bit).index for bit in final_bell_partner_creg)
-            if final_bell_partner_creg is not None
-            else ()
-        ),
-        final_d2_copy_flag=(
-            circuit.find_bit(final_d2_copy_creg[0]).index
-            if final_d2_copy_creg is not None
-            else None
+        final_readout_faces=final_readout_face_positions(
+            spec, [circuit.find_bit(bit).index for bit in final_readout_creg]
         ),
         encoder_flags=encoder_flag_positions,
     )
@@ -480,13 +446,11 @@ def build_kickback_tomography_experiment(
             "tomography_measure_round": bit_layout.tomography_measure_round.all_positions,
             "tomography_check_round": bit_layout.tomography_check_round.all_positions,
             "qed_cycles": bit_layout.qed_cycles,
-            "final_stabilizers": bit_layout.final_stabilizers,
-            "final_bell_partner_flags": bit_layout.final_bell_partner_flags,
-            "final_d2_copy_flag": bit_layout.final_d2_copy_flag,
+            "final_readout_faces": bit_layout.final_readout_faces,
             "encoder_flags": bit_layout.encoder_flags,
             "qed_cycle_indices": qed_indices,
             "cultivated_state": cultivated_state,
-            "final_stabilizer_basis": final_stabilizer_basis,
+            "final_readout_basis": final_readout_basis,
         },
     }
     return circuit, bit_layout
@@ -528,28 +492,26 @@ def _append_patch_encoder(
         raise ValueError(f"Unsupported KT patch_sites: {spec.patch_sites}.")
 
 
-def _append_patch_stabilizer_measurement(
+def _append_patch_qed_cycle(
     circuit: QuantumCircuit,
     spec: KickbackTomographyPatchSpec,
     *,
     patch_qubits: list,
     stabilizer_bits: list,
-    bell_partner_flag_bits: list | None = None,
-    d2_copy_flag_bit=None,
-    basis: FinalStabilizerMode,
+    d2_copy_flag_bit,
     add_barriers: bool,
 ) -> None:
-    """Append one full-QED or final stabilizer measurement on the patch.
+    """Append one QED cycle measuring every patch stabilizer.
 
-    ``stabilizer_bits`` stores only face-parity results. The two
-    optional destinations store the 14-site Bell-partner and D2-copy flags.
+    ``stabilizer_bits`` stores only face-parity results; the 14-site cycle also
+    stores its D2-copy flag.
     """
     if spec.patch_sites == 11:
         append_11_site_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
             bits=stabilizer_bits,
-            basis=basis,
+            basis="BOTH",
             add_barriers=add_barriers,
         )
     elif spec.patch_sites == 14:
@@ -557,9 +519,8 @@ def _append_patch_stabilizer_measurement(
             circuit,
             patch_qubits=patch_qubits,
             stabilizer_bits=stabilizer_bits,
-            bell_partner_flag_bits=bell_partner_flag_bits,
             d2_copy_flag_bit=d2_copy_flag_bit,
-            basis=basis,
+            basis="BOTH",
             add_barriers=add_barriers,
         )
     else:
@@ -622,12 +583,13 @@ def analyze_kickback_tomography_counts(
 ) -> KickbackTomographySummary:
     """Analyze Qiskit counts by postselecting and classifying the two KT logical readouts.
 
-    Fixed-zero detector bits reject first. Each folded root must also agree
-    with its repeated-root check (the root re-measured after unfolding),
-    otherwise the shot is discarded. As in Rosenfeld et al. (Science 2026,
-    Fig. 3), the check round postselects self-consistent results: shots whose
-    measure and check roots disagree are discarded and counted separately.
-    Agreement at zero is a logical success; agreement at one is a logical error.
+    Fixed-zero detector bits and odd final readout face parities reject first. Each
+    folded root must also agree with its repeated-root check (the root
+    re-measured after unfolding), otherwise the shot is discarded. As in
+    Rosenfeld et al. (Science 2026, Fig. 3), the check round postselects
+    self-consistent results: shots whose measure and check roots disagree are
+    discarded and counted separately. Agreement at zero is a logical success;
+    agreement at one is a logical error.
     """
 
     total_shots = sum(counts.values())
@@ -637,9 +599,14 @@ def analyze_kickback_tomography_counts(
     measure_check_disagreement_shots = 0
 
     for bitstring, count in counts.items():
-        # Encoder flags, preparation, QED syndromes, KT flags, and the final
-        # stabilizer check are fixed-zero postselection detectors.
-        if any(qiskit_bit_value(bitstring, position) for position in bit_layout.detector_positions):
+        # Encoder flags, preparation, QED syndromes, and KT flags are fixed-zero
+        # postselection detectors; each final readout face parity must be even.
+        if any(
+            qiskit_bit_value(bitstring, position) for position in bit_layout.detector_positions
+        ) or any(
+            sum(qiskit_bit_value(bitstring, position) for position in face) % 2
+            for face in bit_layout.final_readout_faces
+        ):
             continue
 
         # Each folded root must agree with its repeated-root check.
