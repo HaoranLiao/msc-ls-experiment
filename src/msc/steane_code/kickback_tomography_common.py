@@ -212,6 +212,4 @@ def final_readout_face_positions(
 ) -> tuple[tuple[int, ...], ...]:
     """Map each stabilizer face to its positions in a data readout ordered like ``data_sites``."""
     position_by_site = dict(zip(spec.data_sites, data_readout_positions, strict=True))
-    return tuple(
-        tuple(position_by_site[site] for site in face) for face in spec.stabilizer_faces
-    )
+    return tuple(tuple(position_by_site[site] for site in face) for face in spec.stabilizer_faces)
