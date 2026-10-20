@@ -294,6 +294,18 @@ def build_lattice_surgery_circuit(
 
     # 4. Demolish Steane in X, then measure X_ab as Hirano's m_ab. X_cd is
     # withheld by the d=5 merge but does not receive a standalone recovery.
+    if add_barriers:
+        # With ``align_steane_and_merge_readouts``, hardware preprocessing moves the
+        # Steane and merge ancillas' last readouts behind this barrier, so they are
+        # read out together with the demolition.
+        circuit.barrier(
+            *steane_patch,
+            *(
+                qubits[f"zz_{check_name[1:].lower()}"]
+                for check_name, _, _ in spec.merged_boundary_checks
+            ),
+            label="align Steane and merge readouts",
+        )
     append_steane_logical_measurement(
         circuit,
         "X",
