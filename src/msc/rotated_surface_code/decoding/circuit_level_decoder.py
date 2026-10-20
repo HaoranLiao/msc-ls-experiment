@@ -1029,12 +1029,13 @@ def _idle_pauli_error_probabilities(
     ``pZ = (1 + exp(-t/T1) - 2 exp(-t/T2))/4``. Matching its Pauli-transfer
     eigenvalues with independent flips gives ``qX = qY = (1 - exp(-t/(2 T1)))/2``
     and ``qZ = (1 - exp(-t/T2 + t/(2 T1)))/2``, nonnegative exactly when
-    ``T2 <= 2 T1``.
+    ``T2 <= 2 T1``. Separately fitted calibrations can report ``T2 > 2 T1``
+    (for example q65 of ibm_phoenix on 2026-10-19); such a T2 is clamped to the
+    pure-T1 limit ``2 T1``, leaving no dephasing beyond relaxation.
     """
     if t1 is None or t2 is None or not (0 < t1 < math.inf and 0 < t2 < math.inf):
         raise ValueError("idle relaxation requires finite positive T1 and T2.")
-    if t2 > 2 * t1:
-        raise ValueError("idle relaxation requires T2 <= 2 T1.")
+    t2 = min(t2, 2 * t1)
     transverse_flip = (1 - math.exp(-duration / (2 * t1))) / 2
     dephasing_flip = (1 - math.exp(-duration / t2 + duration / (2 * t1))) / 2
     return transverse_flip, transverse_flip, dephasing_flip
