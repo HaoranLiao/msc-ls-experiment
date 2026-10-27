@@ -292,6 +292,40 @@ def test_hardware_style_counts_round_trip_through_the_record_mapping(
     assert decoder.decode_counts(rejected_counts) == (0, 0)
 
 
+@pytest.mark.parametrize("basis", TOMOGRAPHY_BASES)
+def test_tesseract_keeps_the_acceptance_and_mostly_the_outcomes_of_matching(
+    saved_job: SavedHardwareJob,
+    submitted_circuit_by_basis: dict[str, SubmittedTomographyCircuit],
+    decoders: dict[str, CircuitLevelDecoder],
+    basis: common.SurfaceReadoutBasis,
+) -> None:
+    """Swapping matching for Tesseract leaves postselection and nearly every outcome unchanged.
+
+    The decoder acts only on accepted shots, so both accept the same hardware
+    shots; at threshold zero, Tesseract's two-sector decoding accepts them all
+    as well.
+    """
+    counts = dict(list(saved_job.counts_by_basis[basis].items())[:3_000])
+    tesseract_inputs = dict(
+        calibration=saved_job.calibration,
+        tomography_config=saved_job.config,
+        measurement_bit_layout=submitted_circuit_by_basis[basis].measurement_bit_layout,
+        readout_basis=basis,
+        persistent_surface_x_post_selection=True,
+        decoder="tesseract",
+    )
+    matching_shots = decoders[basis].decode_counts(counts)
+    tesseract_shots = CircuitLevelDecoder(
+        submitted_circuit_by_basis[basis].circuit, **tesseract_inputs, complementary_gap=False
+    ).decode_counts(counts)
+    assert sum(tesseract_shots) == sum(matching_shots) > 0
+    assert abs(tesseract_shots[0] - matching_shots[0]) < 0.05 * sum(matching_shots)
+    (gap_shots,) = CircuitLevelDecoder(
+        submitted_circuit_by_basis[basis].circuit, **tesseract_inputs, complementary_gap=True
+    ).decode_counts(counts, (0.0,))
+    assert sum(gap_shots) == sum(matching_shots)
+
+
 def test_saved_policy_matches_phenomenological_acceptance_shot_by_shot(
     saved_job: SavedHardwareJob,
     submitted_circuit_by_basis: dict[str, SubmittedTomographyCircuit],

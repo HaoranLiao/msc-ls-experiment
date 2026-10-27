@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from itertools import pairwise
 from math import exp, hypot, isfinite
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import yaml
@@ -145,17 +145,22 @@ def analyze_ty_logical_error_rate_counts(
     ) = None,
     calibration: DeviceCalibration | None = None,
     persistent_surface_x_post_selection: bool,
-    complementary_gap_threshold: float | None,
+    complementary_gap_thresholds: Sequence[float | None],
+    decoder: Literal["matching", "tesseract"] = "matching",
     bootstrap_samples: int = 10_000,
     bootstrap_seed: int = 0,
-) -> TyLogicalErrorRateSummary:
-    """Analyze an X/Z tomography sweep and fit its per-round logical error rate.
+) -> tuple[TyLogicalErrorRateSummary, ...]:
+    """Analyze an X/Z tomography sweep and fit its per-round LER at each gap threshold.
 
     Every memory duration is analyzed as one tomography point with the
     tomography settings of this config at that point's round count and the
     same analysis-only postselection settings. Hardware sweeps are decoded
     circuit-level when submitted circuits are passed by round count with the
-    job calibration; each submitted circuit builds its own calibrated model.
+    job calibration; each submitted circuit builds its own calibrated model,
+    decoded with ``decoder`` (matching or Tesseract). One summary is returned
+    per entry of ``complementary_gap_thresholds``, in order: ``None`` disables
+    gap postselection, and every numeric threshold shares one two-sector
+    decoding of each submitted circuit.
     """
     config = logical_error_rate_config or load_ty_logical_error_rate_config(config_path)
     expected_rounds = set(config.post_transfer_stabilizer_rounds)
@@ -165,42 +170,51 @@ def analyze_ty_logical_error_rate_counts(
             f"post-transfer rounds {sorted(expected_rounds)}."
         )
 
-    tomography_summaries = tuple(
-        analyze_ty_tomography_counts(
-            counts_by_round[round_count],
-            tomography_config=replace(
-                config.tomography,
-                post_transfer_stabilizer_rounds=round_count,
-            ),
-            persistent_surface_x_post_selection=persistent_surface_x_post_selection,
-            complementary_gap_thresholds=(complementary_gap_threshold,),
-            submitted_circuits_by_basis=(
-                None
-                if submitted_circuits_by_round is None
-                else submitted_circuits_by_round[round_count]
-            ),
-            calibration=calibration,
-        )[0]
-        for round_count in config.post_transfer_stabilizer_rounds
-    )
-    return TyLogicalErrorRateSummary(
-        post_transfer_stabilizer_rounds=config.post_transfer_stabilizer_rounds,
-        tomography=tomography_summaries,
-        logical_error_rate_per_round=fit_ty_logical_error_rate(
-            config.post_transfer_stabilizer_rounds,
-            [
-                hypot(summary.expectation_x, summary.expectation_z)
-                for summary in tomography_summaries
-            ],
-        ),
-        logical_error_rate_confidence_interval_95=(
-            bootstrap_ty_logical_error_rate_confidence_interval(
-                config.post_transfer_stabilizer_rounds,
-                tomography_summaries,
-                bootstrap_samples=bootstrap_samples,
-                bootstrap_seed=bootstrap_seed,
+    # One tuple of per-threshold summaries per round count, then transposed to
+    # one sweep per threshold.
+    tomography_by_threshold = zip(
+        *(
+            analyze_ty_tomography_counts(
+                counts_by_round[round_count],
+                tomography_config=replace(
+                    config.tomography,
+                    post_transfer_stabilizer_rounds=round_count,
+                ),
+                persistent_surface_x_post_selection=persistent_surface_x_post_selection,
+                complementary_gap_thresholds=complementary_gap_thresholds,
+                submitted_circuits_by_basis=(
+                    None
+                    if submitted_circuits_by_round is None
+                    else submitted_circuits_by_round[round_count]
+                ),
+                calibration=calibration,
+                decoder=decoder,
             )
+            for round_count in config.post_transfer_stabilizer_rounds
         ),
+        strict=True,
+    )
+    return tuple(
+        TyLogicalErrorRateSummary(
+            post_transfer_stabilizer_rounds=config.post_transfer_stabilizer_rounds,
+            tomography=tomography_summaries,
+            logical_error_rate_per_round=fit_ty_logical_error_rate(
+                config.post_transfer_stabilizer_rounds,
+                [
+                    hypot(summary.expectation_x, summary.expectation_z)
+                    for summary in tomography_summaries
+                ],
+            ),
+            logical_error_rate_confidence_interval_95=(
+                bootstrap_ty_logical_error_rate_confidence_interval(
+                    config.post_transfer_stabilizer_rounds,
+                    tomography_summaries,
+                    bootstrap_samples=bootstrap_samples,
+                    bootstrap_seed=bootstrap_seed,
+                )
+            ),
+        )
+        for tomography_summaries in tomography_by_threshold
     )
 
 

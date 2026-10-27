@@ -334,11 +334,11 @@ def test_ler_yaml_matches_sweep_circuits_and_analysis(tmp_path: Path) -> None:
             assert len(registers[f"surface_data_{basis.lower()}"]) == 9
             assert "barrier" not in circuit.count_ops()
 
-    summary = analyze_ty_logical_error_rate_counts(
+    (summary,) = analyze_ty_logical_error_rate_counts(
         counts_by_round,
         config_path=config_path,
         persistent_surface_x_post_selection=False,
-        complementary_gap_threshold=None,
+        complementary_gap_thresholds=(None,),
         bootstrap_samples=100,
     )
     assert summary.post_transfer_stabilizer_rounds == rounds

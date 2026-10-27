@@ -14,3 +14,8 @@ EXAMPLES_DIR = REPO_ROOT / "examples"
 NOTEBOOKS_DIR = REPO_ROOT / "examples"
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 TESTS_DIR = REPO_ROOT / "tests"
+# Google's released Tesseract search settings (Rosenfeld et al., Fig. 4 cultivation N = 3), shared
+# by the Tesseract decoding of their grafting circuits and of ours.
+GOOGLE_TESSERACT_PROPERTIES_PATH = (
+    REPO_ROOT / "google" / "zenodo" / "fig4" / "cultivation_N=3" / "decoder_properties.json"
+)

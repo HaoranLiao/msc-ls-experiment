@@ -24,13 +24,26 @@ Call structure::
 
 from __future__ import annotations
 
+import json
 import math
 from collections import Counter, defaultdict
 from collections.abc import Hashable, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import stim
+
+from msc.paths import GOOGLE_TESSERACT_PROPERTIES_PATH
+
+if TYPE_CHECKING:
+    from tesseract_decoder import tesseract
+
+# Tesseract's priority-queue limit for analysis, 5x Google's released 10,000. On 2,190 accepted
+# shots of Google's grafting circuit on ibm_phoenix (N = 4 and 8, X and Z), Google's limit leaves
+# ordinary and two-sector decoding disagreeing on 1.34% of shots kept at gap >= 3; this limit cuts
+# that to 0.27% (0 at gap >= 6) and never finds a costlier explanation, for 2.4x the decoding time.
+TESSERACT_PQLIMIT = 50_000
 
 # ---------------------------------------------------------------------------
 # Shared detector-record analyzer
@@ -38,20 +51,29 @@ import stim
 
 
 class DetectorErrorModelShotAnalyzer:
-    """Postselect and globally PyMatching-decode detector samples.
+    """Postselect and globally decode detector samples with PyMatching or Tesseract.
 
     The sampling circuit must have detectors and one observable. Selected
     detectors reject shots; accepted shots are logical errors when the decoded
     and sampled observable flips disagree. ``decoder_model_circuit`` may
-    provide a graphlike detector model with the same detector and observable
-    layout while samples still come from the fully noisy circuit. Matching uses
-    only faults that survive hard postselection. When a
+    provide a detector model with the same detector and observable layout
+    while samples still come from the fully noisy circuit. When a
     complementary-gap threshold is supplied, the circuit's final detector must
     be the complementary-gap detector.
 
-    Toggling that detector forces the opposite global logical sector, and the
-    analyzer rejects the shot when the two decoding weights differ by less than
-    the user-supplied threshold.
+    ``decoder="matching"`` decodes the graphlike decomposition of the faults
+    that survive hard postselection. ``decoder="tesseract"`` runs Tesseract
+    (Beni, Higgott, and Shutty, arXiv:2503.10988), an A* most-likely-error
+    decoder, over the whole undecomposed model with Google's released search
+    settings, as Rosenfeld et al. decoded their grafting experiment, but with
+    a priority-queue limit of ``TESSERACT_PQLIMIT``; it keeps the joint
+    likelihood of correlated faults that matching splits into independent
+    edges.
+
+    Toggling the gap detector forces the opposite global logical sector, and
+    the analyzer rejects the shot when the two sectors' explanation weights,
+    each a sum of ``log((1 - p) / p)``, differ by less than the user-supplied
+    threshold.
 
     Call structure::
 
@@ -59,13 +81,13 @@ class DetectorErrorModelShotAnalyzer:
         ├── ordinary decoding
         │   ├── _normalize_samples(...)
         │   ├── _postselection_acceptance(...)
-        │   └── matching.decode_batch(...)
+        │   └── _decode_batch(...)             # matching or Tesseract
         └── complementary-gap decoding
             └── decode_complementary_gap_samples(...)
                 ├── _normalize_samples(...)
                 ├── _postselection_acceptance(...)
                 └── _decode_with_complementary_gap(...)
-                    └── matching.decode(...) for both logical sectors
+                    └── decode both logical sectors
     """
 
     def __init__(
@@ -75,21 +97,20 @@ class DetectorErrorModelShotAnalyzer:
         decoder_model_circuit: stim.Circuit | None = None,
         postselection_detector_indices: Sequence[int] = (),
         complementary_gap_postselection_threshold: float | None = None,
+        decoder: Literal["matching", "tesseract"] = "matching",
     ) -> None:
-        """Compile the sampling contract and its PyMatching decoder.
+        """Compile the sampling contract and its PyMatching or Tesseract decoder.
 
         ``circuit`` is copied and later sampled. ``decoder_model_circuit`` is
-        never sampled; when supplied, only its graphlike detector error model
-        provides matching edges and weights. The two circuits must therefore
-        have identical detector and observable counts.
+        never sampled; when supplied, only its detector error model provides
+        the decoder's faults and weights. The two circuits must therefore have
+        identical detector and observable counts.
 
         ``postselection_detector_indices`` identifies hard-rejection
         detectors. A non-``None`` complementary-gap threshold additionally
         interprets the final detector as the logical-sector constraint and
         rejects decoded shots whose sector-weight gap is below the threshold.
         """
-        import pymatching
-
         postselection_indices = tuple(postselection_detector_indices)
         if len(postselection_indices) != len(set(postselection_indices)):
             raise ValueError("postselection_detector_indices must be unique.")
@@ -113,41 +134,59 @@ class DetectorErrorModelShotAnalyzer:
             raise ValueError("decoder_model_circuit must have the same number of detectors.")
         if decoder_model_circuit.num_observables != circuit.num_observables:
             raise ValueError("decoder_model_circuit must have the same number of observables.")
-        # Only faults that survive hard postselection are ever decoded, so match
-        # just those. Each must split into graphlike components that already
-        # occur elsewhere: a newly introduced remnant edge on the complementary-gap
-        # detector would let matching change sector cheaply, which degrades the
-        # prediction and caps the gap.
-        decomposed_error_model = decoder_model_circuit.detector_error_model(
-            decompose_errors=True,
-            ignore_decomposition_failures=True,
-            block_decomposition_from_introducing_remnant_edges=True,
-        )
-        postselected_detectors = set(postselection_indices)
-        matching_error_model = stim.DetectorErrorModel()
-        for instruction in decomposed_error_model.flattened():
-            if instruction.type != "error":
-                continue
-            components: list[list[int]] = [[]]
-            for target in instruction.targets_copy():
-                if target.is_separator():
-                    components.append([])
-                elif target.is_relative_detector_id():
-                    components[-1].append(target.val)
-            if any(postselected_detectors.intersection(component) for component in components):
-                continue
-            if any(len(component) > 2 for component in components):
-                raise ValueError(f"a fault surviving postselection is not graphlike: {instruction}")
-            matching_error_model.append(instruction)
-        # Declaring the last detector and the observable keeps every node in the
-        # graph even when no surviving fault flips it.
-        matching_error_model.append(
-            "detector", [], [stim.target_relative_detector_id(circuit.num_detectors - 1)]
-        )
-        matching_error_model.append(
-            "logical_observable", [], [stim.target_logical_observable_id(0)]
-        )
-        self._matching = pymatching.Matching.from_detector_error_model(matching_error_model)
+        if decoder == "matching":
+            import pymatching
+
+            # Only faults that survive hard postselection are ever decoded, so
+            # match just those. Each must split into graphlike components that
+            # already occur elsewhere: a newly introduced remnant edge on the
+            # complementary-gap detector would let matching change sector
+            # cheaply, which degrades the prediction and caps the gap.
+            decomposed_error_model = decoder_model_circuit.detector_error_model(
+                decompose_errors=True,
+                ignore_decomposition_failures=True,
+                block_decomposition_from_introducing_remnant_edges=True,
+            )
+            postselected_detectors = set(postselection_indices)
+            matching_error_model = stim.DetectorErrorModel()
+            for instruction in decomposed_error_model.flattened():
+                if instruction.type != "error":
+                    continue
+                components: list[list[int]] = [[]]
+                for target in instruction.targets_copy():
+                    if target.is_separator():
+                        components.append([])
+                    elif target.is_relative_detector_id():
+                        components[-1].append(target.val)
+                if any(
+                    postselected_detectors.intersection(component) for component in components
+                ):
+                    continue
+                if any(len(component) > 2 for component in components):
+                    raise ValueError(
+                        f"a fault surviving postselection is not graphlike: {instruction}"
+                    )
+                matching_error_model.append(instruction)
+            # Declaring the last detector and the observable keeps every node in
+            # the graph even when no surviving fault flips it.
+            matching_error_model.append(
+                "detector", [], [stim.target_relative_detector_id(circuit.num_detectors - 1)]
+            )
+            matching_error_model.append(
+                "logical_observable", [], [stim.target_logical_observable_id(0)]
+            )
+            self._matching = pymatching.Matching.from_detector_error_model(matching_error_model)
+        elif decoder == "tesseract":
+            # Tesseract needs no decomposition and searches the whole model,
+            # faults on postselected detectors included, as Google's released
+            # model does: one such fault never explains an accepted shot, but a
+            # pair cancelling on a postselected detector can.
+            self._tesseract = build_google_tesseract_decoder(
+                decoder_model_circuit.detector_error_model(), pqlimit=TESSERACT_PQLIMIT
+            )
+        else:
+            raise ValueError(f"unsupported decoder {decoder!r}.")
+        self._decoder = decoder
         self._num_detectors = self._circuit.num_detectors
         self._postselection_detector_indices = np.asarray(
             postselection_indices,
@@ -167,7 +206,7 @@ class DetectorErrorModelShotAnalyzer:
         marks accepted shots whose decoded observable disagrees with the
         sampled observable; rejected shots are always false in this array.
 
-        Ordinary shots are decoded together with ``decode_batch``. Enabling a
+        Ordinary shots are decoded together in one batch. Enabling a
         complementary-gap threshold instead decodes both logical sectors per
         ordinarily accepted shot and then applies the gap threshold.
         """
@@ -187,14 +226,20 @@ class DetectorErrorModelShotAnalyzer:
         is_logical_error_shot = np.zeros(len(detection_events), dtype=bool)
         accepted_shot_indices = np.flatnonzero(is_accepted_shot)
         if accepted_shot_indices.size:
-            predictions = np.asarray(
-                self._matching.decode_batch(detection_events[accepted_shot_indices]),
-                dtype=bool,
-            ).reshape(-1)
             is_logical_error_shot[accepted_shot_indices] = (
-                predictions != observable_flips[accepted_shot_indices, 0]
+                self._decode_batch(detection_events[accepted_shot_indices])
+                != observable_flips[accepted_shot_indices, 0]
             )
         return is_accepted_shot, is_logical_error_shot
+
+    def _decode_batch(self, detection_events: np.ndarray) -> np.ndarray:
+        """Return each shot's predicted observable flip from the configured decoder."""
+        if self._decoder == "matching":
+            return np.asarray(self._matching.decode_batch(detection_events), dtype=bool)[:, 0]
+        elif self._decoder == "tesseract":
+            return np.asarray(self._tesseract.decode_batch(detection_events), dtype=bool)[:, 0]
+        else:
+            raise ValueError(f"unsupported decoder {self._decoder!r}.")
 
     def decode_complementary_gap_samples(
         self,
@@ -274,33 +319,96 @@ class DetectorErrorModelShotAnalyzer:
         The circuit's final detector is constructed from the same logical
         parity used by its observable. Holding every physical detector fixed
         while toggling this one detector therefore imposes the opposite logical
-        parity constraint on MWPM. The two calls return the minimum-weight
+        parity constraint on the decoder. The two calls return the most likely
         explanations in the two logical sectors; their weight difference is
         the complementary gap.
 
-        PyMatching does not expose a ``return_complementary`` option. This
-        method owns that two-decode operation without modifying the caller's
-        detector-event array.
+        Neither decoder exposes a two-sector decode. This method owns that
+        two-decode operation without modifying the caller's detector-event
+        array. A Tesseract search that ends without an explanation leaves its
+        sector at infinite weight, so a shot with no explanation in either
+        sector has a ``nan`` gap and fails every threshold.
         """
-        decode_sector = self._matching.decode
-        prediction, decoded_weight = decode_sector(
-            shot_detection_events,
-            return_weight=True,
-        )
         complementary_detection_events = shot_detection_events.copy()
         complementary_detection_events[-1] ^= True
-        try:
-            complementary_prediction, complementary_decoded_weight = decode_sector(
-                complementary_detection_events,
+        if self._decoder == "matching":
+            prediction, decoded_weight = self._matching.decode(
+                shot_detection_events,
                 return_weight=True,
             )
-        except ValueError:
-            # No competing sector exists, so this shot has unbounded separation.
-            return prediction, math.inf
-        if complementary_decoded_weight < decoded_weight:
+            try:
+                complementary_prediction, complementary_decoded_weight = self._matching.decode(
+                    complementary_detection_events,
+                    return_weight=True,
+                )
+            except ValueError:
+                # No competing sector exists, so this shot has unbounded separation.
+                return prediction, math.inf
+        elif self._decoder == "tesseract":
+            prediction, decoded_weight = self._decode_tesseract_sector(shot_detection_events)
+            complementary_prediction, complementary_decoded_weight = (
+                self._decode_tesseract_sector(complementary_detection_events)
+            )
+        else:
+            raise ValueError(f"unsupported decoder {self._decoder!r}.")
+        # The primary decode was given the sampled sector, so a tie must not
+        # keep its prediction, or tied shots would always decode correctly.
+        # Ties go to the sector without an observable flip.
+        if (complementary_decoded_weight, bool(complementary_prediction[0])) < (
+            decoded_weight,
+            bool(prediction[0]),
+        ):
             prediction = complementary_prediction
         complementary_gap = abs(decoded_weight - complementary_decoded_weight)
         return prediction, float(complementary_gap)
+
+    def _decode_tesseract_sector(
+        self,
+        shot_detection_events: np.ndarray,
+    ) -> tuple[np.ndarray, float]:
+        """Return one sector's predicted observable flips and explanation weight."""
+        errors = self._tesseract.decode_to_errors(shot_detection_events)
+        if self._tesseract.low_confidence_flag:
+            return np.zeros(1, dtype=bool), math.inf
+        return (
+            np.asarray(self._tesseract.get_observables_from_errors(errors), dtype=bool),
+            self._tesseract.cost_from_errors(errors),
+        )
+
+
+def build_google_tesseract_decoder(
+    detector_error_model: stim.DetectorErrorModel,
+    *,
+    pqlimit: int | None = None,
+) -> tesseract.TesseractDecoder:
+    """Configure Tesseract with Google's released search settings.
+
+    Google released identical settings for N = 2 and N = 3 and none for the
+    longer memories they ran, so every model uses them. Detector orders use
+    Tesseract's default index-order method; on Google's data every method
+    reproduces their corrected observables. ``pqlimit`` replaces Google's
+    priority-queue limit, the setting that bounds how far each search runs;
+    ``None`` keeps Google's.
+    """
+    from tesseract_decoder import tesseract, utils
+
+    properties = json.loads(GOOGLE_TESSERACT_PROPERTIES_PATH.read_text())
+    released_pqlimit = properties.pop("pqlimit")
+    config = tesseract.TesseractConfig(
+        dem=detector_error_model,
+        det_beam=properties.pop("det_beam"),
+        beam_climbing=properties.pop("beam_climbing"),
+        no_revisit_dets=properties.pop("no_revisit_dets"),
+        pqlimit=released_pqlimit if pqlimit is None else pqlimit,
+        det_orders=utils.build_det_orders(
+            detector_error_model,
+            properties.pop("num_det_orders"),
+            seed=properties.pop("det_order_seed"),
+        ),
+    )
+    if properties:
+        raise ValueError(f"unused Tesseract properties {sorted(properties)}.")
+    return tesseract.TesseractDecoder(config)
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,9 @@ Scope: 14-site abstract-routed Steane cultivation transferred to the rotated
 d=5 surface code with either merge schedule, destructive X or Z full-data
 readout, and any number of post-transfer rounds. Each decoder models one
 fixed physical circuit, so a twirled job is decoded one twirl variant at a
-time; the circuit must have an identity routing permutation.
+time; the circuit must have an identity routing permutation. The decoder of
+Google's grafting circuits (``google/decoder/``) reuses the public wire
+alignment, frame verification, and calibrated suffix conversion.
 
 Terminology: the Steane input (injection, QED, and cultivation) is replaced by
 a noiseless Stim stand-in; each Steane wire's Steane cut is where the input ends
@@ -27,10 +29,10 @@ Call structure::
                         complementary_gap=...)
     ├── _build_calibrated_stim_model(...) -> _CalibratedStimModel
     │   ├── rebuild the logical circuit and require the saved bit layout
-    │   ├── _align_wire_operations(...)       # match anchors and group gate blocks
-    │   ├── _verify_frames_and_locate_steane_cuts(...)  # verify local frames
+    │   ├── align_wire_operations(...)        # match anchors and group gate blocks
+    │   ├── verify_frames_and_locate_steane_cuts(...)  # verify local frames
     │   ├── noiseless Stim stand-in for the Steane input
-    │   ├── _append_calibrated_suffix(...)     # physical suffix with calibrated noise
+    │   ├── append_calibrated_suffix(...)      # physical suffix with calibrated noise
     │   └── shared labeled detectors, logical observable, optional gap detector
     └── DetectorErrorModelShotAnalyzer
 
@@ -48,13 +50,12 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import stim
 from qiskit import QuantumCircuit
 from qiskit.circuit.library import CZGate, HGate, SXGate, XGate
-from qiskit.utils.units import apply_prefix
 
 from msc.noise.fault_tolerance_stim import DetectorErrorModelShotAnalyzer
 from msc.state_transfer import common
@@ -89,10 +90,15 @@ class CircuitLevelDecoder:
     and calibration.
 
     Construction builds the calibrated Stim model once, then compiles its
-    detector postselection, matching, and measurement-to-detection conversion.
+    detector postselection, decoder, and measurement-to-detection conversion.
     The stand-in's logical value is known, so the analyzer's accepted
     observable-disagreement bit is the corrected logical readout, not a
     hardware Ty-state failure label.
+
+    ``decoder`` selects matching (the default) or Tesseract with Google's
+    search settings and the analysis priority-queue limit
+    (``TESSERACT_PQLIMIT``), the decoder of Google's grafting experiment, so
+    the two protocols can be compared under one decoder.
 
     With ``complementary_gap``, the model's final gap detector is never
     hard-postselected; each shot is decoded once in both logical sectors, and
@@ -101,7 +107,7 @@ class CircuitLevelDecoder:
 
     Attributes: ``circuit`` is the annotated calibrated Stim model,
     ``record_clbits`` maps each Stim record to its Qiskit classical bit,
-    ``analyzer`` owns postselection and matching, ``reference_logical_bit``
+    ``analyzer`` owns postselection and decoding, ``reference_logical_bit``
     is the observable parity of the noiseless reference sample, and
     ``complementary_gap`` records whether the model has the gap detector.
     """
@@ -116,6 +122,7 @@ class CircuitLevelDecoder:
         readout_basis: common.SurfaceReadoutBasis,
         persistent_surface_x_post_selection: bool,
         complementary_gap: bool,
+        decoder: Literal["matching", "tesseract"] = "matching",
     ) -> None:
         model = _build_calibrated_stim_model(
             submitted_circuit,
@@ -138,6 +145,7 @@ class CircuitLevelDecoder:
             ),
             # Any threshold enables two-sector decoding; cutoffs apply per call.
             complementary_gap_postselection_threshold=0.0 if complementary_gap else None,
+            decoder=decoder,
         )
         self._converter = model.circuit.compile_m2d_converter()
 
@@ -159,48 +167,75 @@ class CircuitLevelDecoder:
                 "complementary_gap_thresholds must be given exactly when the decoder "
                 "has the complementary-gap detector."
             )
-        keys = list(counts)
-        multiplicities = np.fromiter(counts.values(), dtype=np.int64, count=len(keys))
-        record_clbits = list(self.record_clbits)
-        shots_by_threshold = 0
-        for start in range(0, len(keys), _BATCH_SIZE):
-            # Hardware keys follow Qiskit bit order; Stim needs its record order.
-            clbits = qiskit_bit_values(keys[start : start + _BATCH_SIZE])
-            if clbits.shape[1] != len(record_clbits):
-                raise ValueError(f"every count key must contain {len(record_clbits)} bits.")
-            detection_events, observable_flips = self._converter.convert(
-                measurements=clbits[:, record_clbits],
-                separate_observables=True,
+        return decode_count_keys(
+            counts,
+            analyzer=self.analyzer,
+            converter=self._converter,
+            record_clbits=self.record_clbits,
+            reference_logical_bit=self.reference_logical_bit,
+            complementary_gap_thresholds=complementary_gap_thresholds,
+        )
+
+
+def decode_count_keys(
+    counts: Mapping[str, int],
+    *,
+    analyzer: DetectorErrorModelShotAnalyzer,
+    converter: stim.CompiledMeasurementsToDetectionEventsConverter,
+    record_clbits: Sequence[int],
+    reference_logical_bit: int,
+    complementary_gap_thresholds: Sequence[float] | None,
+) -> tuple[int, int] | tuple[tuple[int, int], ...]:
+    """Decode weighted hardware count keys against one calibrated model.
+
+    Shared by this decoder and Google's grafting decoder. Unique keys are
+    converted in batches to the model's detection events, postselected and
+    decoded by ``analyzer``, and their accepted logical-zero and logical-one
+    shots are weighted by multiplicity: one pair without thresholds, else one
+    pair per threshold from a single two-sector decoding of every shot.
+    """
+    keys = list(counts)
+    multiplicities = np.fromiter(counts.values(), dtype=np.int64, count=len(keys))
+    record_clbits = list(record_clbits)
+    shots_by_threshold = 0
+    for start in range(0, len(keys), _BATCH_SIZE):
+        # Hardware keys follow Qiskit bit order; Stim needs its record order.
+        clbits = qiskit_bit_values(keys[start : start + _BATCH_SIZE])
+        if clbits.shape[1] != len(record_clbits):
+            raise ValueError(f"every count key must contain {len(record_clbits)} bits.")
+        detection_events, observable_flips = converter.convert(
+            measurements=clbits[:, record_clbits],
+            separate_observables=True,
+        )
+        # One accepted-shot row per threshold.
+        if complementary_gap_thresholds is None:
+            is_accepted_shot, is_logical_error_shot = (
+                analyzer.postselect_and_decode_samples(detection_events, observable_flips)
             )
-            # One accepted-shot row per threshold.
-            if complementary_gap_thresholds is None:
-                is_accepted_shot, is_logical_error_shot = (
-                    self.analyzer.postselect_and_decode_samples(detection_events, observable_flips)
+            is_accepted_shot = is_accepted_shot[np.newaxis]
+        else:
+            is_accepted_shot, is_logical_error_shot, complementary_gaps = (
+                analyzer.decode_complementary_gap_samples(
+                    detection_events, observable_flips
                 )
-                is_accepted_shot = is_accepted_shot[np.newaxis]
-            else:
-                is_accepted_shot, is_logical_error_shot, complementary_gaps = (
-                    self.analyzer.decode_complementary_gap_samples(
-                        detection_events, observable_flips
-                    )
-                )
-                # Gaps are nan for hard-rejected shots, so every cutoff rejects them.
-                is_accepted_shot = is_accepted_shot & (
-                    complementary_gaps >= np.asarray(complementary_gap_thresholds)[:, np.newaxis]
-                )
-            # The analyzer reports disagreement with the noiseless reference, so
-            # undo that offset to recover the logical outcome.
-            is_logical_one_shot = is_logical_error_shot ^ bool(self.reference_logical_bit)
-            batch_multiplicities = multiplicities[start : start + _BATCH_SIZE]
-            shots_by_threshold = shots_by_threshold + np.stack(
-                (
-                    (is_accepted_shot & ~is_logical_one_shot) @ batch_multiplicities,
-                    (is_accepted_shot & is_logical_one_shot) @ batch_multiplicities,
-                ),
-                axis=1,
             )
-        shots = tuple((int(zero), int(one)) for zero, one in shots_by_threshold)
-        return shots[0] if complementary_gap_thresholds is None else shots
+            # Gaps are nan for hard-rejected shots, so every cutoff rejects them.
+            is_accepted_shot = is_accepted_shot & (
+                complementary_gaps >= np.asarray(complementary_gap_thresholds)[:, np.newaxis]
+            )
+        # The analyzer reports disagreement with the noiseless reference, so
+        # undo that offset to recover the logical outcome.
+        is_logical_one_shot = is_logical_error_shot ^ bool(reference_logical_bit)
+        batch_multiplicities = multiplicities[start : start + _BATCH_SIZE]
+        shots_by_threshold = shots_by_threshold + np.stack(
+            (
+                (is_accepted_shot & ~is_logical_one_shot) @ batch_multiplicities,
+                (is_accepted_shot & is_logical_one_shot) @ batch_multiplicities,
+            ),
+            axis=1,
+        )
+    shots = tuple((int(zero), int(one)) for zero, one in shots_by_threshold)
+    return shots[0] if complementary_gap_thresholds is None else shots
 
 
 # =============================================================================
@@ -316,10 +351,10 @@ def _build_calibrated_stim_model(
     # aligning logical and physical operations wire by wire.
     physical_by_virtual = layout.initial_index_layout()[: logical_circuit.num_qubits]
     steane_wires = physical_by_virtual[:NUM_QUBITS_PATCH_14_SITES]
-    logical_wires, physical_wires = _align_wire_operations(
+    logical_wires, physical_wires = align_wire_operations(
         logical_circuit, submitted_circuit, physical_by_virtual
     )
-    steane_cuts = _verify_frames_and_locate_steane_cuts(
+    steane_cuts = verify_frames_and_locate_steane_cuts(
         logical_wires,
         physical_wires,
         steane_wires=steane_wires,
@@ -380,7 +415,7 @@ def _build_calibrated_stim_model(
     standin_detector_count = circuit.num_detectors
     record_clbits = (
         *(clbit_by_record[record] for record in standin_records),
-        *_append_calibrated_suffix(
+        *append_calibrated_suffix(
             circuit,
             submitted_circuit,
             steane_cuts=steane_cuts,
@@ -484,18 +519,18 @@ class _AnchoredWireOperations:
     operation_count: int = 0
 
 
-def _align_wire_operations(
+def align_wire_operations(
     logical_circuit: QuantumCircuit,
     submitted_circuit: QuantumCircuit,
     physical_by_virtual: Sequence[int],
 ) -> tuple[dict[int, _AnchoredWireOperations], dict[int, _AnchoredWireOperations]]:
     """Pair each wire's logical and physical operations after matching their anchors.
 
-    Logical CX becomes H-CZ-H on its target, a leading reset on a fresh wire is
-    dropped, and a measurement followed by a reset matches either a composite
-    measurement/reset or separate operations. Each logical CX must pair with the
-    same physical CZ from both wires. Device wires carrying only delays are
-    unused and excluded.
+    Logical CX becomes H-CZ-H on its target and logical CZ stays a CZ, a
+    leading reset on a fresh wire is dropped, and a measurement followed by a
+    reset matches either a composite measurement/reset or separate operations.
+    Each logical two-qubit gate must pair with the same physical CZ from both
+    wires. Device wires carrying only delays are unused and excluded.
     """
     # Every wire doing real work must be a layout wire; otherwise the per-wire
     # comparison below would silently miss operations.
@@ -544,7 +579,7 @@ def _split_wire_operations(
     """Split a circuit into ordered single-qubit-gate and anchor operations per physical wire.
 
     ``wire_labels`` maps each circuit qubit index to its physical wire. Logical
-    circuits contain CX, measurements, resets, and named single-qubit gates;
+    circuits contain CX or CZ, measurements, resets, and named single-qubit gates;
     submitted circuits contain the backend's native CZ, ``rz``, ``sx``, ``x``,
     measurements, resets, and delays. Delays are identity gates here because
     only their duration matters, which the conversion reads separately.
@@ -571,9 +606,9 @@ def _split_wire_operations(
             previous_names[wire] = name
             # Anchors (CZ, measurement, reset) must match exactly; every other
             # operation becomes a matrix compared only up to the local frame.
-            if name == ("cx" if logical else "cz"):
+            if name == "cz" or (logical and name == "cx"):
                 entries = [(("cz", wires[1 - qubit_position]), None)]
-                if logical and qubit_position == 1:
+                if name == "cx" and qubit_position == 1:
                     entries = [(None, _HADAMARD), *entries, (None, _HADAMARD)]
             elif name in ("measure", "measure_2"):
                 entries = [(("measure", clbits), None)]
@@ -629,7 +664,7 @@ class _SteaneCut:
     reset_only: bool
 
 
-def _verify_frames_and_locate_steane_cuts(
+def verify_frames_and_locate_steane_cuts(
     logical_wires: Mapping[int, _AnchoredWireOperations],
     physical_wires: Mapping[int, _AnchoredWireOperations],
     *,
@@ -654,6 +689,11 @@ def _verify_frames_and_locate_steane_cuts(
     delays, DD pulses, and suffix gates convert to Clifford operations. A
     composite measurement/reset whose measurement ends the input keeps only its
     reset. Returns one Steane cut per Steane wire that the input touches.
+
+    Comparing a whole CZ run as one unit is kept only to decode jobs compiled
+    before commit 38b31de, whose transpiler resynthesized two-qubit blocks. Jobs
+    compiled since keep every CZ, and comparing each CZ on its own also
+    verifies them.
     """
     # Express each Steane wire's cut in the same block coordinates, so the
     # frame walk below knows which block to split.
@@ -708,8 +748,8 @@ def _verify_frames_and_locate_steane_cuts(
         first_wire, first_block_index = participants[0]
         anchor_kind = logical_wires[first_wire].anchors[first_block_index].anchor[0]
         if anchor_kind == "cz":
-            # Transpilation may resynthesize a whole run of CZs on one pair, so
-            # extend over the maximal run.
+            # Kept only for jobs compiled before 38b31de, whose transpiler resynthesized
+            # a whole run of CZs on one pair: extend over the maximal run.
             (wire_a, block_a), (wire_b, block_b) = participants
             run_length = 1
             while (
@@ -770,8 +810,7 @@ def _split_block_at_steane_cut(
     ``frame`` is the local frame entering the block, and
     ``replaced_logical_gates`` are the block's logical gates before the cut.
     The previous and next anchors identify a composite measurement/reset that
-    straddles the cut; ``physical_wire.operation_count`` places the suffix start
-    past the wire's end when the wire has no suffix.
+    straddles the cut.
     """
     physical_block = physical_wire.blocks[block_index]
     anchors = physical_wire.anchors
@@ -822,7 +861,7 @@ def _split_block_at_steane_cut(
     elif next_physical_anchor is not None:
         first_position = next_physical_anchor.position
     else:
-        first_position = physical_wire.operation_count
+        raise ValueError("a Steane wire has no suffix after its cut.")
     return _SteaneCut(
         first_suffix_position=first_position,
         initial_phase=float(np.angle(z_frame[1, 1] / z_frame[0, 0])),
@@ -867,7 +906,7 @@ _CZ = CZGate().to_matrix()
 # =============================================================================
 
 
-def _append_calibrated_suffix(
+def append_calibrated_suffix(
     circuit: stim.Circuit,
     submitted_circuit: QuantumCircuit,
     *,
@@ -920,7 +959,7 @@ def _append_calibrated_suffix(
         elif operation.unit == "dt":
             duration = float(operation.params[0]) * calibration.dt
         else:
-            duration = apply_prefix(float(operation.params[0]), operation.unit)
+            raise ValueError(f"unsupported delay unit {operation.unit!r}.")
         if max(wire_clocks[wire] for wire in wires) - min(wire_clocks[wire] for wire in wires) > (
             1e-12
         ):
