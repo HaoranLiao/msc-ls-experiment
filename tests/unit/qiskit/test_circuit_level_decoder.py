@@ -17,9 +17,13 @@ from qiskit.transpiler.passes import RemoveResetInZeroState
 
 from msc.experiment.results_io import DeviceCalibration, SavedHardwareJob, load_saved_hardware_job
 from msc.paths import HARDWARE_RUNS_DIR
-from msc.rotated_surface_code.decoding.circuit_level_decoder import CircuitLevelDecoder
+from msc.rotated_surface_code.decoding.circuit_level_decoder import (
+    CircuitLevelDecoder,
+    postselected_circuit_qubits,
+)
 from msc.state_transfer import common
 from msc.state_transfer import to_d5_rotated_qiskit as d5
+from msc.steane_code.state_injection_common import NUM_QUBITS_PATCH_14_SITES
 from msc.state_transfer.tomography_qiskit import (
     TOMOGRAPHY_BASES,
     SubmittedTomographyCircuit,
@@ -158,6 +162,27 @@ def test_noise_channels_follow_the_calibrated_submitted_operations(
             )
             checked["delay"] += 1
     assert min(checked.values()) > 0 and len(checked) == 4
+
+
+def test_postselected_circuit_qubits_cover_the_steane_patch_but_not_the_whole_surface(
+    decoders: dict[str, CircuitLevelDecoder],
+    submitted_circuit_by_basis: dict[str, SubmittedTomographyCircuit],
+) -> None:
+    submitted = submitted_circuit_by_basis["X"]
+
+    postselected = postselected_circuit_qubits(
+        submitted.circuit,
+        decoders["X"].circuit,
+        decoders["X"].postselection_detector_indices,
+        decoders["X"].steane_readout_count,
+    )
+
+    # Every 14-site Steane qubit is postselected; the surface patch's far side
+    # only feeds decoded detectors.
+    assert set(range(NUM_QUBITS_PATCH_14_SITES)) <= postselected
+    assert len(postselected) < len(
+        submitted.circuit.layout.initial_index_layout(filter_ancillas=True)
+    )
 
 
 def test_complementary_gap_detector_changes_only_the_logical_sector(

@@ -48,14 +48,19 @@ dynamical-decoupling suppression beyond the Pauli-twirled idle channel.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import stim
-from qiskit import QuantumCircuit
+from qiskit import QuantumCircuit, transpile
 from qiskit.circuit.library import CZGate, HGate, SXGate, XGate
+from qiskit.converters import circuit_to_dag
+from qiskit.dagcircuit import DAGOpNode
+from qiskit.providers.fake_provider import GenericBackendV2
+from qiskit.transpiler import InstructionProperties, PassManager
+from qiskit.transpiler.passes import RemoveBarriers, RemoveResetInZeroState
 
 from msc.noise.fault_tolerance_stim import DetectorErrorModelShotAnalyzer
 from msc.state_transfer import common
@@ -107,6 +112,8 @@ class CircuitLevelDecoder:
 
     Attributes: ``circuit`` is the annotated calibrated Stim model,
     ``record_clbits`` maps each Stim record to its Qiskit classical bit,
+    ``postselection_detector_indices`` are the hard-postselected detectors,
+    ``steane_readout_count`` the leading readouts of the noiseless stand-in,
     ``analyzer`` owns postselection and decoding, ``reference_logical_bit``
     is the observable parity of the noiseless reference sample, and
     ``complementary_gap`` records whether the model has the gap detector.
@@ -136,13 +143,15 @@ class CircuitLevelDecoder:
         self.circuit = model.circuit
         self.record_clbits = model.record_clbits
         self.reference_logical_bit = model.reference_logical_bit
+        self.steane_readout_count = model.steane_readout_count
+        self.postselection_detector_indices = common.transfer_postselection_detector_indices(
+            model.detector_roles,
+            full_post_selection=tomography_config.full_post_selection,
+            persistent_surface_x_post_selection=persistent_surface_x_post_selection,
+        )
         self.analyzer = DetectorErrorModelShotAnalyzer(
             model.circuit,
-            postselection_detector_indices=common.transfer_postselection_detector_indices(
-                model.detector_roles,
-                full_post_selection=tomography_config.full_post_selection,
-                persistent_surface_x_post_selection=persistent_surface_x_post_selection,
-            ),
+            postselection_detector_indices=self.postselection_detector_indices,
             # Any threshold enables two-sector decoding; cutoffs apply per call.
             complementary_gap_postselection_threshold=0.0 if complementary_gap else None,
             decoder=decoder,
@@ -239,6 +248,164 @@ def decode_count_keys(
 
 
 # =============================================================================
+# Layout selection: hard-postselected circuit qubits
+# =============================================================================
+
+
+def layout_postselected_qubits(
+    logical_circuits_by_basis: Mapping[str, QuantumCircuit],
+    build_decoder: Callable[[QuantumCircuit, DeviceCalibration, str], Any],
+) -> frozenset[int]:
+    """Hard-postselected qubits of one layout point's tomography circuits, for layout selection.
+
+    No device layout exists yet, so each basis circuit is submitted to a
+    generic all-to-all device and ``build_decoder(submission, calibration,
+    basis)`` builds its calibrated model (this module's decoder or Google's
+    Tesseract decoder). The bases share one layout, so their sets are united.
+    """
+    backend, calibration = generic_calibrated_device(
+        next(iter(logical_circuits_by_basis.values())).num_qubits
+    )
+    postselected_qubits: set[int] = set()
+    for basis, logical_circuit in logical_circuits_by_basis.items():
+        submission = submit_to_generic_device(logical_circuit, backend)
+        decoder = build_decoder(submission, calibration, basis)
+        postselected_qubits |= postselected_circuit_qubits(
+            submission,
+            decoder.circuit,
+            decoder.postselection_detector_indices,
+            decoder.steane_readout_count,
+        )
+    return frozenset(postselected_qubits)
+
+
+def generic_calibrated_device(num_qubits: int) -> tuple[GenericBackendV2, DeviceCalibration]:
+    """A generic all-to-all device, with resets timed like readouts, and its calibration.
+
+    Lets a logical circuit be submitted locally on its own qubit indices, so its
+    calibrated model exists before any device layout: for the postselected
+    qubits of layout selection and for decoder tests.
+    """
+    # Imported here: results_io imports the analysis entry points that import this bridge.
+    from msc.experiment.results_io import DeviceCalibration
+
+    backend = GenericBackendV2(
+        num_qubits,
+        basis_gates=["cz", "sx", "x", "rz"],
+        coupling_map=[[a, b] for a in range(num_qubits) for b in range(num_qubits) if a != b],
+        seed=1,
+    )
+    target = backend.target
+    for qubit in range(num_qubits):
+        target.update_instruction_properties(
+            "reset",
+            (qubit,),
+            InstructionProperties(duration=target["measure"][(qubit,)].duration),
+        )
+    calibration = DeviceCalibration(
+        dt=target.dt,
+        relaxation_times=tuple((qubit.t1, qubit.t2) for qubit in target.qubit_properties),
+        errors={
+            (name, qubits): properties.error
+            for name in target.operation_names
+            for qubits, properties in target[name].items()
+        },
+        durations={
+            (name, qubits): properties.duration
+            for name in target.operation_names
+            for qubits, properties in target[name].items()
+        },
+    )
+    return backend, calibration
+
+
+def submit_to_generic_device(
+    logical_circuit: QuantumCircuit, backend: GenericBackendV2
+) -> QuantumCircuit:
+    """Transpile like a submission on the identity layout: the submission-input rewrite, then delays.
+
+    Hardware preprocessing drops resets on fresh wires, as the conversion
+    expects; barriers only constrain scheduling and would misalign the wire
+    operations, so they are dropped too; the calibrated suffix conversion
+    requires the scheduled delays.
+    """
+    from msc.experiment.runner import prepare_submission_input
+
+    return transpile(
+        PassManager([RemoveBarriers(), RemoveResetInZeroState()]).run(
+            prepare_submission_input(
+                logical_circuit, backend.target, align_steane_and_merge_readouts=False
+            )
+        ),
+        backend,
+        initial_layout=list(range(logical_circuit.num_qubits)),
+        optimization_level=0,
+        scheduling_method="asap",
+        seed_transpiler=1,
+    )
+
+
+def postselected_circuit_qubits(
+    submitted_circuit: QuantumCircuit,
+    model_circuit: stim.Circuit,
+    postselection_detector_indices: Sequence[int],
+    steane_readout_count: int,
+) -> frozenset[int]:
+    """Circuit qubits whose faults can flip a hard-postselected detector.
+
+    Layout selection weights these qubits' operations up: a fault on them
+    discards the shot, while one elsewhere feeds the decoder. The Steane stage
+    is a noiseless stand-in in the model, so its qubits are read off the
+    submitted circuit: every qubit of a two-qubit gate or readout preceding a
+    readout into the first ``steane_readout_count`` classical bits, which both
+    decoders assert the stand-in owns. Beyond it, they are the
+    qubits of the circuit error locations behind the detector-error-model
+    errors that touch a postselected detector. Device wires map back to circuit
+    qubits through the submitted layout.
+    """
+    dag = circuit_to_dag(submitted_circuit)
+    steane_readouts = [
+        node
+        for node in dag.op_nodes()
+        if node.op.name.startswith("measure")
+        and submitted_circuit.find_bit(node.cargs[0]).index < steane_readout_count
+    ]
+    steane_nodes = set(steane_readouts).union(*(dag.ancestors(node) for node in steane_readouts))
+    wires = {
+        submitted_circuit.find_bit(qubit).index
+        for node in steane_nodes
+        if isinstance(node, DAGOpNode)
+        and (node.op.num_qubits == 2 or node.op.name.startswith("measure"))
+        for qubit in node.qargs
+    }
+    postselected = set(postselection_detector_indices)
+    postselected_errors = stim.DetectorErrorModel()
+    for instruction in model_circuit.detector_error_model(decompose_errors=False).flattened():
+        if instruction.type == "error" and any(
+            target.is_relative_detector_id() and target.val in postselected
+            for target in instruction.targets_copy()
+        ):
+            postselected_errors.append(instruction)
+    for explanation in model_circuit.explain_detector_error_model_errors(
+        dem_filter=postselected_errors, reduce_to_one_representative_error=False
+    ):
+        for location in explanation.circuit_error_locations:
+            wires.update(target.gate_target.value for target in location.flipped_pauli_product)
+            if location.flipped_measurement is not None:
+                wires.update(
+                    target.gate_target.value
+                    for target in location.flipped_measurement.observable
+                )
+    layout = submitted_circuit.layout
+    physical_qubits = (
+        list(range(submitted_circuit.num_qubits))
+        if layout is None
+        else layout.initial_index_layout(filter_ancillas=True)
+    )
+    return frozenset(physical_qubits.index(wire) for wire in wires)
+
+
+# =============================================================================
 # Calibrated Stim model
 # =============================================================================
 
@@ -250,13 +417,15 @@ class _CalibratedStimModel:
     ``record_clbits[r]`` is the Qiskit classical bit of Stim measurement record
     ``r``. ``detector_roles`` lists the postselection role of every detector in
     circuit order, except an optional final complementary-gap detector, which
-    has no role and is never hard-postselected. ``reference_logical_bit`` is the
-    observable parity of the noiseless reference sample.
+    has no role and is never hard-postselected. ``steane_readout_count`` is how
+    many leading readouts the noiseless stand-in owns. ``reference_logical_bit``
+    is the observable parity of the noiseless reference sample.
     """
 
     circuit: stim.Circuit
     record_clbits: tuple[int, ...]
     detector_roles: tuple[common.TransferDetectorRole, ...]
+    steane_readout_count: int
     reference_logical_bit: int
 
 
@@ -425,6 +594,8 @@ def _build_calibrated_stim_model(
     )
     if sorted(record_clbits) != list(range(len(clbit_records))):
         raise RuntimeError("converted records do not cover every classical bit once.")
+    if sorted(record_clbits[: len(standin_records)]) != list(range(len(standin_records))):
+        raise RuntimeError("the Steane stand-in does not own the leading classical bits.")
     record_by_label = {clbit_records[clbit]: record for record, clbit in enumerate(record_clbits)}
 
     # Annotate with the same label-based detectors and transfer-frame-corrected
@@ -477,6 +648,7 @@ def _build_calibrated_stim_model(
     return _CalibratedStimModel(
         circuit=circuit,
         record_clbits=record_clbits,
+        steane_readout_count=len(steane_input_records),
         detector_roles=("protocol",) * standin_detector_count
         + tuple(role for _, role in detectors),
         reference_logical_bit=int(sum(reference_sample[list(observable_positions)]) % 2),
