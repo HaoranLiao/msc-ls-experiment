@@ -98,6 +98,8 @@ class DetectorErrorModelShotAnalyzer:
         postselection_detector_indices: Sequence[int] = (),
         complementary_gap_postselection_threshold: float | None = None,
         decoder: Literal["matching", "tesseract"] = "matching",
+        graphlike_error_model: stim.DetectorErrorModel | None = None,
+        correlated_matching: bool = False,
     ) -> None:
         """Compile the sampling contract and its PyMatching or Tesseract decoder.
 
@@ -110,6 +112,12 @@ class DetectorErrorModelShotAnalyzer:
         detectors. A non-``None`` complementary-gap threshold additionally
         interprets the final detector as the logical-sector constraint and
         rejects decoded shots whose sector-weight gap is below the threshold.
+
+        ``graphlike_error_model`` replaces matching's own graphlike model with a
+        caller-built one over the same detectors, for decoders that own their
+        decomposition policy. ``correlated_matching`` uses PyMatching's
+        correlated matching, which reweights edges from the decomposed
+        hyperedges it keeps, instead of matching each edge independently.
         """
         postselection_indices = tuple(postselection_detector_indices)
         if len(postselection_indices) != len(set(postselection_indices)):
@@ -134,7 +142,16 @@ class DetectorErrorModelShotAnalyzer:
             raise ValueError("decoder_model_circuit must have the same number of detectors.")
         if decoder_model_circuit.num_observables != circuit.num_observables:
             raise ValueError("decoder_model_circuit must have the same number of observables.")
-        if decoder == "matching":
+        if (graphlike_error_model is not None or correlated_matching) and decoder != "matching":
+            raise ValueError("graphlike_error_model and correlated_matching require matching.")
+        self._correlated_matching = correlated_matching
+        if decoder == "matching" and graphlike_error_model is not None:
+            import pymatching
+
+            self._matching = pymatching.Matching.from_detector_error_model(
+                graphlike_error_model, enable_correlations=correlated_matching
+            )
+        elif decoder == "matching":
             import pymatching
 
             # Only faults that survive hard postselection are ever decoded, so
@@ -175,7 +192,9 @@ class DetectorErrorModelShotAnalyzer:
             matching_error_model.append(
                 "logical_observable", [], [stim.target_logical_observable_id(0)]
             )
-            self._matching = pymatching.Matching.from_detector_error_model(matching_error_model)
+            self._matching = pymatching.Matching.from_detector_error_model(
+                matching_error_model, enable_correlations=correlated_matching
+            )
         elif decoder == "tesseract":
             # Tesseract needs no decomposition and searches the whole model,
             # faults on postselected detectors included, as Google's released
@@ -235,7 +254,12 @@ class DetectorErrorModelShotAnalyzer:
     def _decode_batch(self, detection_events: np.ndarray) -> np.ndarray:
         """Return each shot's predicted observable flip from the configured decoder."""
         if self._decoder == "matching":
-            return np.asarray(self._matching.decode_batch(detection_events), dtype=bool)[:, 0]
+            return np.asarray(
+                self._matching.decode_batch(
+                    detection_events, enable_correlations=self._correlated_matching
+                ),
+                dtype=bool,
+            )[:, 0]
         elif self._decoder == "tesseract":
             return np.asarray(self._tesseract.decode_batch(detection_events), dtype=bool)[:, 0]
         else:
@@ -335,11 +359,13 @@ class DetectorErrorModelShotAnalyzer:
             prediction, decoded_weight = self._matching.decode(
                 shot_detection_events,
                 return_weight=True,
+                enable_correlations=self._correlated_matching,
             )
             try:
                 complementary_prediction, complementary_decoded_weight = self._matching.decode(
                     complementary_detection_events,
                     return_weight=True,
+                    enable_correlations=self._correlated_matching,
                 )
             except ValueError:
                 # No competing sector exists, so this shot has unbounded separation.
