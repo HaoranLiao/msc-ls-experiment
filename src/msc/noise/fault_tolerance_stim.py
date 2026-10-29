@@ -61,8 +61,9 @@ class DetectorErrorModelShotAnalyzer:
     complementary-gap threshold is supplied, the circuit's final detector must
     be the complementary-gap detector.
 
-    ``decoder="matching"`` decodes the graphlike decomposition of the faults
-    that survive hard postselection. ``decoder="tesseract"`` runs Tesseract
+    ``decoder="matching"`` decodes the graphlike decomposition of the whole
+    model, as Tesseract searches it, less the few faults on postselected
+    detectors that stay hyperedges. ``decoder="tesseract"`` runs Tesseract
     (Beni, Higgott, and Shutty, arXiv:2503.10988), an A* most-likely-error
     decoder, over the whole undecomposed model with Google's released search
     settings, as Rosenfeld et al. decoded their grafting experiment, but with
@@ -154,11 +155,15 @@ class DetectorErrorModelShotAnalyzer:
         elif decoder == "matching":
             import pymatching
 
-            # Only faults that survive hard postselection are ever decoded, so
-            # match just those. Each must split into graphlike components that
-            # already occur elsewhere: a newly introduced remnant edge on the
+            # Faults must split into graphlike components that already occur
+            # elsewhere: a newly introduced remnant edge on the
             # complementary-gap detector would let matching change sector
-            # cheaply, which degrades the prediction and caps the gap.
+            # cheaply, which degrades the prediction and caps the gap. Faults
+            # on postselected detectors are matched too, as Tesseract searches
+            # them: one never explains an accepted shot, but a pair cancelling
+            # on a postselected detector can. Those that stay hyperedges cannot
+            # be matched and are dropped; mostly faults that flip the logical
+            # and so the complementary-gap detector.
             decomposed_error_model = decoder_model_circuit.detector_error_model(
                 decompose_errors=True,
                 ignore_decomposition_failures=True,
@@ -175,13 +180,14 @@ class DetectorErrorModelShotAnalyzer:
                         components.append([])
                     elif target.is_relative_detector_id():
                         components[-1].append(target.val)
-                if any(
-                    postselected_detectors.intersection(component) for component in components
-                ):
-                    continue
                 if any(len(component) > 2 for component in components):
+                    if any(
+                        postselected_detectors.intersection(component)
+                        for component in components
+                    ):
+                        continue
                     raise ValueError(
-                        f"a fault surviving postselection is not graphlike: {instruction}"
+                        f"a fault off the postselected detectors is not graphlike: {instruction}"
                     )
                 matching_error_model.append(instruction)
             # Declaring the last detector and the observable keeps every node in
