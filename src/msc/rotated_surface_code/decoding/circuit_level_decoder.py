@@ -103,7 +103,13 @@ class CircuitLevelDecoder:
     ``decoder`` selects matching (the default) or Tesseract with Google's
     search settings and the analysis priority-queue limit
     (``TESSERACT_PQLIMIT``), the decoder of Google's grafting experiment, so
-    the two protocols can be compared under one decoder.
+    the two protocols can be compared under one decoder. Matching without the
+    gap detector is PyMatching's correlated matching, which improves each
+    shot's prediction; gap decoding keeps plain matching, because correlated
+    matching reweights each sector's edges from that sector's own first pass,
+    so the two sector weights stop being comparable and the gap stops ranking
+    shots (on LS hardware data, correlated matching lowers the no-CGP p_L but
+    raises it at every gap threshold).
 
     With ``complementary_gap``, the model's final gap detector is never
     hard-postselected; each shot is decoded once in both logical sectors, and
@@ -155,6 +161,7 @@ class CircuitLevelDecoder:
             # Any threshold enables two-sector decoding; cutoffs apply per call.
             complementary_gap_postselection_threshold=0.0 if complementary_gap else None,
             decoder=decoder,
+            correlated_matching=decoder == "matching" and not complementary_gap,
         )
         self._converter = model.circuit.compile_m2d_converter()
 
