@@ -40,9 +40,10 @@ if TYPE_CHECKING:
     from tesseract_decoder import tesseract
 
 # Tesseract's priority-queue limit for analysis, 5x Google's released 10,000. On 2,190 accepted
-# shots of Google's grafting circuit on ibm_phoenix (N = 4 and 8, X and Z), Google's limit leaves
-# ordinary and two-sector decoding disagreeing on 1.34% of shots kept at gap >= 3; this limit cuts
-# that to 0.27% (0 at gap >= 6) and never finds a costlier explanation, for 2.4x the decoding time.
+# shots of Google's grafting circuit on ibm_phoenix (N = 4 and 8, X and Z; the earlier
+# noiseless-stand-in model), ordinary and two-sector decoding both at Google's limit disagree on
+# 1.34% of shots kept at gap >= 3, and both at this limit on 0.27% (0 at gap >= 6); this limit
+# never finds a costlier explanation, for 2.4x the decoding time.
 TESSERACT_PQLIMIT = 50_000
 
 # ---------------------------------------------------------------------------

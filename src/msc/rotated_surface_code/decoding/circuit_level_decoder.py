@@ -14,12 +14,13 @@ readout, and any number of post-transfer rounds. Each decoder models one
 fixed physical circuit, so a twirled job is decoded one twirl variant at a
 time; the circuit must have an identity routing permutation. The decoder of
 Google's grafting circuits (``google/decoder/``) reuses the public wire
-alignment, frame verification, and calibrated suffix conversion.
+alignment, frame verification, and calibrated stand-in and suffix conversion.
 
-Terminology: the Steane input (injection, QED, and cultivation) is replaced by
-a noiseless Stim stand-in; each Steane wire's Steane cut is where the input ends
-in the transpiled circuit; the suffix is every later physical operation, which
-is converted with calibrated noise.
+Terminology: the non-Clifford Steane input (injection, QED, and cultivation)
+is replaced by a Clifford Stim stand-in carrying its calibrated noise; each
+Steane wire's Steane cut is where the input ends in the transpiled circuit; the
+suffix is every later physical operation, which is converted with calibrated
+noise.
 
 Call structure::
 
@@ -31,7 +32,7 @@ Call structure::
     │   ├── rebuild the logical circuit and require the saved bit layout
     │   ├── align_wire_operations(...)        # match anchors and group gate blocks
     │   ├── verify_frames_and_locate_steane_cuts(...)  # verify local frames
-    │   ├── noiseless Stim stand-in for the Steane input
+    │   ├── append_calibrated_stand_in(...)    # Clifford Steane input, its calibrated noise
     │   ├── append_calibrated_suffix(...)      # physical suffix with calibrated noise
     │   └── shared labeled detectors, logical observable, optional gap detector
     └── DetectorErrorModelShotAnalyzer
@@ -40,9 +41,10 @@ Call structure::
     decoder.decode_counts(counts, thresholds)  # with it: one decode, every cutoff
     └── (accepted logical-zero shots, accepted logical-one shots), per threshold
 
-Not modeled: noise before the Steane cut, correlated readout/reset errors,
-leakage, crosstalk, coherent errors, readout asymmetry, calibration drift, and
-dynamical-decoupling suppression beyond the Pauli-twirled idle channel.
+Not modeled: the non-Clifford rotations' effect on fault propagation inside
+the Steane input, correlated readout/reset errors, leakage, crosstalk, coherent
+errors, readout asymmetry, calibration drift, and dynamical-decoupling
+suppression beyond the Pauli-twirled idle channel.
 """
 
 from __future__ import annotations
@@ -56,8 +58,6 @@ import numpy as np
 import stim
 from qiskit import QuantumCircuit, transpile
 from qiskit.circuit.library import CZGate, HGate, SXGate, XGate
-from qiskit.converters import circuit_to_dag
-from qiskit.dagcircuit import DAGOpNode
 from qiskit.providers.fake_provider import GenericBackendV2
 from qiskit.transpiler import InstructionProperties, PassManager
 from qiskit.transpiler.passes import RemoveBarriers, RemoveResetInZeroState
@@ -76,7 +76,7 @@ if TYPE_CHECKING:
     from msc.state_transfer.tomography_qiskit import TyTomographyConfig
 
 # Families measured by injection, post-injection QED, and cultivation. The
-# noiseless Stim stand-in replaces every operation that produced them.
+# Clifford Stim stand-in replaces every operation that produced them.
 _STEANE_INPUT_FAMILIES: tuple[str, ...] = ("enc_flags", "steane_qed", "cult")
 _UNITARY_TOLERANCE = 1e-8
 _BATCH_SIZE = 10_000
@@ -119,7 +119,6 @@ class CircuitLevelDecoder:
     Attributes: ``circuit`` is the annotated calibrated Stim model,
     ``record_clbits`` maps each Stim record to its Qiskit classical bit,
     ``postselection_detector_indices`` are the hard-postselected detectors,
-    ``steane_readout_count`` the leading readouts of the noiseless stand-in,
     ``analyzer`` owns postselection and decoding, ``reference_logical_bit``
     is the observable parity of the noiseless reference sample, and
     ``complementary_gap`` records whether the model has the gap detector.
@@ -149,7 +148,6 @@ class CircuitLevelDecoder:
         self.circuit = model.circuit
         self.record_clbits = model.record_clbits
         self.reference_logical_bit = model.reference_logical_bit
-        self.steane_readout_count = model.steane_readout_count
         self.postselection_detector_indices = common.transfer_postselection_detector_indices(
             model.detector_roles,
             full_post_selection=tomography_config.full_post_selection,
@@ -281,7 +279,6 @@ def layout_postselected_qubits(
             submission,
             decoder.circuit,
             decoder.postselection_detector_indices,
-            decoder.steane_readout_count,
         )
     return frozenset(postselected_qubits)
 
@@ -356,35 +353,16 @@ def postselected_circuit_qubits(
     submitted_circuit: QuantumCircuit,
     model_circuit: stim.Circuit,
     postselection_detector_indices: Sequence[int],
-    steane_readout_count: int,
 ) -> frozenset[int]:
     """Circuit qubits whose faults can flip a hard-postselected detector.
 
     Layout selection weights these qubits' operations up: a fault on them
-    discards the shot, while one elsewhere feeds the decoder. The Steane stage
-    is a noiseless stand-in in the model, so its qubits are read off the
-    submitted circuit: every qubit of a two-qubit gate or readout preceding a
-    readout into the first ``steane_readout_count`` classical bits, which both
-    decoders assert the stand-in owns. Beyond it, they are the
+    discards the shot, while one elsewhere feeds the decoder. They are the
     qubits of the circuit error locations behind the detector-error-model
-    errors that touch a postselected detector. Device wires map back to circuit
-    qubits through the submitted layout.
+    errors that touch a postselected detector, the Steane stand-in's included.
+    Device wires map back to circuit qubits through the submitted layout.
     """
-    dag = circuit_to_dag(submitted_circuit)
-    steane_readouts = [
-        node
-        for node in dag.op_nodes()
-        if node.op.name.startswith("measure")
-        and submitted_circuit.find_bit(node.cargs[0]).index < steane_readout_count
-    ]
-    steane_nodes = set(steane_readouts).union(*(dag.ancestors(node) for node in steane_readouts))
-    wires = {
-        submitted_circuit.find_bit(qubit).index
-        for node in steane_nodes
-        if isinstance(node, DAGOpNode)
-        and (node.op.num_qubits == 2 or node.op.name.startswith("measure"))
-        for qubit in node.qargs
-    }
+    wires: set[int] = set()
     postselected = set(postselection_detector_indices)
     postselected_errors = stim.DetectorErrorModel()
     for instruction in model_circuit.detector_error_model(decompose_errors=False).flattened():
@@ -424,15 +402,13 @@ class _CalibratedStimModel:
     ``record_clbits[r]`` is the Qiskit classical bit of Stim measurement record
     ``r``. ``detector_roles`` lists the postselection role of every detector in
     circuit order, except an optional final complementary-gap detector, which
-    has no role and is never hard-postselected. ``steane_readout_count`` is how
-    many leading readouts the noiseless stand-in owns. ``reference_logical_bit``
-    is the observable parity of the noiseless reference sample.
+    has no role and is never hard-postselected. ``reference_logical_bit`` is
+    the observable parity of the noiseless reference sample.
     """
 
     circuit: stim.Circuit
     record_clbits: tuple[int, ...]
     detector_roles: tuple[common.TransferDetectorRole, ...]
-    steane_readout_count: int
     reference_logical_bit: int
 
 
@@ -447,9 +423,10 @@ def _build_calibrated_stim_model(
 ) -> _CalibratedStimModel:
     """Convert one submitted tomography circuit into a calibrated, annotated Stim model.
 
-    The Steane input is replaced by the noiseless Stim builder: encoded ``|+>``
+    The Steane input is replaced by the Clifford Stim builder: encoded ``|+>``
     with an X projection for X readout, encoded ``|0>`` with a Z projection for
-    Z readout. Its records keep their labels and stay hard-postselected. Every
+    Z readout, carrying the Steane input's calibrated noise. Its records keep
+    their labels and stay hard-postselected. Every
     suffix operation is converted in order, including surface and interface
     operations that overlap cultivation in time. The optional gap detector
     contains exactly the observable's readout and transfer-frame records.
@@ -500,7 +477,7 @@ def _build_calibrated_stim_model(
     clbit_records = [(family, label) for family, labels in bit_layout.items() for label in labels]
     clbit_by_record = {record: clbit for clbit, record in enumerate(clbit_records)}
 
-    # Decide what the noiseless stand-in replaces: the logical Steane input
+    # Decide what the stand-in replaces: the logical Steane input
     # before the first surface or interface operation. It must own exactly the
     # injection, QED, and cultivation records, so nothing the transfer needs
     # is lost and nothing replaced leaks into the noisy suffix.
@@ -537,12 +514,12 @@ def _build_calibrated_stim_model(
         steane_input_length=steane_input_length,
     )
 
-    # Model the Steane input noiselessly with a Stim-simulable state. A
+    # Stand in for the non-Clifford Steane input with a Stim-simulable state. A
     # readout-basis eigenstate stands in for Ty because decoding needs only a
     # known ideal logical value, which the reference sample supplies below.
-    circuit = stim.Circuit()
+    stand_in = stim.Circuit()
     cultivation_stim.append_14_site_patch_injection_and_cultivation(
-        circuit,
+        stand_in,
         add_qed_round=True,
         patch_qubits=steane_wires,
         injected_state="+" if readout_basis == "X" else "0",
@@ -572,23 +549,30 @@ def _build_calibrated_stim_model(
     ]
     standin_wires = {
         target.value
-        for instruction in circuit
+        for instruction in stand_in
         if instruction.name != "QUBIT_COORDS"
         for target in instruction.targets_copy()
         if target.is_qubit_target
     }
     if (
-        circuit.num_measurements != len(standin_records)
+        stand_in.num_measurements != len(standin_records)
         or set(standin_records) != steane_input_records
         or standin_wires != set(steane_cuts)
     ):
         raise RuntimeError("the Steane stand-in does not replace exactly the Steane input.")
 
-    # Convert the suffix with calibrated noise. Joining the stand-in and suffix
-    # record streams tells decoding which hardware bit feeds each Stim
-    # measurement, and lets the label-based detectors below find their
-    # measurements.
-    standin_detector_count = circuit.num_detectors
+    # Give the stand-in the Steane input's calibrated noise, then convert the
+    # suffix. Joining the stand-in and suffix record streams tells decoding
+    # which hardware bit feeds each Stim measurement, and lets the label-based
+    # detectors below find their measurements.
+    circuit = stim.Circuit()
+    append_calibrated_stand_in(
+        circuit,
+        stand_in,
+        submitted_circuit,
+        steane_cuts=steane_cuts,
+        calibration=calibration,
+    )
     record_clbits = (
         *(clbit_by_record[record] for record in standin_records),
         *append_calibrated_suffix(
@@ -655,8 +639,7 @@ def _build_calibrated_stim_model(
     return _CalibratedStimModel(
         circuit=circuit,
         record_clbits=record_clbits,
-        steane_readout_count=len(steane_input_records),
-        detector_roles=("protocol",) * standin_detector_count
+        detector_roles=("protocol",) * stand_in.num_detectors
         + tuple(role for _, role in detectors),
         reference_logical_bit=int(sum(reference_sample[list(observable_positions)]) % 2),
     )
@@ -1081,6 +1064,158 @@ _CZ = CZGate().to_matrix()
 
 
 # =============================================================================
+# Calibrated stand-in conversion
+# =============================================================================
+
+
+def append_calibrated_stand_in(
+    circuit: stim.Circuit,
+    stand_in: stim.Circuit,
+    submitted_circuit: QuantumCircuit,
+    *,
+    steane_cuts: Mapping[int, _SteaneCut],
+    calibration: DeviceCalibration,
+) -> None:
+    """Append the Clifford stand-in with the calibrated noise of the Steane input it replaces.
+
+    The Steane input is non-Clifford, so its Clifford stand-in carries its
+    noise, as Rosenfeld et al. put noise on their whole Clifford twin. Each
+    submitted operation before the Steane cuts gets the noise suffix conversion
+    would give it, at its counterpart in the stand-in: on each wire, the
+    submitted CZs, readouts, and resets pair in order with the stand-in's
+    two-qubit gates, measurements, and resets. Hardware drops resets on fresh
+    wires, so a stand-in reset before a wire's first pairing stays noiseless; a
+    composite measurement/reset straddling the cut lends its readout here and
+    its reset to the suffix.
+
+    Depolarization is unchanged by single-qubit frames, so a wire's gate noise
+    goes anywhere before its next pairing; idle flips go there too, in the
+    submitted frame, which only approximates the stand-in's across the
+    non-Clifford rotations. A reset error flips the reset state (``Z`` after an
+    X-basis reset).
+    """
+    # Each Steane wire's pairings in order, with their error, and the gate and
+    # idle noise before each pairing and after the last.
+    pairings: dict[int, list[tuple[tuple[object, ...], float]]] = {
+        wire: [] for wire in steane_cuts
+    }
+    noise_before: dict[int, list[list[str]]] = {wire: [[]] for wire in steane_cuts}
+    ground_states = dict.fromkeys(steane_cuts, True)
+    positions = dict.fromkeys(steane_cuts, 0)
+
+    def pair(wire: int, kind: tuple[object, ...], error: float) -> None:
+        pairings[wire].append((kind, error))
+        noise_before[wire].append([])
+
+    qubit_indices = {qubit: index for index, qubit in enumerate(submitted_circuit.qubits)}
+    for instruction in submitted_circuit.data:
+        operation = instruction.operation
+        name = operation.name
+        wires = tuple(qubit_indices[qubit] for qubit in instruction.qubits)
+        steane_positions = {wire: positions[wire] for wire in wires if wire in steane_cuts}
+        if name == "barrier" or not steane_positions:
+            continue
+        for wire in steane_positions:
+            positions[wire] += 1
+        in_input = [
+            wire in steane_cuts and steane_positions[wire] < steane_cuts[wire].first_suffix_position
+            for wire in wires
+        ]
+        wire = wires[0]
+        if not any(in_input):
+            if (
+                wire in steane_cuts
+                and steane_cuts[wire].reset_only
+                and steane_positions[wire] == steane_cuts[wire].first_suffix_position
+            ):
+                pair(wire, ("measure",), _readout_error(calibration, name, wires))
+            continue
+        if not all(in_input):
+            raise ValueError(f"{name}{wires} crosses the Steane cut.")
+
+        if name == "rz":
+            continue  # Virtual Z rotations are noiseless.
+        elif name in ("sx", "x"):
+            probability = _depolarizing_probability(calibration, name, wires)
+            noise_before[wire][-1].append(f"DEPOLARIZE1({probability!r}) {wire}")
+            ground_states[wire] = False
+        elif name == "cz":
+            probability = _depolarizing_probability(calibration, name, wires)
+            for cz_wire, partner in (wires, wires[::-1]):
+                pair(cz_wire, ("cz", partner), probability)
+                ground_states[cz_wire] = False
+        elif name in ("measure", "measure_2"):
+            pair(wire, ("measure",), _readout_error(calibration, name, wires))
+            ground_states[wire] = False
+        elif name in ("measure_reset_2", "reset"):
+            readout_error = _readout_error(calibration, name, wires)
+            if name == "measure_reset_2":
+                pair(wire, ("measure",), readout_error)
+            pair(wire, ("reset",), readout_error)
+            ground_states[wire] = True
+        elif name == "delay":
+            if operation.unit != "dt":
+                raise ValueError(f"unsupported delay unit {operation.unit!r}.")
+            if not ground_states[wire]:
+                noise_before[wire][-1].extend(
+                    _idle_noise(
+                        float(operation.params[0]) * calibration.dt,
+                        *calibration.relaxation_times[wire],
+                        wire=wire,
+                    )
+                )
+        else:
+            raise ValueError(f"unsupported Steane-input operation {name!r}.")
+
+    # Walk the stand-in, emitting each pairing's preceding noise before it and
+    # its own noise with it.
+    lines: list[str] = []
+    consumed = dict.fromkeys(steane_cuts, 0)
+
+    def take(wire: int, kind: tuple[object, ...]) -> float:
+        """Emit the noise before ``wire``'s next pairing, which must be ``kind``; return its error."""
+        submitted_kind, error = pairings[wire][consumed[wire]]
+        if submitted_kind != kind:
+            raise ValueError(f"wire {wire} stand-in {kind} pairs with submitted {submitted_kind}.")
+        lines.extend(noise_before[wire][consumed[wire]])
+        consumed[wire] += 1
+        return error
+
+    for instruction in stand_in.flattened():
+        name = instruction.name
+        gate = stim.gate_data(name)
+        targets = [target.value for target in instruction.targets_copy()]
+        if gate.is_two_qubit_gate:
+            for wire_a, wire_b in zip(targets[::2], targets[1::2], strict=True):
+                probability = take(wire_a, ("cz", wire_b))
+                take(wire_b, ("cz", wire_a))
+                lines.append(f"{name} {wire_a} {wire_b}")
+                lines.append(f"DEPOLARIZE2({probability!r}) {wire_a} {wire_b}")
+        elif name in ("M", "MX"):
+            for wire in targets:
+                lines.append(f"{name}({take(wire, ('measure',))!r}) {wire}")
+        elif name in ("R", "RX"):
+            for wire in targets:
+                if not consumed[wire]:
+                    lines.append(f"{name} {wire}")  # A fresh wire, already |0> on hardware.
+                    continue
+                error = take(wire, ("reset",))
+                lines.append(f"{name} {wire}")
+                lines.append(f"{'X' if name == 'R' else 'Z'}_ERROR({error!r}) {wire}")
+        elif name in ("QUBIT_COORDS", "DETECTOR", "TICK") or (
+            gate.is_single_qubit_gate and gate.is_unitary
+        ):
+            lines.append(str(instruction))
+        else:
+            raise ValueError(f"unsupported stand-in operation {name!r}.")
+    for wire, wire_pairings in pairings.items():
+        if consumed[wire] != len(wire_pairings):
+            raise ValueError(f"wire {wire} has submitted operations the stand-in lacks.")
+        lines.extend(noise_before[wire][-1])
+    circuit += stim.Circuit("\n".join(lines))
+
+
+# =============================================================================
 # Calibrated suffix conversion
 # =============================================================================
 
@@ -1178,26 +1313,27 @@ def append_calibrated_suffix(
             if z_rotation is not None:
                 lines.append(f"{z_rotation} {wire}")
             lines.append(f"SQRT_X {wire}")
-            lines.append(f"DEPOLARIZE1({1.5 * _gate_error(calibration, name, wires)!r}) {wire}")
+            probability = _depolarizing_probability(calibration, name, wires)
+            lines.append(f"DEPOLARIZE1({probability!r}) {wire}")
             pending_phases[wire] = 0.0
             ground_states[wire] = False
         elif name == "x":
+            probability = _depolarizing_probability(calibration, name, wires)
             lines.append(f"X {wire}")
-            lines.append(f"DEPOLARIZE1({1.5 * _gate_error(calibration, name, wires)!r}) {wire}")
+            lines.append(f"DEPOLARIZE1({probability!r}) {wire}")
             pending_phases[wire] = -pending_phases[wire]
             ground_states[wire] = False
         elif name == "cz":
             targets = " ".join(map(str, wires))
             lines.append(f"CZ {targets}")
-            lines.append(f"DEPOLARIZE2({1.25 * _gate_error(calibration, name, wires)!r}) {targets}")
+            probability = _depolarizing_probability(calibration, name, wires)
+            lines.append(f"DEPOLARIZE2({probability!r}) {targets}")
             for cz_wire in wires:
                 ground_states[cz_wire] = False
         elif name in ("measure", "measure_2", "measure_reset_2", "reset"):
             # A composite straddling the Steane cut keeps only its reset; its
             # measurement belongs to the stand-in.
-            readout_error = calibration.operation_error(name, wires)
-            if not 0 <= readout_error <= 0.5:
-                raise ValueError(f"{name}{wires} readout error {readout_error} exceeds 1/2.")
+            readout_error = _readout_error(calibration, name, wires)
             is_reset_only = (
                 wire in steane_cuts
                 and steane_cuts[wire].reset_only
@@ -1214,12 +1350,7 @@ def append_calibrated_suffix(
             ground_states[wire] = resets
         elif name == "delay":
             if not ground_states[wire]:
-                for channel, probability in zip(
-                    ("X_ERROR", "Y_ERROR", "Z_ERROR"),
-                    _idle_pauli_error_probabilities(duration, *calibration.relaxation_times[wire]),
-                    strict=True,
-                ):
-                    lines.append(f"{channel}({probability!r}) {wire}")
+                lines.extend(_idle_noise(duration, *calibration.relaxation_times[wire], wire=wire))
         else:
             raise ValueError(f"unsupported submitted operation {name!r}.")
     # Building from text avoids Stim's per-instruction Python append overhead.
@@ -1227,20 +1358,30 @@ def append_calibrated_suffix(
     return suffix_clbits
 
 
-def _gate_error(calibration: DeviceCalibration, name: str, wires: tuple[int, ...]) -> float:
-    """Return a gate infidelity whose depolarizing channel is physical."""
+def _depolarizing_probability(
+    calibration: DeviceCalibration, name: str, wires: tuple[int, ...]
+) -> float:
+    """Convert a gate's average infidelity ``r`` to its depolarizing probability.
+
+    That is ``3r/2`` for one qubit and ``5r/4`` for two; ``r`` must keep the
+    channel physical.
+    """
     error = calibration.operation_error(name, wires)
     if not 0 <= error <= (0.5 if len(wires) == 1 else 0.75):
         raise ValueError(f"{name}{wires} infidelity {error} exceeds the depolarizing range.")
+    return (1.5 if len(wires) == 1 else 1.25) * error
+
+
+def _readout_error(calibration: DeviceCalibration, name: str, wires: tuple[int, ...]) -> float:
+    """Return a readout error that is a physical flip probability."""
+    error = calibration.operation_error(name, wires)
+    if not 0 <= error <= 0.5:
+        raise ValueError(f"{name}{wires} readout error {error} exceeds 1/2.")
     return error
 
 
-def _idle_pauli_error_probabilities(
-    duration: float,
-    t1: float | None,
-    t2: float | None,
-) -> tuple[float, float, float]:
-    """Return independent X, Y, Z flips equal to the Pauli-twirled idle channel.
+def _idle_noise(duration: float, t1: float | None, t2: float | None, *, wire: int) -> list[str]:
+    """Return independent X, Y, Z flips on ``wire`` equal to the Pauli-twirled idle channel.
 
     The twirled amplitude-damping/dephasing channel has
     ``pX = pY = (1 - exp(-t/T1))/4`` and
@@ -1256,4 +1397,8 @@ def _idle_pauli_error_probabilities(
     t2 = min(t2, 2 * t1)
     transverse_flip = (1 - math.exp(-duration / (2 * t1))) / 2
     dephasing_flip = (1 - math.exp(-duration / t2 + duration / (2 * t1))) / 2
-    return transverse_flip, transverse_flip, dephasing_flip
+    return [
+        f"X_ERROR({transverse_flip!r}) {wire}",
+        f"Y_ERROR({transverse_flip!r}) {wire}",
+        f"Z_ERROR({dephasing_flip!r}) {wire}",
+    ]

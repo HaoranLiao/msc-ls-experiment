@@ -174,7 +174,6 @@ def test_postselected_circuit_qubits_cover_the_steane_patch_but_not_the_whole_su
         submitted.circuit,
         decoders["X"].circuit,
         decoders["X"].postselection_detector_indices,
-        decoders["X"].steane_readout_count,
     )
 
     # Every 14-site Steane qubit is postselected; the surface patch's far side
@@ -324,8 +323,9 @@ def test_hardware_style_counts_round_trip_through_the_record_mapping(
         flipped_counts = _flip_records(counts, bit_layout, flipped_records)
         assert decoder.decode_counts(flipped_counts) == expected[::-1]
 
-    # A Steane input flag rejects every shot.
-    rejected_counts = _flip_records(counts, bit_layout, (("cult", "root_x"),))
+    # A Steane input flag rejects every accepted shot.
+    accepted_counts = _counts_from_records(decoder, records[accepted])
+    rejected_counts = _flip_records(accepted_counts, bit_layout, (("cult", "root_x"),))
     assert decoder.decode_counts(rejected_counts) == (0, 0)
 
 
@@ -437,7 +437,8 @@ def test_each_twirl_variant_is_decoded_with_its_own_circuit() -> None:
         add_barriers=False,
     )
 
-    # An all-to-all device needs no routing; its X pulses are deliberately noisy.
+    # An all-to-all device needs no routing; its X pulses past the Steane patch
+    # are deliberately noisy.
     num_qubits = logical_circuits["X"].num_qubits
     backend = GenericBackendV2(
         num_qubits,
@@ -456,7 +457,9 @@ def test_each_twirl_variant_is_decoded_with_its_own_circuit() -> None:
         dt=target.dt,
         relaxation_times=tuple((qubit.t1, qubit.t2) for qubit in target.qubit_properties),
         errors={
-            (name, qubits): 0.05 if name == "x" else properties.error
+            (name, qubits): (
+                0.05 if name == "x" and qubits[0] >= NUM_QUBITS_PATCH_14_SITES else properties.error
+            )
             for name in target.operation_names
             for qubits, properties in target[name].items()
         },
