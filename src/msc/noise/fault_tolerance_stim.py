@@ -165,7 +165,9 @@ class DetectorErrorModelShotAnalyzer:
             # on a postselected detector can. Those that stay hyperedges cannot
             # be matched and are dropped; mostly faults that flip the logical
             # and so the complementary-gap detector.
-            decomposed_error_model = decoder_model_circuit.detector_error_model(
+            decomposed_error_model = split_two_qubit_depolarizing(
+                decoder_model_circuit
+            ).detector_error_model(
                 decompose_errors=True,
                 ignore_decomposition_failures=True,
                 block_decomposition_from_introducing_remnant_edges=True,
@@ -407,6 +409,39 @@ class DetectorErrorModelShotAnalyzer:
             np.asarray(self._tesseract.get_observables_from_errors(errors), dtype=bool),
             self._tesseract.cost_from_errors(errors),
         )
+
+
+def split_two_qubit_depolarizing(circuit: stim.Circuit) -> stim.Circuit:
+    """Write each DEPOLARIZE2 as its 15 Pauli terms, so Stim can decompose it for matching.
+
+    Stim decomposes a composite channel through its basis error cases and
+    refuses outright, even when told to ignore decomposition failures, once a
+    combined case flips more than 15 detectors. A Steane stand-in CZ can: in
+    the X basis of the flags + full QED + Hirano-merge front end, one fault
+    flips nine postselected Steane checks, the logical, and the
+    complementary-gap detector. Separate ``E`` terms are single error cases, so
+    the model builds and such a fault stays a hyperedge on postselected
+    detectors, which matching drops. Independent terms of probability p/15
+    differ from the disjoint channel only at second order in p.
+    """
+    split_circuit = stim.Circuit()
+    for instruction in circuit.flattened():
+        if instruction.name != "DEPOLARIZE2":
+            split_circuit.append(instruction)
+            continue
+        (probability,) = instruction.gate_args_copy()
+        targets = instruction.targets_copy()
+        for first, second in zip(targets[::2], targets[1::2]):
+            for first_pauli in "IXYZ":
+                for second_pauli in "IXYZ":
+                    pauli_targets = [
+                        stim.target_pauli(target.value, pauli)
+                        for target, pauli in ((first, first_pauli), (second, second_pauli))
+                        if pauli != "I"
+                    ]
+                    if pauli_targets:
+                        split_circuit.append("E", pauli_targets, probability / 15)
+    return split_circuit
 
 
 def build_google_tesseract_decoder(
