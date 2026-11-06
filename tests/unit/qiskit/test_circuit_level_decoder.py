@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -426,9 +427,8 @@ def test_each_twirl_variant_is_decoded_with_its_own_circuit() -> None:
     """Analysis decodes every twirl variant's counts with that twirl variant's calibrated circuit.
 
     Twirl variants add pulses that cancel logically, so they share their
-    noiseless record but not their noise model. The second twirl variant of each
-    basis replaces late idles with noisy X-X pairs, which changes the decoding
-    of its counts relative to the first twirl variant's model.
+    noiseless record but not their noise model. Check which circuit constructs
+    each real decoder directly: different models can agree on sampled outcomes.
     """
     config = resolve_ty_tomography_config(target_distance=5, patch_sites=14, add_barriers=False)
     logical_circuits = build_ty_tomography_circuits(
@@ -500,17 +500,14 @@ def test_each_twirl_variant_is_decoded_with_its_own_circuit() -> None:
                 circuit=circuit,
                 measurement_bit_layout=bit_layout,
                 counts=_counts_from_records(
-                    decoder, decoder.circuit.compile_sampler(seed=seed).sample(20_000)
+                    decoder, decoder.circuit.without_noise().compile_sampler(seed=seed).sample(16)
                 ),
             )
             for seed, (circuit, decoder) in enumerate(zip(circuits, decoders, strict=True), start=1)
         )
-        # The twirl variants' models disagree, so decoding with one circuit would be caught.
+        # These are distinct physical noise models even when their decoded counts agree.
         first_decoder, second_decoder = decoders
-        second_counts = twirl_variants[1].counts
-        assert first_decoder.decode_counts(second_counts) != second_decoder.decode_counts(
-            second_counts
-        )
+        assert first_decoder.circuit != second_decoder.circuit
         twirl_variants_by_basis[basis] = twirl_variants
         expected_shots_by_basis[basis] = np.sum(
             [
@@ -520,19 +517,30 @@ def test_each_twirl_variant_is_decoded_with_its_own_circuit() -> None:
             axis=0,
         )
 
-    (summary,) = analyze_ty_tomography_counts(
-        {
-            basis: dict(
-                sum((Counter(twirl_variant.counts) for twirl_variant in twirl_variants), Counter())
-            )
-            for basis, twirl_variants in twirl_variants_by_basis.items()
-        },
-        tomography_config=config,
-        persistent_surface_x_post_selection=True,
-        complementary_gap_thresholds=(None,),
-        submitted_circuits_by_basis=twirl_variants_by_basis,
-        calibration=calibration,
-    )
+    with patch(
+        "msc.state_transfer.tomography_qiskit.CircuitLevelDecoder", wraps=CircuitLevelDecoder
+    ) as decoder_constructor:
+        (summary,) = analyze_ty_tomography_counts(
+            {
+                basis: dict(
+                    sum((Counter(twirl_variant.counts) for twirl_variant in twirl_variants), Counter())
+                )
+                for basis, twirl_variants in twirl_variants_by_basis.items()
+            },
+            tomography_config=config,
+            persistent_surface_x_post_selection=True,
+            complementary_gap_thresholds=(None,),
+            submitted_circuits_by_basis=twirl_variants_by_basis,
+            calibration=calibration,
+        )
+    for call, (basis, variant) in zip(
+        decoder_constructor.call_args_list,
+        ((basis, variant) for basis in TOMOGRAPHY_BASES for variant in twirl_variants_by_basis[basis]),
+        strict=True,
+    ):
+        assert call.args[0] is variant.circuit
+        assert call.kwargs["readout_basis"] == basis
+        assert call.kwargs["calibration"] is calibration
     for basis, accepted_shots, expectation in (
         ("X", summary.accepted_x_shots, summary.expectation_x),
         ("Z", summary.accepted_z_shots, summary.expectation_z),

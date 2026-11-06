@@ -62,6 +62,7 @@ from qiskit.providers.fake_provider import GenericBackendV2
 from qiskit.transpiler import InstructionProperties, PassManager
 from qiskit.transpiler.passes import RemoveBarriers, RemoveResetInZeroState
 
+from msc.noise.fault_injection_stim import add_si1000_noise, schedule_si1000_moments
 from msc.noise.fault_tolerance_stim import DetectorErrorModelShotAnalyzer
 from msc.state_transfer import common
 from msc.state_transfer import helper_stim as transfer_stim_helper
@@ -116,6 +117,12 @@ class CircuitLevelDecoder:
     every requested threshold rejects the shots whose sector-weight gap is
     below it.
 
+    ``si1000_probability`` replaces the calibrated noise with SI1000 noise at
+    that ``p`` on the noiseless model, laid out in moments
+    (``schedule_si1000_moments``, ``add_si1000_noise``), so shots sampled from
+    ``circuit`` test the protocol and decoder under uniform noise; the
+    calibration then only times the conversion.
+
     Attributes: ``circuit`` is the annotated calibrated Stim model,
     ``record_clbits`` maps each Stim record to its Qiskit classical bit,
     ``postselection_detector_indices`` are the hard-postselected detectors,
@@ -135,6 +142,7 @@ class CircuitLevelDecoder:
         persistent_surface_x_post_selection: bool,
         complementary_gap: bool,
         decoder: Literal["matching", "tesseract"] = "matching",
+        si1000_probability: float | None = None,
     ) -> None:
         model = _build_calibrated_stim_model(
             submitted_circuit,
@@ -147,6 +155,12 @@ class CircuitLevelDecoder:
         self.complementary_gap = complementary_gap
         self.circuit = model.circuit
         self.record_clbits = model.record_clbits
+        if si1000_probability is not None:
+            scheduled_circuit, measurement_order = schedule_si1000_moments(
+                model.circuit.without_noise()
+            )
+            self.circuit = add_si1000_noise(scheduled_circuit, p=si1000_probability)
+            self.record_clbits = tuple(model.record_clbits[record] for record in measurement_order)
         self.reference_logical_bit = model.reference_logical_bit
         self.postselection_detector_indices = common.transfer_postselection_detector_indices(
             model.detector_roles,
@@ -154,14 +168,14 @@ class CircuitLevelDecoder:
             persistent_surface_x_post_selection=persistent_surface_x_post_selection,
         )
         self.analyzer = DetectorErrorModelShotAnalyzer(
-            model.circuit,
+            self.circuit,
             postselection_detector_indices=self.postselection_detector_indices,
             # Any threshold enables two-sector decoding; cutoffs apply per call.
             complementary_gap_postselection_threshold=0.0 if complementary_gap else None,
             decoder=decoder,
             correlated_matching=decoder == "matching" and not complementary_gap,
         )
-        self._converter = model.circuit.compile_m2d_converter()
+        self._converter = self.circuit.compile_m2d_converter()
 
     def decode_counts(
         self,

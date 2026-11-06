@@ -358,34 +358,14 @@ class DetectorErrorModelShotAnalyzer:
 
         Neither decoder exposes a two-sector decode. This method owns that
         two-decode operation without modifying the caller's detector-event
-        array. A Tesseract search that ends without an explanation leaves its
-        sector at infinite weight, so a shot with no explanation in either
-        sector has a ``nan`` gap and fails every threshold.
+        array. A sector without an explanation (no matching, or a Tesseract
+        search that ends without one) has infinite weight, so a shot with no
+        explanation in either sector has a ``nan`` gap and fails every
+        threshold.
         """
-        complementary_detection_events = shot_detection_events.copy()
-        complementary_detection_events[-1] ^= True
-        if self._decoder == "matching":
-            prediction, decoded_weight = self._matching.decode(
-                shot_detection_events,
-                return_weight=True,
-                enable_correlations=self._correlated_matching,
-            )
-            try:
-                complementary_prediction, complementary_decoded_weight = self._matching.decode(
-                    complementary_detection_events,
-                    return_weight=True,
-                    enable_correlations=self._correlated_matching,
-                )
-            except ValueError:
-                # No competing sector exists, so this shot has unbounded separation.
-                return prediction, math.inf
-        elif self._decoder == "tesseract":
-            prediction, decoded_weight = self._decode_tesseract_sector(shot_detection_events)
-            complementary_prediction, complementary_decoded_weight = (
-                self._decode_tesseract_sector(complementary_detection_events)
-            )
-        else:
-            raise ValueError(f"unsupported decoder {self._decoder!r}.")
+        (prediction, decoded_weight), (complementary_prediction, complementary_decoded_weight) = (
+            self.decode_logical_sectors(shot_detection_events)
+        )
         # The primary decode was given the sampled sector, so a tie must not
         # keep its prediction, or tied shots would always decode correctly.
         # Ties go to the sector without an observable flip.
@@ -396,6 +376,45 @@ class DetectorErrorModelShotAnalyzer:
             prediction = complementary_prediction
         complementary_gap = abs(decoded_weight - complementary_decoded_weight)
         return prediction, float(complementary_gap)
+
+    def decode_logical_sectors(
+        self,
+        shot_detection_events: np.ndarray,
+    ) -> tuple[tuple[np.ndarray, float], tuple[np.ndarray, float]]:
+        """Return the predicted observable flips and weight in the shot's sector and the opposite one.
+
+        The switch-window decoder combines these matching weights with its
+        window's own two sectors; the complementary gap is their difference.
+        """
+        complementary_detection_events = shot_detection_events.copy()
+        complementary_detection_events[-1] ^= True
+        if self._decoder == "matching":
+            return (
+                self._decode_matching_sector(shot_detection_events),
+                self._decode_matching_sector(complementary_detection_events),
+            )
+        elif self._decoder == "tesseract":
+            return (
+                self._decode_tesseract_sector(shot_detection_events),
+                self._decode_tesseract_sector(complementary_detection_events),
+            )
+        else:
+            raise ValueError(f"unsupported decoder {self._decoder!r}.")
+
+    def _decode_matching_sector(
+        self,
+        shot_detection_events: np.ndarray,
+    ) -> tuple[np.ndarray, float]:
+        """Return one sector's predicted observable flips and weight; infinite if it has none."""
+        try:
+            prediction, weight = self._matching.decode(
+                shot_detection_events,
+                return_weight=True,
+                enable_correlations=self._correlated_matching,
+            )
+        except ValueError:
+            return np.zeros(1, dtype=bool), math.inf
+        return np.asarray(prediction, dtype=bool), float(weight)
 
     def _decode_tesseract_sector(
         self,
