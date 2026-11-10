@@ -383,7 +383,7 @@ class DetectorErrorModelShotAnalyzer:
     ) -> tuple[tuple[np.ndarray, float], tuple[np.ndarray, float]]:
         """Return the predicted observable flips and weight in the shot's sector and the opposite one.
 
-        The switch-window decoder combines these matching weights with its
+        The hybrid decoder combines these matching weights with its
         window's own two sectors; the complementary gap is their difference.
         """
         complementary_detection_events = shot_detection_events.copy()
