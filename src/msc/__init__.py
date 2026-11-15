@@ -1,4 +1,4 @@
-"""Top-level package for research-qec-haoran."""
+"""Top-level package for msc-ls-experiment."""
 
 __all__ = [
     "__version__",

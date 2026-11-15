@@ -23,7 +23,7 @@ from msc.steane_code.state_injection_common import (
 from msc.utils.normalize import qiskit_bit_value
 
 if TYPE_CHECKING:
-    from msc.experiment.results_io import DeviceCalibration
+    from msc.rotated_surface_code.decoding.circuit_level_decoder import DeviceCalibration
 
 TomographyTargetDistance = Literal[3, 5]
 TOMOGRAPHY_BASES: tuple[common.SurfaceReadoutBasis, ...] = ("X", "Z")
@@ -391,7 +391,7 @@ def summarize_ty_tomography(
     """Estimate the Bloch components and ``|Ty>`` fidelity from accepted X/Z logical shots.
 
     ``logical_shots_by_basis`` holds each basis's accepted logical-zero and
-    logical-one shot counts; Google's grafting analysis shares this estimator.
+    logical-one shot counts.
     """
     expectations: dict[common.SurfaceReadoutBasis, float] = {}
     accepted_shots: dict[common.SurfaceReadoutBasis, int] = {}

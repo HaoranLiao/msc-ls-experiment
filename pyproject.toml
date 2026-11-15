@@ -1,0 +1,46 @@
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"
+
+[project]
+name = "msc-ls-experiment"
+version = "0.1.0"
+description = "Magic state cultivation with lattice-surgery escape: Stim simulation and Qiskit circuits for IBM hardware."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [{ name = "Haoran Liao" }, { name = "Michael Schutzman" }]
+dependencies = [
+  "matplotlib>=3.8",
+  "numpy>=1.26",
+  "pymatching>=2.2",
+  "pyyaml>=6.0",
+  "scipy>=1.14",
+  "qiskit>=2.0",
+  "qiskit-aer>=0.17",
+  "qiskit-ibm-runtime>=0.44",
+  "stim>=1.13",
+  "tesseract-decoder>=0.1.1.dev0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.poetry]
+packages = [{ include = "msc", from = "src" }]
+include = [{ path = "src/msc/**/*.yaml", format = ["sdist", "wheel"] }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "--import-mode=importlib"
+markers = [
+  "slow: measured expensive simulation or exhaustive parameter sweep",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

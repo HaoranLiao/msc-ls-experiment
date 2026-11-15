@@ -25,14 +25,14 @@ from msc.state_transfer.tomography_qiskit import (
 )
 
 if TYPE_CHECKING:
-    from msc.experiment.results_io import DeviceCalibration
+    from msc.rotated_surface_code.decoding.circuit_level_decoder import DeviceCalibration
 
 TY_LOGICAL_ERROR_RATE_CONFIG_PATH = Path(__file__).with_name("ler_config.yaml")
 
 
 @dataclass(frozen=True)
 class TyLogicalErrorRateConfig:
-    """Validated settings for the grafted-code Ty memory experiment."""
+    """Validated settings for the Ty memory experiment."""
 
     tomography: TyTomographyConfig
     post_transfer_stabilizer_rounds: tuple[int, ...]
@@ -68,7 +68,7 @@ class TyLogicalErrorRateSummary:
 def load_ty_logical_error_rate_config(
     config_path: str | Path = TY_LOGICAL_ERROR_RATE_CONFIG_PATH,
 ) -> TyLogicalErrorRateConfig:
-    """Load and validate one grafted-code memory-experiment YAML file."""
+    """Load and validate one memory-experiment YAML file."""
     config_path = Path(config_path)
     try:
         raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))

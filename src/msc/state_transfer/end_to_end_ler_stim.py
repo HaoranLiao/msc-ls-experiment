@@ -16,9 +16,6 @@ from collections.abc import Iterable, Sequence
 import numpy as np
 import stim
 
-from examples.state_transfer.lattice_surgery_only_ler.stim_logical_error_rate import (
-    LatticeSurgeryOnlyShotAnalyzer,
-)
 from msc.noise.fault_injection_stim import add_circuit_depolarizing_noise
 from msc.noise.fault_tolerance_stim import (
     LogicalErrorEstimate,
@@ -27,6 +24,9 @@ from msc.noise.fault_tolerance_stim import (
 from msc.state_transfer import common
 from msc.state_transfer import helper_stim as transfer_helper
 from msc.state_transfer import to_d5_rotated_stim as transfer
+from msc.state_transfer.lattice_surgery_ler_stim import (
+    LatticeSurgeryOnlyShotAnalyzer,
+)
 from msc.utils.normalize import normalize_pauli_char
 
 POST_TRANSFER_STABILIZATION_ROUNDS = transfer.TRANSFER_SPEC.distance

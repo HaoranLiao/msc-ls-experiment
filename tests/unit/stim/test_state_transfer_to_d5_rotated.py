@@ -5,19 +5,19 @@ from collections import Counter
 import numpy as np
 import pytest
 
-from examples.state_transfer.end_to_end_ler.stim_end_to_end_logical_error_rate import (
-    build_end_to_end_distillation_circuit,
-)
-from examples.state_transfer.lattice_surgery_only_ler.stim_logical_error_rate import (
-    LATTICE_SURGERY_EXPERIMENTS,
-    LatticeSurgeryOnlyShotAnalyzer,
-    build_lattice_surgery_only_circuit,
-)
 from msc.noise.fault_injection_stim import add_circuit_depolarizing_noise
 from msc.noise.fault_tolerance_stim import assess_fully_postselected_circuit_fault_distance
 from msc.state_transfer import common
 from msc.state_transfer import helper_stim as helper
 from msc.state_transfer import to_d5_rotated_stim as transfer
+from msc.state_transfer.end_to_end_ler_stim import (
+    build_end_to_end_distillation_circuit,
+)
+from msc.state_transfer.lattice_surgery_ler_stim import (
+    LATTICE_SURGERY_EXPERIMENTS,
+    LatticeSurgeryOnlyShotAnalyzer,
+    build_lattice_surgery_only_circuit,
+)
 
 EXPECTED_STEANE_VERIFICATION_READOUT_SITES = {
     11: {

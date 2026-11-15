@@ -24,7 +24,6 @@ Call structure::
 
 from __future__ import annotations
 
-import json
 import math
 from collections import Counter, defaultdict
 from collections.abc import Hashable, Sequence
@@ -34,16 +33,14 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import stim
 
-from msc.paths import GOOGLE_TESSERACT_PROPERTIES_PATH
-
 if TYPE_CHECKING:
     from tesseract_decoder import tesseract
 
 # Tesseract's priority-queue limit for analysis, 5x Google's released 10,000. On 2,190 accepted
-# shots of Google's grafting circuit on ibm_phoenix (N = 4 and 8, X and Z; the earlier
-# noiseless-stand-in model), ordinary and two-sector decoding both at Google's limit disagree on
-# 1.34% of shots kept at gap >= 3, and both at this limit on 0.27% (0 at gap >= 6); this limit
-# never finds a costlier explanation, for 2.4x the decoding time.
+# hardware shots on ibm_phoenix (the earlier noiseless-stand-in model), ordinary and two-sector
+# decoding both at Google's limit disagree on 1.34% of shots kept at gap >= 3, and both at this
+# limit on 0.27% (0 at gap >= 6); this limit never finds a costlier explanation, for 2.4x the
+# decoding time.
 TESSERACT_PQLIMIT = 50_000
 
 # ---------------------------------------------------------------------------
@@ -67,7 +64,7 @@ class DetectorErrorModelShotAnalyzer:
     detectors that stay hyperedges. ``decoder="tesseract"`` runs Tesseract
     (Beni, Higgott, and Shutty, arXiv:2503.10988), an A* most-likely-error
     decoder, over the whole undecomposed model with Google's released search
-    settings, as Rosenfeld et al. decoded their grafting experiment, but with
+    settings, as Rosenfeld et al. decoded their experiment, but with
     a priority-queue limit of ``TESSERACT_PQLIMIT``; it keeps the joint
     likelihood of correlated faults that matching splits into independent
     edges.
@@ -383,8 +380,7 @@ class DetectorErrorModelShotAnalyzer:
     ) -> tuple[tuple[np.ndarray, float], tuple[np.ndarray, float]]:
         """Return the predicted observable flips and weight in the shot's sector and the opposite one.
 
-        The hybrid decoder combines these matching weights with its
-        window's own two sectors; the complementary gap is their difference.
+        The complementary gap is the difference of the two sectors' weights.
         """
         complementary_detection_events = shot_detection_events.copy()
         complementary_detection_events[-1] ^= True
@@ -479,22 +475,15 @@ def build_google_tesseract_decoder(
     """
     from tesseract_decoder import tesseract, utils
 
-    properties = json.loads(GOOGLE_TESSERACT_PROPERTIES_PATH.read_text())
-    released_pqlimit = properties.pop("pqlimit")
+    # Rosenfeld et al.'s released settings (Fig. 4 cultivation N = 2 and N = 3).
     config = tesseract.TesseractConfig(
         dem=detector_error_model,
-        det_beam=properties.pop("det_beam"),
-        beam_climbing=properties.pop("beam_climbing"),
-        no_revisit_dets=properties.pop("no_revisit_dets"),
-        pqlimit=released_pqlimit if pqlimit is None else pqlimit,
-        det_orders=utils.build_det_orders(
-            detector_error_model,
-            properties.pop("num_det_orders"),
-            seed=properties.pop("det_order_seed"),
-        ),
+        det_beam=10,
+        beam_climbing=True,
+        no_revisit_dets=True,
+        pqlimit=10_000 if pqlimit is None else pqlimit,
+        det_orders=utils.build_det_orders(detector_error_model, 6, seed=0),
     )
-    if properties:
-        raise ValueError(f"unused Tesseract properties {sorted(properties)}.")
     return tesseract.TesseractDecoder(config)
 
 

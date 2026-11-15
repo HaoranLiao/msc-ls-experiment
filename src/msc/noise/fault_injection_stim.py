@@ -224,7 +224,7 @@ def schedule_si1000_moments(circuit: stim.Circuit) -> tuple[stim.Circuit, list[i
 
 
 def add_si1000_noise(circuit: stim.Circuit, *, p: float) -> stim.Circuit:
-    """Add SI1000 noise moment by moment, in the convention of Google's released grafting DEMs.
+    """Add SI1000 noise moment by moment, in the convention of Google's released DEMs.
 
     SI1000 (Gidney, Newman, and McEwen, Quantum 6, 813 (2022)) is superconducting-inspired
     circuit noise; this convention reproduces the detector error models Rosenfeld et al.

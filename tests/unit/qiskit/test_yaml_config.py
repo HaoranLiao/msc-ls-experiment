@@ -8,7 +8,6 @@ import numpy as np
 import pytest
 import yaml
 
-from msc.experiment.ty_tomography_diagnostics import ty_tomography_retainment_breakdown
 from msc.state_transfer import common
 from msc.state_transfer.ler_qiskit import (
     analyze_ty_logical_error_rate_counts,
@@ -218,37 +217,6 @@ def test_disabling_flag_measurements_shrinks_the_record(
         complementary_gap_thresholds=(None,),
     )
     assert summary.accepted_x_shots == summary.accepted_z_shots == 4
-
-
-@pytest.mark.parametrize(
-    ("full_post_selection", "persistent_surface_x_post_selection", "retained_shots"),
-    ((False, True, 70), (False, False, 80), (True, False, 70)),
-)
-def test_postselection_settings_control_acceptance(
-    tmp_path: Path,
-    full_post_selection: bool,
-    persistent_surface_x_post_selection: bool,
-    retained_shots: int,
-) -> None:
-    config_path = _write_config(tmp_path, full_post_selection=full_post_selection)
-    circuit = build_ty_tomography_circuits(circuit_config_path=config_path)["X"]
-    registers = {register.name: register for register in circuit.cregs}
-    encoder_flag = circuit.find_bit(registers["enc_flags"][0]).index
-    persistent_surface_x = circuit.find_bit(registers["post_transfer_surface_x"][2]).index
-    counts = {
-        _bitstring((), circuit.num_clbits): 70,
-        _bitstring((encoder_flag,), circuit.num_clbits): 20,
-        _bitstring((persistent_surface_x,), circuit.num_clbits): 10,
-    }
-
-    breakdown = ty_tomography_retainment_breakdown(
-        counts,
-        basis="X",
-        circuit_config_path=config_path,
-        persistent_surface_x_post_selection=persistent_surface_x_post_selection,
-    )
-
-    assert breakdown.retained_shots == retained_shots
 
 
 # =============================================================================

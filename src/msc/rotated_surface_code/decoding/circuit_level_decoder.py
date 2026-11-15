@@ -12,9 +12,7 @@ Scope: 14-site abstract-routed Steane cultivation transferred to the rotated
 d=5 surface code with either merge schedule, destructive X or Z full-data
 readout, and any number of post-transfer rounds. Each decoder models one
 fixed physical circuit, so a twirled job is decoded one twirl variant at a
-time; the circuit must have an identity routing permutation. The decoder of
-Google's grafting circuits (``google/decoder/``) reuses the public wire
-alignment, frame verification, and calibrated stand-in and suffix conversion.
+time; the circuit must have an identity routing permutation.
 
 Terminology: the non-Clifford Steane input (injection, QED, and cultivation)
 is replaced by a Clifford Stim stand-in carrying its calibrated noise; each
@@ -50,17 +48,14 @@ suppression beyond the Pauli-twirled idle channel.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import stim
-from qiskit import QuantumCircuit, transpile
+from qiskit import QuantumCircuit
 from qiskit.circuit.library import CZGate, HGate, SXGate, XGate
-from qiskit.providers.fake_provider import GenericBackendV2
-from qiskit.transpiler import InstructionProperties, PassManager
-from qiskit.transpiler.passes import RemoveBarriers, RemoveResetInZeroState
 
 from msc.noise.fault_injection_stim import add_si1000_noise, schedule_si1000_moments
 from msc.noise.fault_tolerance_stim import DetectorErrorModelShotAnalyzer
@@ -73,7 +68,6 @@ from msc.utils import circuit_stim
 from msc.utils.normalize import normalize_pauli_char, qiskit_bit_values
 
 if TYPE_CHECKING:
-    from msc.experiment.results_io import DeviceCalibration
     from msc.state_transfer.tomography_qiskit import TyTomographyConfig
 
 # Families measured by injection, post-injection QED, and cultivation. The
@@ -103,14 +97,13 @@ class CircuitLevelDecoder:
 
     ``decoder`` selects matching (the default) or Tesseract with Google's
     search settings and the analysis priority-queue limit
-    (``TESSERACT_PQLIMIT``), the decoder of Google's grafting experiment, so
-    the two protocols can be compared under one decoder. Matching without the
-    gap detector is PyMatching's correlated matching, which improves each
-    shot's prediction; gap decoding keeps plain matching, because correlated
-    matching reweights each sector's edges from that sector's own first pass,
-    so the two sector weights stop being comparable and the gap stops ranking
-    shots (on LS hardware data, correlated matching lowers the no-CGP p_L but
-    raises it at every gap threshold).
+    (``TESSERACT_PQLIMIT``). Matching without the gap detector is PyMatching's
+    correlated matching, which improves each shot's prediction; gap decoding
+    keeps plain matching, because correlated matching reweights each sector's
+    edges from that sector's own first pass, so the two sector weights stop
+    being comparable and the gap stops ranking shots (on LS hardware data,
+    correlated matching lowers the no-CGP p_L but raises it at every gap
+    threshold).
 
     With ``complementary_gap``, the model's final gap detector is never
     hard-postselected; each shot is decoded once in both logical sectors, and
@@ -216,11 +209,11 @@ def decode_count_keys(
 ) -> tuple[int, int] | tuple[tuple[int, int], ...]:
     """Decode weighted hardware count keys against one calibrated model.
 
-    Shared by this decoder and Google's grafting decoder. Unique keys are
-    converted in batches to the model's detection events, postselected and
-    decoded by ``analyzer``, and their accepted logical-zero and logical-one
-    shots are weighted by multiplicity: one pair without thresholds, else one
-    pair per threshold from a single two-sector decoding of every shot.
+    Unique keys are converted in batches to the model's detection events,
+    postselected and decoded by ``analyzer``, and their accepted logical-zero
+    and logical-one shots are weighted by multiplicity: one pair without
+    thresholds, else one pair per threshold from a single two-sector decoding
+    of every shot.
     """
     keys = list(counts)
     multiplicities = np.fromiter(counts.values(), dtype=np.int64, count=len(keys))
@@ -267,141 +260,63 @@ def decode_count_keys(
 
 
 # =============================================================================
-# Layout selection: hard-postselected circuit qubits
+# Device calibration
 # =============================================================================
 
+# Reset operations have no error calibration; use the paired measurement's error.
+# Their durations are recorded separately and are never aliased.
+ERROR_CALIBRATION_FOR_RESET = {
+    "reset": "measure",  # IBM targets define no standalone ``reset_2``.
+    "measure_reset": "measure",
+    "measure_reset_2": "measure_2",
+}
 
-def layout_postselected_qubits(
-    logical_circuits_by_basis: Mapping[str, QuantumCircuit],
-    build_decoder: Callable[[QuantumCircuit, DeviceCalibration, str], Any],
-) -> frozenset[int]:
-    """Hard-postselected qubits of one layout point's tomography circuits, for layout selection.
 
-    No device layout exists yet, so each basis circuit is submitted to a
-    generic all-to-all device and ``build_decoder(submission, calibration,
-    basis)`` builds its calibrated model (this module's decoder or Google's
-    Tesseract decoder). The bases share one layout, so their sets are united.
+@dataclass(frozen=True)
+class DeviceCalibration:
+    """Backend calibration a submitted circuit was compiled against, for circuit-level decoding.
+
+    Holds per-qubit (T1, T2) and per-operation error and duration from the
+    backend's calibration at submission.
     """
-    backend, calibration = generic_calibrated_device(
-        next(iter(logical_circuits_by_basis.values())).num_qubits
-    )
-    postselected_qubits: set[int] = set()
-    for basis, logical_circuit in logical_circuits_by_basis.items():
-        submission = submit_to_generic_device(logical_circuit, backend)
-        decoder = build_decoder(submission, calibration, basis)
-        postselected_qubits |= postselected_circuit_qubits(
-            submission,
-            decoder.circuit,
-            decoder.postselection_detector_indices,
-        )
-    return frozenset(postselected_qubits)
 
+    dt: float
+    relaxation_times: tuple[tuple[float | None, float | None], ...]
+    errors: Mapping[tuple[str, tuple[int, ...]], float | None]
+    durations: Mapping[tuple[str, tuple[int, ...]], float | None]
 
-def generic_calibrated_device(num_qubits: int) -> tuple[GenericBackendV2, DeviceCalibration]:
-    """A generic all-to-all device, with resets timed like readouts, and its calibration.
+    def operation_error(self, name: str, qubits: tuple[int, ...]) -> float:
+        """Return an operation's calibrated error probability.
 
-    Lets a logical circuit be submitted locally on its own qubit indices, so its
-    calibrated model exists before any device layout: for the postselected
-    qubits of layout selection and for decoder tests.
-    """
-    # Imported here: results_io imports the analysis entry points that import this bridge.
-    from msc.experiment.results_io import DeviceCalibration
-
-    backend = GenericBackendV2(
-        num_qubits,
-        basis_gates=["cz", "sx", "x", "rz"],
-        coupling_map=[[a, b] for a in range(num_qubits) for b in range(num_qubits) if a != b],
-        seed=1,
-    )
-    target = backend.target
-    for qubit in range(num_qubits):
-        target.update_instruction_properties(
-            "reset",
-            (qubit,),
-            InstructionProperties(duration=target["measure"][(qubit,)].duration),
-        )
-    calibration = DeviceCalibration(
-        dt=target.dt,
-        relaxation_times=tuple((qubit.t1, qubit.t2) for qubit in target.qubit_properties),
-        errors={
-            (name, qubits): properties.error
-            for name in target.operation_names
-            for qubits, properties in target[name].items()
-        },
-        durations={
-            (name, qubits): properties.duration
-            for name in target.operation_names
-            for qubits, properties in target[name].items()
-        },
-    )
-    return backend, calibration
-
-
-def submit_to_generic_device(
-    logical_circuit: QuantumCircuit, backend: GenericBackendV2
-) -> QuantumCircuit:
-    """Transpile like a submission on the identity layout: the submission-input rewrite, then delays.
-
-    Hardware preprocessing drops resets on fresh wires, as the conversion
-    expects; barriers only constrain scheduling and would misalign the wire
-    operations, so they are dropped too; the calibrated suffix conversion
-    requires the scheduled delays.
-    """
-    from msc.experiment.runner import prepare_submission_input
-
-    return transpile(
-        PassManager([RemoveBarriers(), RemoveResetInZeroState()]).run(
-            prepare_submission_input(
-                logical_circuit, backend.target, align_steane_and_merge_readouts=False
+        Virtual-Z rotations are frame updates, so a virtual-Z rotation has zero
+        error. Reset has no calibration entry, so reset uses the readout error
+        of ``measure``, and ``measure_reset_2`` uses the readout error of
+        ``measure_2``.
+        """
+        if name == "rz":
+            return 0.0
+        calibrated_name = ERROR_CALIBRATION_FOR_RESET.get(name, name)
+        error = self.errors[calibrated_name, qubits]
+        if error is None or not 0 <= error <= 1:
+            raise ValueError(
+                f"missing or unusable error calibration for {calibrated_name}{qubits}."
             )
-        ),
-        backend,
-        initial_layout=list(range(logical_circuit.num_qubits)),
-        optimization_level=0,
-        scheduling_method="asap",
-        seed_transpiler=1,
-    )
+        return error
 
+    def operation_duration(self, name: str, qubits: tuple[int, ...]) -> float:
+        """Return an operation's scheduled duration in seconds.
 
-def postselected_circuit_qubits(
-    submitted_circuit: QuantumCircuit,
-    model_circuit: stim.Circuit,
-    postselection_detector_indices: Sequence[int],
-) -> frozenset[int]:
-    """Circuit qubits whose faults can flip a hard-postselected detector.
-
-    Layout selection weights these qubits' operations up: a fault on them
-    discards the shot, while one elsewhere feeds the decoder. They are the
-    qubits of the circuit error locations behind the detector-error-model
-    errors that touch a postselected detector, the Steane stand-in's included.
-    Device wires map back to circuit qubits through the submitted layout.
-    """
-    wires: set[int] = set()
-    postselected = set(postselection_detector_indices)
-    postselected_errors = stim.DetectorErrorModel()
-    for instruction in model_circuit.detector_error_model(decompose_errors=False).flattened():
-        if instruction.type == "error" and any(
-            target.is_relative_detector_id() and target.val in postselected
-            for target in instruction.targets_copy()
-        ):
-            postselected_errors.append(instruction)
-    for explanation in model_circuit.explain_detector_error_model_errors(
-        dem_filter=postselected_errors, reduce_to_one_representative_error=False
-    ):
-        for location in explanation.circuit_error_locations:
-            wires.update(target.gate_target.value for target in location.flipped_pauli_product)
-            if location.flipped_measurement is not None:
-                wires.update(
-                    target.gate_target.value
-                    for target in location.flipped_measurement.observable
-                )
-    layout = submitted_circuit.layout
-    physical_qubits = (
-        list(range(submitted_circuit.num_qubits))
-        if layout is None
-        else layout.initial_index_layout(filter_ancillas=True)
-    )
-    return frozenset(physical_qubits.index(wire) for wire in wires)
+        Virtual-Z rotations are frame updates, so a virtual-Z rotation takes no
+        time. Every other operation, including standalone ``reset`` and the
+        composite ``measure_reset_2``, uses its own entry in the target's
+        scheduling definition; only error calibrations are aliased.
+        """
+        if name == "rz":
+            return 0.0
+        duration = self.durations[name, qubits]
+        if duration is None or not math.isfinite(duration) or duration < 0:
+            raise ValueError(f"missing or unusable duration for {name}{qubits}.")
+        return duration
 
 
 # =============================================================================
@@ -867,9 +782,8 @@ def verify_frames_and_locate_steane_cuts(
     reset. Returns one Steane cut per Steane wire that the input touches.
 
     Comparing a whole CZ run as one unit is kept only to decode jobs compiled
-    before commit 38b31de, whose transpiler resynthesized two-qubit blocks. Jobs
-    compiled since keep every CZ, and comparing each CZ on its own also
-    verifies them.
+    with two-qubit block resynthesis, which merged CZ runs. Jobs compiled
+    since keep every CZ, and comparing each CZ on its own also verifies them.
     """
     # Express each Steane wire's cut in the same block coordinates, so the
     # frame walk below knows which block to split.
@@ -924,8 +838,8 @@ def verify_frames_and_locate_steane_cuts(
         first_wire, first_block_index = participants[0]
         anchor_kind = logical_wires[first_wire].anchors[first_block_index].anchor[0]
         if anchor_kind == "cz":
-            # Kept only for jobs compiled before 38b31de, whose transpiler resynthesized
-            # a whole run of CZs on one pair: extend over the maximal run.
+            # Kept only for jobs compiled with two-qubit block resynthesis, which
+            # resynthesized a whole run of CZs on one pair: extend over the maximal run.
             (wire_a, block_a), (wire_b, block_b) = participants
             run_length = 1
             while (
