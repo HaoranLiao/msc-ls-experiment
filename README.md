@@ -23,9 +23,7 @@ If you reuse this code, please cite our paper:
   title         = {Magic state cultivation with lattice-surgery escape on superconducting hardware},
   author        = {Liao, Haoran and Schutzman, Michael and Munizzi, William and Mundada, Pranav and Hartnett, Gavin and Baum, Yuval},
   year          = {2026},
-  eprint        = {2611.22035},
-  archivePrefix = {arXiv},
-  primaryClass  = {quant-ph},
+  journal       = {arXiv:2611.22035},
   url           = {https://arxiv.org/abs/2611.22035},
 }
 ```
