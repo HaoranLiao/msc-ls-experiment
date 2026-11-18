@@ -16,15 +16,17 @@ postselection.
 If you reuse this code, please cite our paper:
 
 > Liao et al., *Magic state cultivation with lattice-surgery escape on superconducting hardware*,
-> arXiv:XXXX.XXXXX (2026).
+> [arXiv:2611.22035](https://arxiv.org/abs/2611.22035) (2026).
 
 ```bibtex
 @article{liao2026magic,
   title         = {Magic state cultivation with lattice-surgery escape on superconducting hardware},
   author        = {Liao, Haoran and Schutzman, Michael and Munizzi, William and Mundada, Pranav and Hartnett, Gavin and Baum, Yuval},
   year          = {2026},
-  eprint        = {XXXX.XXXXX},
+  eprint        = {2611.22035},
   archivePrefix = {arXiv},
+  primaryClass  = {quant-ph},
+  url           = {https://arxiv.org/abs/2611.22035},
 }
 ```
 
