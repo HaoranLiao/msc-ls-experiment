@@ -24,7 +24,7 @@ If you reuse this code, please cite our paper:
   author        = {Liao, Haoran and Schutzman, Michael and Munizzi, William and Mundada, Pranav and Hartnett, Gavin and Baum, Yuval},
   year          = {2026},
   journal       = {arXiv:2611.22035},
-  url           = {https://arxiv.org/abs/2611.22035},
+  url           = {https://arxiv.org/pdf/2611.22035},
 }
 ```
 
